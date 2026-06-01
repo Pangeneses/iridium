@@ -1,0 +1,232 @@
+Core Renderings
+
+1. Forward Rendering; General
+> Classic forward shading
+> Great for VR, mobile, stylized games
+> Supports MSAA
+> Simple transparency
+
+2. Deferred Rendering; Cinematic
+> G‑buffer based
+> Many dynamic lights
+> Heavy post‑processing
+> High‑end PBR
+
+3. Forward/Clustered Forward; hybrid modern
+> many‑light
+> transparency
+
+4. Ray‑Tracing; renderphile
+> Hardware RT (DXR/VKRT)
+> Shadows, reflections, GI, AO
+> Hybrid RT + raster
+
+5. Toon/Cel‑Shading
+> Quantized lighting
+> Hard shadows
+> Stylized rim lights
+> Outline generation
+
+6. Comic‑Book/Ink
+> Hatching
+> Cross‑hatching
+> Halftone shading
+> Thick outlines
+> Stylized motion lines
+> Color quantization
+
+7. 3D‑Driven 2D Animation
+> 3D rigs driving 2D sprites
+> 2D layers projected onto 3D meshes
+> 2D shading from 3D lighting
+> “Paper cutout” rigs
+> Pose‑to‑pose interpolation
+> Onion‑skinning for animators
+
+8. Pure 2D Sprite/Tile
+> Sprite batching
+> Tilemaps
+> Parallax layers
+> 2D lighting
+
+9. 2D‑in‑3D Embedded
+> 2D layers rendered in 3D space
+> 2D animation planes
+> 2D characters in 3D worlds
+> 3D lighting on 2D assets
+> Camera‑aligned billboards
+
+10. Path‑Tracing; cutscenes
+> Offline‑quality rendering
+> Film‑grade GI
+> Noise‑filtered accumulation
+
+11. Hybrid Accumulation
+> Temporal accumulation
+> Super‑sampling
+> Motion‑blur accumulation
+> High‑quality stills
+
+12. VFX/Particle (integrated)
+> GPU particles
+> Volumetrics
+> Fluid sims
+> Ribbon trails
+
+13. UI/Vector/SDF
+> Signed distance fields
+> Vector graphics
+> CEF/Chromium compositing
+> 2D/3D UI integration
+
+14. XR
+> VR/AR
+> Single‑pass stereo
+> Foveated rendering
+> Low‑latency paths
+
+RENDER STAGE LIST 
+
+FRAME SETUP
+> Frame begin/sync
+> Render graph build
+> Visibility system reset
+> GPU resource transitions
+> Camera extraction
+> Scene culling setup
+
+CULLING & SCENE PREP
+> Frustum culling
+> Occlusion culling
+> Cluster/tile generation (Forward+)
+> Light culling/clustering
+> Shadow caster extraction
+> Reflection probe selection
+> LOD selection
+> Material variant selection
+
+SHADOW STAGES
+> Directional shadow map
+> Cascaded shadow maps (CSM)
+> Point light cube shadows
+> Spot light shadows
+> Contact shadows
+> Ray‑traced shadows
+
+GEOMETRY BUFFER/PREPASS
+> Depth prepass
+> Motion vector pass
+> Normal prepass
+> Velocity buffer
+> Material ID buffer (for NPR & outlines)
+> Object ID buffer (for selection, tools)
+
+GEOMETRY
+
+Rasters:
+> Forward base pass
+> Forward+ lighting pass
+> Deferred G‑buffer fill
+> Transparency pass
+> Alpha‑cutout pass
+> Decal pass (projected decals)
+
+NPR/Stylized:
+> Cel‑shading lighting pass
+> Quantized shading pass
+> Hatching/cross‑hatching shading
+> Halftone shading
+> Outline generation (edge detect, normal diff, depth diff)
+> Comic‑book contour pass
+> Stylized rim light pass
+
+2D/Hybrid:
+> Sprite batch pass
+> Tilemap pass
+> 2D‑in‑3D billboard pass
+> 3D‑driven 2D layer projection
+> Vector/SDF pass
+
+LIGHTING STAGES
+
+Real‑time lighting:
+> Direct lighting
+> Indirect lighting (probe‑based)
+> Screen‑space GI
+> Lumen‑style GI (if implemented)
+> Clustered lighting resolve
+> Reflection probe resolve
+
+Ray‑traced lighting:
+> RT reflections
+> RT GI
+> RT AO
+> RT caustics (optional)
+
+VOLUMETRIC
+> Volumetric fog
+> Volumetric lighting
+> Light shafts/god rays
+> Atmospheric scattering
+> Height fog
+
+POST‑PROCESSING
+> TAA/SMAA/FXAA
+> Bloom
+> Tone mapping
+> Color grading
+> Film grain
+> Chromatic aberration
+> Depth of field
+> Motion blur
+> Vignette
+> Lens dirt/lens flare
+> Sharpening/upscaling (FSR/XeSS/DLSS if desired)
+
+NPR/COMIC‑BOOK POST‑FX
+> Edge outlining
+> Ink pass
+> Halftone overlay
+> Color quantization
+> Posterization
+> Stylized motion lines
+> Panelization/comic frame pass
+> Dot shading
+> Gradient mapping
+
+SPECIALIZED EFFECTS
+> GPU particles
+> Ribbon trails
+> Flipbook animation
+> Fluid simulation
+> VFX graph execution
+> Decal blending
+> Distortion pass
+
+UI & COMPOSITION
+> CEF/Chromium UI pass
+> Vector UI pass
+> SDF text pass
+> World‑space UI
+> Screen‑space UI
+> Final composition pass
+
+CINEMATIC/OFFLINE
+> Path‑tracing integrator
+> Accumulation buffer
+> Denoising pass
+> High‑res tile rendering
+> Export pass (frame capture)
+
+XR/VR
+> Single‑pass stereo
+> Multi‑view rendering
+> Foveated rendering
+> Late‑latching
+> Reprojection pass
+
+FRAME FINALIZATION
+> HUD/UI composite
+> Debug overlays
+> GPU readbacks
+> Swapchain present

@@ -1,0 +1,89 @@
+PeregrineV Object Hierarchy
+-----------------------------------------------------------------------------------------------------------------------------------------
+
+
+Foundation layer — created once, never per-frame.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVInstance is the root. Everything depends on it. It owns the Vulkan instance and drives enumeration of physical devices.
+
+IIr77PVDevice wraps both the physical and logical device. It depends on Instance and is the parent of almost everything else — queues, memory, pipelines all require a device handle.
+
+IIr77PVQueue sits between physical device selection and logical device creation. It performs family enumeration, builds the VkDeviceQueueCreateInfo list, and after device creation holds the VkQueue handles for graphics and present.
+
+IIr77PVSurface depends on Instance and Device. It owns the VkSurfaceKHR, queries capabilities, selects format and present mode, and creates the swapchain. The swapchain images live here.
+
+
+Memory layer — peers, created once.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVMemory is the allocator. Rather than calling vkAllocateMemory directly per resource, all allocations route through here.
+
+IIr77PVMemoryStrategy is a policy object injected into Memory — it decides allocation behavior: linear, pool, dedicated. Swappable without changing the allocator interface.
+
+IIr77PVAllocation is a handle returned per allocation — tracks offset, size, memory type, and backing VkDeviceMemory.
+
+
+Resource layer — peers, created once.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVBuffer wraps VkBuffer plus its IIr77PVAllocation. The staging buffer is one instance of this.
+
+IIr77PVImage wraps VkImage plus allocation. The CEF texture is one instance. Swapchain images are not owned here — Surface owns those.
+
+IIr77PVImageView wraps VkImageView. One per image that needs to be bound — CEF texture view, swapchain views.
+
+IIr77PVSampler wraps VkSampler. One instance for the CEF texture sampler.
+
+
+Descriptor layer — peers, created once.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVDescriptorLayout defines the binding layout — what slots exist, what types they are.
+
+IIr77PVDescriptorSet holds the actual bindings — CEF texture bound to slot 0, sampler to slot 1. Depends on Layout.
+
+
+Shader and pipeline layer — peers, created once.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVShader wraps a VkShaderModule. One per SPIR-V file — at minimum a fullscreen vertex shader and a composite fragment shader.
+
+IIr77PVPipeline wraps VkPipeline and VkPipelineLayout. Depends on Shader, DescriptorLayout, and RenderPass.
+
+IIr77PVMaterial sits above Pipeline — binds a pipeline to a descriptor set and any push constants. One material per shading mode.
+
+
+Render graph layer — peers, created once.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVRenderGraph owns the full frame construction — the ordered sequence of stages, dependency edges between them, and barrier scheduling.
+
+IIr77PVRenderStage is one node in the graph — owns a RenderPass, its inputs and outputs as RenderTargets, and knows which Pipeline to execute.
+
+IIr77PVRenderPass wraps VkRenderPass — attachment descriptions, subpass definitions, subpass dependencies.
+
+IIr77PVRenderTarget wraps a color attachment — an Image and ImageView pair that a stage writes into.
+
+IIr77PVDepthTarget wraps a depth/stencil attachment — same structure, separate type.
+
+
+Geometry layer — peers, created once per asset.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVMesh owns vertex and index buffers via IIr77PVBuffer. Bound during command recording.
+
+
+Per-frame layer — one instance per back buffer, indexed by swapchain image.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVFrame is the per-back-buffer container. It owns the VkCommandBuffer, the VkFence for CPU-GPU sync, and the two semaphores — image available and render finished. It also holds a reference to its IIr77PVFramebuffer.
+
+IIr77PVFramebuffer wraps VkFramebuffer — binds the swapchain ImageView and any RenderTarget views to the RenderPass attachment slots.
+
+
+Inline / structural.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVBarrier is not a long-lived object — it's a description struct filled per use and recorded into a command buffer. It lives inside command recording logic, not as a standalone instance.
+
+IIr77PVCommandBuffer wraps VkCommandBuffer and VkCommandPool. It owns recording — begin, the barrier and draw calls, end. IIr77PVFrame holds a reference to one, but the command buffer interface is its own object responsible for its own pool and recording lifecycle.
+
+IIr77PVSemaphore its own interface wrapping VkSemaphore. Frame holds two instances of it, not raw handles
+
+
+
+Lifecycle.
+-----------------------------------------------------------------------------------------------------------------------------------------
+IIr77PVShutdown is an explicit teardown interface. Destruction order in Vulkan is strict — this enforces it rather than relying on destructor ordering across shared pointers.

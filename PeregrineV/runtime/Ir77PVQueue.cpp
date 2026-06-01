@@ -1,0 +1,45 @@
+#include "Ir77PVQueue.hpp"
+
+#include <vulkan/vulkan.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+#include <vulkan/vulkan_core.h>
+
+#include "../Ir77RT/interface/IIr77Enlisted.hpp"
+
+#include "../service/IIr77PeregrineV.hpp"
+
+#include "../interface/IIr77PVDevice.hpp"
+#include "../interface/IIr77PVSurface.hpp"
+
+using namespace NSIr77RT;
+
+namespace NSIr77PeregrineV {
+VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice() {
+    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+
+    std::shared_ptr<IIr77Enlisted> enlisted;
+    peregrine->Context(ID_INSTANCE, enlisted);
+
+    std::shared_ptr<IIr77PVDevice> device = QueryAs<IIr77PVDevice>(&GUIDIIr77PVDevice, enlisted.get());
+
+    VkPhysicalDevice vk_phys_device;
+    device->GetVkPhysicalDevice(&vk_phys_device);
+
+    return vk_phys_device;
+}
+
+VkSurfaceKHR Ir77PVQueue::GetSurface() {
+    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+
+    std::shared_ptr<IIr77Enlisted> enlisted;
+    peregrine->Context(ID_INSTANCE, enlisted);
+
+    std::shared_ptr<IIr77PVSurface> surface = QueryAs<IIr77PVSurface>(&GUIDIIr77PVSurface, enlisted.get());
+
+    VkSurfaceKHR vk_surface;
+    surface->GetSurface(&vk_surface);
+
+    return vk_surface;
+}
+}  // namespace NSIr77PeregrineV

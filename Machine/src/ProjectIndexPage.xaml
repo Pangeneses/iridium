@@ -1,0 +1,162 @@
+﻿<Page
+    x:Class="Machine.ProjectIndexPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:Ir77X="using:Ir77X"
+    mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Ir77X.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <ScrollViewer Margin="6,6,6,6">
+
+        <Grid >
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="500"/>
+            </Grid.RowDefinitions>
+
+            <Ir77X:UserFilterHVID
+                x:Name="ProjectIndexHVID"            
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="0" Grid.RowSpan="1"
+                Label="Project Index HVID"/>
+
+            <Ir77X:UserFilterNewMMM 
+                x:Name="ProjectIndexMMM"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="1" Grid.RowSpan="1"
+                Label="MMM"/>
+
+            <Ir77X:UserFilterNewItem
+                x:Name="ProjectIndexMaxPath"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="2" Grid.RowSpan="1"
+                Label="Tag"/>
+
+            <Ir77X:UserChrono 
+                x:Name="ProjectIndexCreated"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="3" Grid.RowSpan="1"
+                Label="Created"/>
+
+            <Ir77X:UserChrono 
+                x:Name="ProjectIndexUpdated"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="4" Grid.RowSpan="1"
+                Label="Updated"/>
+
+            <Border 
+                BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                BorderThickness="1"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="5" Grid.RowSpan="1">
+
+                <Button 
+                    BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                    BorderThickness="1"
+                    Margin="2,2,2,2"
+                    Padding="0,0,0,0"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch">
+                    <TextBlock 
+                        Text="HYPERTEXT DOCUMENTATION"
+                        FontSize="12"/>
+                </Button>
+
+            </Border>
+
+            <Ir77X:UserBlock
+                x:Name="ProjectIndexDatabase"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="0" Grid.RowSpan="1"
+                Label="Database"/>
+
+            <Ir77X:UserBlock
+                x:Name="ProjectIndexSchema"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="1" Grid.RowSpan="1"
+                Label="Schema"/>
+
+            <Ir77X:UserBlock 
+                x:Name="ProjectIndexAccessLevel"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="2" Grid.RowSpan="1" 
+                Label="Access Level"/>
+
+            <Ir77X:UserBlock 
+                x:Name="ProjectIndexAdministratorHVID"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="3" Grid.RowSpan="1" 
+                Label="Administrator HVID"/>
+
+            <Ir77X:UserBlock 
+                x:Name="ProjectIndexAdministratorMaxPath"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="4" Grid.RowSpan="1" 
+                Label="Administrator"/>
+
+            <Border 
+                BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                BorderThickness="1"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="5" Grid.RowSpan="1">
+
+                <Button 
+                    BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                    BorderThickness="1"
+                    Margin="2,2,2,2"
+                    Padding="0,0,0,0"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch">
+                    <TextBlock 
+                        Text="PERMISSIONS"
+                        FontSize="12"/>
+                </Button>
+
+            </Border>
+
+            <Ir77X:UserDivider 
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="6" Grid.RowSpan="1"/>
+
+            <Border 
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="7" Grid.RowSpan="1"
+                BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                BorderThickness="1">
+
+                <TextBox 
+                    Foreground="Black"
+                    AcceptsReturn="True"
+                    TextWrapping="Wrap"
+                    FontWeight="Medium"
+                    FontSize="12"
+                    Padding="3,3,3,3"
+                    PlaceholderText="Add description here ..."
+                    ScrollViewer.VerticalScrollBarVisibility="Visible"/>
+
+            </Border>
+
+        </Grid>
+
+    </ScrollViewer>
+
+</Page>

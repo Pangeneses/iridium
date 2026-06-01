@@ -1,0 +1,111 @@
+﻿<UserControl x:Class="Landing.UXIr77LANDING" mc:Ignorable="d"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Loading="Loading"
+    Loaded="Loaded">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Ir77X.xaml"/>
+                <ResourceDictionary Source="ms-appx:///Ir77BUTTON.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <ImageBrush x:Key="Ir77LANDING" ImageSource="C:\Users\Developer\Source\Pangeneses\ASSETS\Ir77LANDING\Ir77LANDING.png"/>
+
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid 
+        x:Name="Ir77LANDING" 
+        Background="{StaticResource Ir77LANDING}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="75"/>
+            <ColumnDefinition Width="300"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="150"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="250"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel
+            x:Name="Ir77APPS"
+            Grid.Column="1" Grid.ColumnSpan="1" 
+            Grid.Row="1" Grid.RowSpan="1">
+
+            <Button 
+                x:Name="NavigateButton001"
+                Style="{StaticResource RightMenuButton}"
+                Click="Navigate001">
+
+                <TextBlock 
+                    Text="PANGENESES"
+                    Style="{StaticResource RightMenuText}"/>
+
+            </Button>
+
+            <Button 
+                x:Name="NavigateButton002"
+                Style="{StaticResource RightMenuButton}"
+                Click="Navigate002">
+
+                <TextBlock 
+                    Text="hv4D"
+                    Style="{StaticResource RightMenuText}"/>
+
+            </Button>
+
+            <Button 
+                x:Name="NavigateButton003"
+                Style="{StaticResource RightMenuButton}"
+                Click="Navigate003">
+
+                <TextBlock 
+                    Text="INSTANCE"
+                    Style="{StaticResource RightMenuText}"/>
+
+            </Button>
+
+            <Button 
+                x:Name="NavigateButton004"
+                Style="{StaticResource RightMenuButton}"
+                Click="Navigate004">
+
+                <TextBlock 
+                    Text="MACHINE"
+                    Style="{StaticResource RightMenuText}"/>
+
+            </Button>
+
+            <Button 
+                x:Name="NavigateButton005"
+                Style="{StaticResource RightMenuButton}"
+                Click="Navigate005">
+
+                <TextBlock 
+                    Text="MAINTENANCE"
+                    Style="{StaticResource RightMenuText}"/>
+
+            </Button>
+
+            <Button 
+                x:Name="NavigateButton006"
+                Style="{StaticResource RightMenuButton}"
+                Click="Navigate006">
+
+                <TextBlock 
+                    Text="EXIT"
+                    Style="{StaticResource RightMenuText}"/>
+
+            </Button>
+
+        </StackPanel>
+
+    </Grid>
+
+</UserControl>

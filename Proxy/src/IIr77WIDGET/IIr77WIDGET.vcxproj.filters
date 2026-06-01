@@ -1,0 +1,114 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="A00. Ir77PROJECT">
+      <UniqueIdentifier>{926ab91d-31b4-48c3-b9a4-e681349f27f0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="A01. Ir77LIBRARY">
+      <UniqueIdentifier>accd3aa8-1ba0-4223-9bbe-0c431709210b</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tga;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="A02. Ir77FORWARD">
+      <UniqueIdentifier>{3198b026-c756-442a-8b08-04000e2d0989}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="A03. Ir77RESOURCE">
+      <UniqueIdentifier>{53bf604c-7dd7-477f-928d-5fa07f03536a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B00. IIr77WIDGET">
+      <UniqueIdentifier>{9ab6e717-57f3-42e8-a366-97e7e7ed7fad}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77WIDGET">
+      <UniqueIdentifier>{4d1d751d-f93f-45f5-8ed8-7b847096a4c4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77WIDGET\01. OIr77SETVISSTATE">
+      <UniqueIdentifier>{25915414-709f-4e01-a97b-18854067ec65}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77WIDGET\02. OIr77GETVISSTATE">
+      <UniqueIdentifier>{327924ad-8a76-429a-aa8b-217349bffe44}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77WIDGET\00. OIr77WIDGET">
+      <UniqueIdentifier>{2be6c772-34fd-404e-9350-842f608db68f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B02. DIr77WIDGET">
+      <UniqueIdentifier>{966a04be-534f-4661-80f1-1e4e8e7b1ff4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B02. DIr77WIDGET\00. DIr77WIDGET">
+      <UniqueIdentifier>{9c967490-aa6d-4ff1-926b-188b95064e0b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77WIDGET">
+      <UniqueIdentifier>{06d932c1-fc21-4c1c-b906-696e1abe942b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77WIDGET\00. XIr77VISSTATE">
+      <UniqueIdentifier>{54eb3767-a3df-48bc-88e2-8b4859316405}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77WIDGET\03. OIr77SETSTATE">
+      <UniqueIdentifier>{194dde02-83f2-4929-8398-a99013ce933d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77WIDGET\04. OIr77GETSTATE">
+      <UniqueIdentifier>{8111326c-83c9-49f5-99e1-d10ad3424dd9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77WIDGET\05. OIr77INHOOK">
+      <UniqueIdentifier>{379c1e08-6d05-4b5b-aff9-998fcd930171}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77WIDGET\06. OIr77OUTHOOK">
+      <UniqueIdentifier>{ac84f840-77eb-4a26-87fb-a5f9b2127fe1}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="$(GeneratedFilesDir)module.g.cpp">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </ClCompile>
+    <ClCompile Include="pch.cpp">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </ClCompile>
+    <ClCompile Include="IDIIr77WIDGET.cpp">
+      <Filter>B00. IIr77WIDGET</Filter>
+    </ClCompile>
+    <ClCompile Include="IDOIr77WIDGET.cpp">
+      <Filter>B01. OIr77WIDGET</Filter>
+    </ClCompile>
+    <ClCompile Include="IDDIr77WIDGET.cpp">
+      <Filter>B02. DIr77WIDGET</Filter>
+    </ClCompile>
+    <ClCompile Include="DIr77WIDGET.cpp">
+      <Filter>B02. DIr77WIDGET\00. DIr77WIDGET</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77SETVISSTATE.cpp">
+      <Filter>B01. OIr77WIDGET\01. OIr77SETVISSTATE</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77GETVISSTATE.cpp">
+      <Filter>B01. OIr77WIDGET\02. OIr77GETVISSTATE</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77SETSTATE.cpp">
+      <Filter>B01. OIr77WIDGET\03. OIr77SETSTATE</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77GETSTATE.cpp">
+      <Filter>B01. OIr77WIDGET\04. OIr77GETSTATE</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77INHOOK.cpp">
+      <Filter>B01. OIr77WIDGET\05. OIr77INHOOK</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77OUTHOOK.cpp">
+      <Filter>B01. OIr77WIDGET\06. OIr77OUTHOOK</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77VISSTATE.cpp">
+      <Filter>B03. XIr77WIDGET\00. XIr77VISSTATE</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="IIr77WIDGET.def">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </None>
+    <None Include="packages.config">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="pch.h">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natvis" />
+  </ItemGroup>
+</Project>

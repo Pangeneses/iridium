@@ -1,0 +1,236 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="$(GeneratedFilesDir)module.g.cpp">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </ClCompile>
+    <ClCompile Include="pch.cpp">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </ClCompile>
+    <ClCompile Include="IDIIr77GRAPHICS.cpp">
+      <Filter>B00. IIr77GRAPHICS</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77STATE.cpp">
+      <Filter>B03. XIr77GRAPHICS\00. XIr77STATE</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77GFXAPI.cpp">
+      <Filter>B03. XIr77GRAPHICS\01. XIr77GFXAPI</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77DISPLAY.cpp">
+      <Filter>B03. XIr77GRAPHICS\02. XIr77DISPLAY</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77ALIASING.cpp">
+      <Filter>B03. XIr77GRAPHICS\09. XIr77ALIASING</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77FILTERING.cpp">
+      <Filter>B03. XIr77GRAPHICS\10. XIr77FILTERING</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77SL.cpp">
+      <Filter>B03. XIr77GRAPHICS\11. XIr77LANGUAGE</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77CODEC.cpp">
+      <Filter>B03. XIr77GRAPHICS\12. XIr77CODEC</Filter>
+    </ClCompile>
+    <ClCompile Include="LoadGfxFromString.cpp">
+      <Filter>X00. ms-appx:///resource</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77RGBA.cpp">
+      <Filter>B03. XIr77GRAPHICS\03. XIr77RGBA</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77SCALING.cpp">
+      <Filter>B03. XIr77GRAPHICS\04. XIr77SCALING</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77SWAPEFFECT.cpp">
+      <Filter>B03. XIr77GRAPHICS\05. XIr77SWAPEFFECT</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77ALPHAMODE.cpp">
+      <Filter>B03. XIr77GRAPHICS\06. XIr77ALPHAMODE</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77FILLMODE.cpp">
+      <Filter>B03. XIr77GRAPHICS\07. XIr77FILLMODE</Filter>
+    </ClCompile>
+    <ClCompile Include="IDXIr77CULLMODE.cpp">
+      <Filter>B03. XIr77GRAPHICS\08. XIr77CULLMODE</Filter>
+    </ClCompile>
+    <ClCompile Include="IDOIr77GRAPHICS.cpp">
+      <Filter>B01. OIr77GRAPHICS</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77GETSTATE.cpp">
+      <Filter>B01. OIr77GRAPHICS\01. OIr77GETSTATE</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77SETSTATE.cpp">
+      <Filter>B01. OIr77GRAPHICS\02. OIr77SETSTATE</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77SEATGPU.cpp">
+      <Filter>B01. OIr77GRAPHICS\03. OIr77SEATGPU</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77RESETGPU.cpp">
+      <Filter>B01. OIr77GRAPHICS\04. OIr77RESETGPU</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77RUNGPU.cpp">
+      <Filter>B01. OIr77GRAPHICS\05. OIr77RUNGPU</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77STOPGPU.cpp">
+      <Filter>B01. OIr77GRAPHICS\06. OIr77STOPGPU</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77KILLGPU.cpp">
+      <Filter>B01. OIr77GRAPHICS\07. OIr77KILLGPU</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77BINDIA.cpp">
+      <Filter>B01. OIr77GRAPHICS\08. OIr77BINDIA</Filter>
+    </ClCompile>
+    <ClCompile Include="OIr77UNBINDIA.cpp">
+      <Filter>B01. OIr77GRAPHICS\09. OIr77UNBINDIA</Filter>
+    </ClCompile>
+    <ClCompile Include="IDDIr77GRAPHICS.cpp">
+      <Filter>B02. DIr77GRAPHICS</Filter>
+    </ClCompile>
+    <ClCompile Include="DIr77GFXSTATE.cpp">
+      <Filter>B02. DIr77GRAPHICS\01. DIr77GFXSTATE</Filter>
+    </ClCompile>
+    <ClCompile Include="DIr77GFXOP.cpp">
+      <Filter>B02. DIr77GRAPHICS\02. DIr77GFXOP</Filter>
+    </ClCompile>
+    <ClCompile Include="DIr77GFXIA.cpp">
+      <Filter>B02. DIr77GRAPHICS\03. DIr77GFXIA</Filter>
+    </ClCompile>
+    <ClCompile Include="DIr77GFXSLOT.cpp">
+      <Filter>B02. DIr77GRAPHICS\04. DIr77GFXSLOT</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="IIr77GRAPHICS.def">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </None>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="A00. Ir77PROJECT">
+      <UniqueIdentifier>{9300ec71-92fe-434f-845d-69b3b66fc414}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="A01. Ir77LIBRARY">
+      <UniqueIdentifier>{d935b319-6dce-491c-9f6d-9a0ec917fff6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="A02. Ir77FORWARD">
+      <UniqueIdentifier>{d59bda17-6044-4e8d-a0d2-3823c1e97a02}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="A03. Ir77RESOURCE">
+      <UniqueIdentifier>{92313553-7a4a-4352-ae66-ca04c6a999dd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="X00. ms-appx:///resource">
+      <UniqueIdentifier>{6c513029-22a6-42df-9769-062d414d398f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B00. IIr77GRAPHICS">
+      <UniqueIdentifier>{7133c2e7-9e67-48ab-8d2d-cdaa81b80f9a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="C00. Ir77RETURN">
+      <UniqueIdentifier>{5229bfde-e6e9-4dc6-9820-0e30edefc248}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="C00. Ir77RETURN\00. GPU_ERROR">
+      <UniqueIdentifier>{43903fe7-5c93-4050-8c0c-bbfabf719fbe}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS">
+      <UniqueIdentifier>{392cca05-4da8-42a4-b1d3-76a429a276a5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\01. OIr77GETSTATE">
+      <UniqueIdentifier>{ed9fe016-65a1-4830-a51b-7ee674f3fe94}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\02. OIr77SETSTATE">
+      <UniqueIdentifier>{acfcba76-33f9-4ba7-bdbe-32f3d664967c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\00. OIr77GRAPHICS">
+      <UniqueIdentifier>{673a020a-e513-4a0f-b6cd-fc48240321a6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B02. DIr77GRAPHICS">
+      <UniqueIdentifier>{1bf5b63f-fdfa-4945-98b5-c3345dc9003d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS">
+      <UniqueIdentifier>{683e3bdc-0f1a-4ff4-b743-517726979bf0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\00. XIr77STATE">
+      <UniqueIdentifier>{42dc4a62-78aa-4d23-9a07-dd02cd4c00ce}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\02. XIr77DISPLAY">
+      <UniqueIdentifier>{e1f2d36b-78ec-4001-911e-a5ee2173d77a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\01. XIr77GFXAPI">
+      <UniqueIdentifier>{02163a64-211d-46ac-b029-a3eb673881c8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\09. XIr77ALIASING">
+      <UniqueIdentifier>{49c61f90-f10f-4582-80d7-511f54b75099}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\10. XIr77FILTERING">
+      <UniqueIdentifier>{6a601d53-9a8d-4e4f-b174-070b91c7d79d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\11. XIr77LANGUAGE">
+      <UniqueIdentifier>{dcb3c063-e760-4241-83f6-7ef8327106dd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\12. XIr77CODEC">
+      <UniqueIdentifier>{f38224ca-ea77-4ad2-be74-b177ca5f90f5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\03. XIr77RGBA">
+      <UniqueIdentifier>{e65a4aac-a79d-4416-ab48-812a3b795c09}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\04. XIr77SCALING">
+      <UniqueIdentifier>{d3dc5c93-41f5-4ba0-a947-1a3fd6204fb2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\05. XIr77SWAPEFFECT">
+      <UniqueIdentifier>{c020967e-84cc-4c61-9007-7b635ebb02ad}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\06. XIr77ALPHAMODE">
+      <UniqueIdentifier>{b226f06b-5e90-4422-be84-8c0328726d42}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\07. XIr77FILLMODE">
+      <UniqueIdentifier>{22899571-5bb5-4b1b-8e10-f1fff2858cf4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B03. XIr77GRAPHICS\08. XIr77CULLMODE">
+      <UniqueIdentifier>{9bc1ed51-7fc8-405c-8839-ef7bc0990dec}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\03. OIr77SEATGPU">
+      <UniqueIdentifier>{6f7ed714-90e2-4374-bf78-9729a11bf60b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\04. OIr77RESETGPU">
+      <UniqueIdentifier>{679d187f-5735-46f7-a473-9c0e5f0c5845}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\05. OIr77RUNGPU">
+      <UniqueIdentifier>{c1e870ef-3b94-4f76-aaf1-2a64b37204de}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\06. OIr77STOPGPU">
+      <UniqueIdentifier>{8f19b9cf-731f-40e6-b616-b37c57b036cb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\07. OIr77KILLGPU">
+      <UniqueIdentifier>{05f13f84-3cee-41c4-b392-bb0891daa9f8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\08. OIr77BINDIA">
+      <UniqueIdentifier>{2b2e2155-3404-4cbf-8874-d0536efa8212}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B01. OIr77GRAPHICS\09. OIr77UNBINDIA">
+      <UniqueIdentifier>{19568b68-da0c-4a65-9ec7-ee11cf295847}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B02. DIr77GRAPHICS\00. DIr77GRAPHICS">
+      <UniqueIdentifier>{44a700c5-786a-45a8-ac6e-ed0dae4b51ce}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B02. DIr77GRAPHICS\01. DIr77GFXSTATE">
+      <UniqueIdentifier>{c9f07544-a279-4b28-aba2-d3c4d04f8c15}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B02. DIr77GRAPHICS\02. DIr77GFXOP">
+      <UniqueIdentifier>{364fa928-8844-4242-9e28-9fb7d2b39c2c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B02. DIr77GRAPHICS\03. DIr77GFXIA">
+      <UniqueIdentifier>{d243a755-201e-436d-bcb8-ecd90e029093}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="B02. DIr77GRAPHICS\04. DIr77GFXSLOT">
+      <UniqueIdentifier>{8b3c9f5b-5568-4897-ab99-13a2d0f6e768}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="pch.h">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natvis">
+      <Filter>A00. Ir77PROJECT</Filter>
+    </Natvis>
+  </ItemGroup>
+</Project>

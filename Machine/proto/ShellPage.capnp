@@ -1,0 +1,10 @@
+namespace Machine
+{
+    [default_interface]
+    runtimeclass ShellPage : Microsoft.UI.Xaml.Controls.Page
+    {
+        ShellPage();
+
+    }
+
+}

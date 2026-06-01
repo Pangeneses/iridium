@@ -1,0 +1,339 @@
+﻿<Page
+    x:Class="Machine.DatabaseURIPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:Ir77X="using:Ir77X"
+    mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Ir77X.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <ScrollViewer Margin="6,6,6,6">
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="500"/>
+            </Grid.RowDefinitions>
+
+            <Ir77X:UserFilterHVID
+                x:Name="PostgresConnectionHVID"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="0" Grid.RowSpan="1" 
+                Label="Postgres Connection HVID"/>
+
+            <Ir77X:UserFilterNewItem
+                x:Name="PostgresConnectionMaxPath"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="1" Grid.RowSpan="1" 
+                Label="Tag"/>
+
+            <Ir77X:UserFilterItem
+                x:Name="PostgresConnectionAccessLvl"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="2" Grid.RowSpan="1" 
+                Label="Access Level"/>
+
+            <Border 
+                BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                BorderThickness="1"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="3" Grid.RowSpan="1">
+
+                <Button 
+                    BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                    BorderThickness="1"
+                    Margin="2,2,2,2"
+                    Padding="0,0,0,0"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch">
+                    <TextBlock 
+                        Text="PERMISSIONS"
+                        FontSize="12"/>
+                </Button>
+
+            </Border>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionHost"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="0" Grid.RowSpan="1" 
+                Label="Host"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionHostIPV4"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="1" Grid.RowSpan="1" 
+                Label="Host IPV4"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionHostIPV6"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="2" Grid.RowSpan="1" 
+                Label="Host IPV6"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionPort"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="3" Grid.RowSpan="1" 
+                Label="Port"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionDatabase"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="4" Grid.RowSpan="1" 
+                Label="Database"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionUser"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="5" Grid.RowSpan="1" 
+                Label="User"/>
+
+            <Ir77X:UserPassword
+                x:Name="PostgresConnectionPassword"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="6" Grid.RowSpan="1" 
+                Label="Password"/>
+
+            <Ir77X:UserPicker
+                x:Name="PostgresConnectionPassFile"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="7" Grid.RowSpan="1" 
+                Label="Password File"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionChannelBinding"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="4" Grid.RowSpan="1" 
+                Label="Channel Binding"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionConnectTimeout"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="5" Grid.RowSpan="1" 
+                Label="Connect Timeout"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionClientEncoding"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="6" Grid.RowSpan="1" 
+                Label="Client Encoding"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionOptions"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="7" Grid.RowSpan="1" 
+                Label="Options"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionApplicationName"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="8" Grid.RowSpan="1" 
+                Label="Application Name"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionFallbackApplicationName"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="8" Grid.RowSpan="1" 
+                Label="Fallback Application Name"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionKeepAlives"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="9" Grid.RowSpan="1" 
+                Label="Keep Alives"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionKeepAlivesIdle"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="10" Grid.RowSpan="1" 
+                Label="Keep Alives Idle"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionKeepAlivesInterval"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="11" Grid.RowSpan="1" 
+                Label="Keep Alives Interval"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionKeepAlivesCount"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="12" Grid.RowSpan="1" 
+                Label="Keep Alives Count"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionTCPUserTimeout"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="9" Grid.RowSpan="1" 
+                Label="TCP User Timeout"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionReplication"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="10" Grid.RowSpan="1" 
+                Label="Replication"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionGCCEncMode"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="11" Grid.RowSpan="1" 
+                Label="GCC Enc Mode"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionRequirePeer"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="12" Grid.RowSpan="1" 
+                Label="Require Peer"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionSSLMode"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="13" Grid.RowSpan="1" 
+                Label="SSL Mode"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionSSLCompression"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="13" Grid.RowSpan="1" 
+                Label="SSL Compression"/>
+
+            <Ir77X:UserPicker
+                x:Name="PostgresConnectionSSLCertificate"
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="14" Grid.RowSpan="1" 
+                Label="SSL Certificate"/>
+
+            <Ir77X:UserPicker
+                x:Name="PostgresConnectionSSLKey"
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="15" Grid.RowSpan="1" 
+                Label="SSL Key"/>
+
+            <Ir77X:UserPicker
+                x:Name="PostgresConnectionSSLRootCertificate"
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="16" Grid.RowSpan="1" 
+                Label="SSL Root Certificate"/>
+
+            <Ir77X:UserPicker
+                x:Name="PostgresConnectionSSLCRLDir"
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="17" Grid.RowSpan="1" 
+                Label="SSL CRL Dir"/>
+
+            <Ir77X:UserPicker
+                x:Name="PostgresConnectionSSLCR"
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="18" Grid.RowSpan="1" 
+                Label="SSL CR"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionSSLPassword"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="19" Grid.RowSpan="1" 
+                Label="SSL Password"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionSSLSNI"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="19" Grid.RowSpan="1" 
+                Label="SSL SNI"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionSSLMinProtocolVersion"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="20" Grid.RowSpan="1" 
+                Label="SSL Min. Protocol Version"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionSSLMaxProtocolVersion"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="20" Grid.RowSpan="1" 
+                Label="SSL Max. Protocol Version"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionKrbSrvName"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="21" Grid.RowSpan="1" 
+                Label="Kerberos Server Name"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionGssLib"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="21" Grid.RowSpan="1" 
+                Label="Gss Library"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionService"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="22" Grid.RowSpan="1" 
+                Label="Service"/>
+
+            <Ir77X:UserEntry
+                x:Name="PostgresConnectionTargetSessionAttrs"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="22" Grid.RowSpan="1" 
+                Label="Target Session Attributes"/>
+
+            <Ir77X:UserDivider 
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="23" Grid.RowSpan="1"/>
+
+            <Border 
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="24" Grid.RowSpan="1"
+                BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                BorderThickness="1">
+
+                <TextBox 
+                    Foreground="Black"
+                    AcceptsReturn="True"
+                    TextWrapping="Wrap"
+                    FontWeight="Medium"
+                    FontSize="12"
+                    Padding="3,3,3,3"
+                    PlaceholderText="Add description here ..."
+                    ScrollViewer.VerticalScrollBarVisibility="Visible"/>
+
+            </Border>
+
+        </Grid>
+
+    </ScrollViewer>
+
+</Page>

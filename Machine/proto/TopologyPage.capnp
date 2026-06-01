@@ -1,0 +1,10 @@
+namespace Machine
+{
+    [default_interface]
+    runtimeclass TopologyPage : Microsoft.UI.Xaml.Controls.Page
+    {
+        TopologyPage();
+
+    }
+
+}

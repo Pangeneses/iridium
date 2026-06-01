@@ -1,0 +1,134 @@
+﻿<Page
+    x:Class="Machine.SoftDrivePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:Ir77X="using:Ir77X"
+    mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Ir77X.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <ScrollViewer Margin="6,6,6,6">
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="500"/>
+            </Grid.RowDefinitions>
+
+            <Ir77X:UserFilterHVID 
+                x:Name="SoftDriveHVID"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="0" Grid.RowSpan="1" 
+                Label="SoftDrive HVID"/>
+
+            <Ir77X:UserFilterNewItem 
+                x:Name="SoftDriveName"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="1" Grid.RowSpan="1" 
+                Label="Tag"/>
+
+            <Ir77X:UserFilterItem 
+                x:Name="SoftDrivePartition"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="2" Grid.RowSpan="1" 
+                Label="SoftPartition"/>
+
+            <Ir77X:UserChrono 
+                x:Name="SoftDriveCreated"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="0" Grid.RowSpan="1" 
+                Label="Created"/>
+
+            <Ir77X:UserChrono 
+                x:Name="SoftDriveUpdated"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="1" Grid.RowSpan="1" 
+                Label="Updated"/>
+
+            <Ir77X:UserChrono 
+                x:Name="SoftDriveOpened"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="2" Grid.RowSpan="1" 
+                Label="Opened"/>
+
+            <Ir77X:UserEntry 
+                x:Name="SoftDriveReserved"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="3" Grid.RowSpan="1" 
+                Label="Reserved"/>
+
+            <Ir77X:UserEntry 
+                x:Name="SoftDriveAllocated"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="3" Grid.RowSpan="1" 
+                Label="Allocated"/>
+
+            <Ir77X:UserEntry 
+                x:Name="SoftDriveClusterSize"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="4" Grid.RowSpan="1" 
+                Label="Cluster Size"/>
+
+            <Ir77X:UserEntry 
+                x:Name="SoftDrivePageSize"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="4" Grid.RowSpan="1" 
+                Label="Page Size"/>
+
+            <Ir77X:UserEntry 
+                x:Name="SoftDriveAttSize"
+                Grid.Column="0" Grid.ColumnSpan="1" 
+                Grid.Row="5" Grid.RowSpan="1" 
+                Label="Attribute Size"/>
+
+            <Ir77X:UserFilterItem 
+                x:Name="SoftDriveWhitespaceEncryption"
+                Grid.Column="1" Grid.ColumnSpan="1" 
+                Grid.Row="5" Grid.RowSpan="1" 
+                Label="Whitespace Encryption"/>
+
+            <Ir77X:UserDivider 
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="6" Grid.RowSpan="1"/>
+
+            <Border 
+                Grid.Column="0" Grid.ColumnSpan="2" 
+                Grid.Row="7" Grid.RowSpan="1"
+                BorderBrush="{ThemeResource hv4DButtonBorderStandard}"
+                BorderThickness="1">
+
+                <TextBox 
+                    Foreground="Black"
+                    AcceptsReturn="True"
+                    TextWrapping="Wrap"
+                    FontWeight="Medium"
+                    FontSize="12"
+                    Padding="3,3,3,3"
+                    PlaceholderText="Add description here ..."
+                    ScrollViewer.VerticalScrollBarVisibility="Visible"/>
+
+            </Border>
+
+        </Grid>
+
+    </ScrollViewer>
+
+</Page>
