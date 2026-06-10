@@ -9,7 +9,7 @@
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 
-#include "../service/IIr77PeregrineV.hpp"
+#include "../interface/IIr77PVContext.hpp"
 
 #include "../interface/IIr77PVInstance.hpp"
 #include "../interface/IIr77PVQueue.hpp"
@@ -18,31 +18,31 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-VkInstance Ir77PVDevice::GetInstance() {     
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+VkInstance Ir77PVDevice::GetInstance() {
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
-    
+    context->GetMemberByID(ID_INSTANCE, enlisted);
+
     std::shared_ptr<IIr77PVInstance> instance = QueryAs<IIr77PVInstance>(&GUIDIIr77PVInstance, m_context.get());
 
     VkInstance vk_instance;
     instance->GetVkInstance(&vk_instance);
-    
-    return vk_instance; 
+
+    return vk_instance;
 }
 
-std::vector<VkDeviceQueueCreateInfo> Ir77PVDevice::GetQueueInfo() { 
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+std::vector<VkDeviceQueueCreateInfo> Ir77PVDevice::GetQueueInfo() {
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
-    
+    context->GetMemberByID(ID_INSTANCE, enlisted);
+
     std::shared_ptr<IIr77PVQueue> queue = QueryAs<IIr77PVQueue>(&GUIDIIr77PVQueue, m_context.get());
 
     std::vector<VkDeviceQueueCreateInfo> vk_device_infos;
     queue->GetDeviceQueueCreateInfo(vk_device_infos);
-    
-    return vk_device_infos; 
+
+    return vk_device_infos;
 }
 }  // namespace NSIr77PeregrineV

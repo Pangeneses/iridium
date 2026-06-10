@@ -7,7 +7,7 @@
 
 #include "../dictionary/IDIIr77PeregrineV.hpp"
 
-#include "../service/IIr77PeregrineV.hpp"
+#include "../interface/IIr77PVContext.hpp"
 
 #include "../interface/IIr77PVInstance.hpp"
 #include "../interface/IIr77PVDevice.hpp"
@@ -17,10 +17,10 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 SDL_Window* Ir77PVSurface::GetWindow() {
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, enlisted);
 
     SDL_Window* sdl_window;
     peregrine->GetWindow(&sdl_window);
@@ -29,10 +29,10 @@ SDL_Window* Ir77PVSurface::GetWindow() {
 }
 
 VkInstance Ir77PVSurface::GetInstance() {
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, enlisted);
 
     std::shared_ptr<IIr77PVInstance> instance = QueryAs<IIr77PVInstance>(&GUIDIIr77PVInstance, m_context.get());
 
@@ -43,10 +43,10 @@ VkInstance Ir77PVSurface::GetInstance() {
 }
 
 VkPhysicalDevice Ir77PVSurface::GetPhysicalDevice() {
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, enlisted);
 
     std::shared_ptr<IIr77PVDevice> device = QueryAs<IIr77PVDevice>(&GUIDIIr77PVDevice, enlisted.get());
 
@@ -57,10 +57,10 @@ VkPhysicalDevice Ir77PVSurface::GetPhysicalDevice() {
 }
 
 VkDevice Ir77PVSurface::GetDevice() {
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, enlisted);
 
     std::shared_ptr<IIr77PVDevice> device = QueryAs<IIr77PVDevice>(&GUIDIIr77PVDevice, enlisted.get());
 
@@ -71,10 +71,10 @@ VkDevice Ir77PVSurface::GetDevice() {
 }
 
 std::uint32_t Ir77PVSurface::GetGraphicsFamily() {
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, enlisted);
 
     std::shared_ptr<IIr77PVQueue> queue = QueryAs<IIr77PVQueue>(&GUIDIIr77PVQueue, enlisted.get());
 
@@ -85,10 +85,10 @@ std::uint32_t Ir77PVSurface::GetGraphicsFamily() {
 }
 
 std::uint32_t Ir77PVSurface::GetPresentFamily() {
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, enlisted);
 
     std::shared_ptr<IIr77PVQueue> queue = QueryAs<IIr77PVQueue>(&GUIDIIr77PVQueue, enlisted.get());
 

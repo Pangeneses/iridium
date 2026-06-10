@@ -7,7 +7,7 @@
 
 #include "../Ir77RT/interface/IIr77Enlisted.hpp"
 
-#include "../service/IIr77PeregrineV.hpp"
+#include "../interface/IIr77PVContext.hpp"
 
 #include "../interface/IIr77PVDevice.hpp"
 #include "../interface/IIr77PVSurface.hpp"
@@ -16,10 +16,10 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice() {
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, enlisted);
 
     std::shared_ptr<IIr77PVDevice> device = QueryAs<IIr77PVDevice>(&GUIDIIr77PVDevice, enlisted.get());
 
@@ -30,10 +30,10 @@ VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice() {
 }
 
 VkSurfaceKHR Ir77PVQueue::GetSurface() {
-    std::shared_ptr<IIr77PeregrineV> peregrine = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    peregrine->Context(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, enlisted);
 
     std::shared_ptr<IIr77PVSurface> surface = QueryAs<IIr77PVSurface>(&GUIDIIr77PVSurface, enlisted.get());
 

@@ -5,7 +5,7 @@
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan_core.h>
 
-#include "../service/IIr77PeregrineV.hpp"
+#include "../interface/IIr77PVContext.hpp"
 
 using namespace NSIr77RT;
 
