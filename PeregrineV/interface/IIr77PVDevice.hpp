@@ -3,8 +3,6 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-#include <cstring>
-
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 

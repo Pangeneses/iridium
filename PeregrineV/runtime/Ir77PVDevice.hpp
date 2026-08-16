@@ -5,9 +5,8 @@
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan_core.h>
 
-#include <memory>
 #include <vector>
-#include <cstring>
+#include <memory>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -36,6 +35,8 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
         m_enlisted = std::chrono::system_clock::now();
     }
+
+    ~Ir77PVDevice() { vkDestroyDevice(m_device, nullptr); }
 
    public:
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -93,12 +94,17 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     }
 
     std::shared_ptr<IIr77Return const> InitCreateDeviceInfo() {
-        std::vector<VkDeviceQueueCreateInfo> info_list;
-        info_list = GetQueueInfo();
+        std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
+        queue_create_infos = GetQueueInfo();
+
+        m_phys_device_features.samplerAnisotropy = VK_TRUE;
+        m_phys_device_features.geometryShader = VK_TRUE;
+        m_phys_device_features.multiDrawIndirect = VK_TRUE;
+        m_phys_device_features.independentBlend = VK_TRUE;
 
         m_device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        m_device_create_info.queueCreateInfoCount = static_cast<uint32_t>(info_list.size());
-        m_device_create_info.pQueueCreateInfos = info_list.data();
+        m_device_create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_create_infos.size());
+        m_device_create_info.pQueueCreateInfos = queue_create_infos.data();
         m_device_create_info.enabledExtensionCount = 1;
         m_device_create_info.ppEnabledExtensionNames = DEVICE_EXTENSIONS;
         m_device_create_info.pEnabledFeatures = &m_phys_device_features;
@@ -130,7 +136,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     VkInstance GetInstance();
 
     std::vector<VkDeviceQueueCreateInfo> GetQueueInfo();
-    
+
    private:
     std::shared_ptr<IIr77Enlisted> m_context;
 

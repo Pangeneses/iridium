@@ -36,6 +36,15 @@ typedef struct IIr77PVAllocation : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetMemoryTypeIndex(uint32_t* index) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> Allocate(VkMemoryRequirements const& requirements, VkMemoryPropertyFlags properties, VkDeviceMemory* memory) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> Free(VkDeviceMemory memory) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SelectMemoryType(VkMemoryRequirements const& requirements, VkMemoryPropertyFlags desired,
+                                                                VkPhysicalDeviceMemoryProperties const& mem_props, uint32_t* type_index) = 0;
+
+    /************* GETTERS *************/
+    virtual std::shared_ptr<IIr77Return const> GetPhysicalDeviceMemoryProperties(VkPhysicalDeviceMemoryProperties* props) = 0;
     virtual ~IIr77PVAllocation() = default;
 }* PIr77PVAllocation;
 

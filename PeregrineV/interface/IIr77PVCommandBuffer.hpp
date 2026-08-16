@@ -3,9 +3,6 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-#include <cstring>
-#include <vector>
-
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
@@ -18,7 +15,7 @@ enum class Ir77PVCommandBufferLevel : uint32_t {
     Secondary = 1,  // executed from primary via vkCmdExecuteCommands
 };
 
-struct IIr77PVPregrineV;
+struct IIr77PVPeregrineV;
 struct IIr77PVRenderPass;
 struct IIr77PVFramebuffer;
 struct IIr77PVPipeline;

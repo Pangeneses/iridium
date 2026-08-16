@@ -17,12 +17,12 @@
 #include "../Windows/runtime/CEFMouseEvent.hpp"
 
 // #include "../REDOS/service/Ir77REDOS.hpp"
-#include "../PeregrineV/service/Ir77PeregrineV.hpp"
+// #include "../PeregrineV/service/Ir77PeregrineV.hpp"
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
 using namespace CEF;
-using namespace NSIr77REDOS;
+// using namespace NSIr77REDOS;
 
 namespace Ir77 {
 

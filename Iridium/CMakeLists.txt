@@ -12,10 +12,9 @@ file(GLOB_RECURSE Ir77_SOURCES
 
 add_executable(Ir77 ${Ir77_SOURCES})
 
-# Force system libs to resolve before CEF's bundled copies
 set_target_properties(Ir77 PROPERTIES
-    BUILD_RPATH "/usr/lib/x86_64-linux-gnu"
-    INSTALL_RPATH "/usr/lib/x86_64-linux-gnu"
+    BUILD_RPATH "/usr/lib/x86_64-linux-gnu;${CEF_ROOT}/Release"
+    INSTALL_RPATH "/usr/lib/x86_64-linux-gnu;${CEF_ROOT}/Release"
     BUILD_RPATH_USE_ORIGIN TRUE
 )
 
@@ -39,15 +38,29 @@ set(SDL3_ROOT "$ENV{HOME}/workspace/sdl3")
 target_include_directories(Ir77 PRIVATE ${SDL3_ROOT}/include)
 target_link_libraries(Ir77 PRIVATE ${SDL3_ROOT}/build/libSDL3.so)
 
-# CEF — linked after Vulkan so system Vulkan wins
+# --- CEF ---
 set(CEF_ROOT "$ENV{HOME}/workspace/cef")
+
 set(CEF_WRAPPER_LIB "${CEF_ROOT}/build/libcef_dll_wrapper/libcef_dll_wrapper.a")
-target_include_directories(Ir77 PRIVATE ${CEF_ROOT})
+
+# CEF headers
+target_include_directories(Ir77 PRIVATE 
+    ${CEF_ROOT}
+    ${CEF_ROOT}/include)
+
+# Link engine + wrapper
 target_link_libraries(Ir77 PRIVATE
     ${CEF_WRAPPER_LIB}
     ${CEF_ROOT}/Release/libcef.so
 )
+
 target_compile_definitions(Ir77 PRIVATE WRAPPING_CEF_SHARED)
+
+# Copy runtime resources next to the executable
+add_custom_command(TARGET Ir77 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${CEF_ROOT}/Release/libcef.so $<TARGET_FILE_DIR:Ir77>
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CEF_ROOT}/Resources $<TARGET_FILE_DIR:Ir77>/Resources
+)
 
 target_link_libraries(Ir77 PRIVATE
     -Wl,--whole-archive

@@ -35,6 +35,10 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         m_enlisted = std::chrono::system_clock::now();
     }
 
+    ~Ir77PVInstance() {
+      vkDestroyInstance(m_instance, nullptr);
+    }
+
    public:
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVInstance>(uid);
@@ -131,7 +135,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-   private:
+    private:
     std::shared_ptr<IIr77Enlisted> m_context;
 
     VkInstance m_instance{VK_NULL_HANDLE};

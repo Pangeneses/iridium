@@ -6,6 +6,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PVContext.hpp"
 
 #include "../interface/IIr77PVContext.hpp"
 
@@ -17,7 +18,7 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 SDL_Window* Ir77PVSurface::GetWindow() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_INSTANCE, enlisted);
@@ -29,7 +30,7 @@ SDL_Window* Ir77PVSurface::GetWindow() {
 }
 
 VkInstance Ir77PVSurface::GetInstance() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_INSTANCE, enlisted);

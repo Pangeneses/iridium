@@ -1,11 +1,9 @@
 #include "Ir77PVQueue.hpp"
 
-#include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
+#include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PVContext.hpp"
 
-#include "../Ir77RT/interface/IIr77Enlisted.hpp"
+#include "../../Ir77RT/interface//IIr77Enlisted.hpp"
 
 #include "../interface/IIr77PVContext.hpp"
 
@@ -16,7 +14,7 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_INSTANCE, enlisted);
@@ -30,7 +28,7 @@ VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice() {
 }
 
 VkSurfaceKHR Ir77PVQueue::GetSurface() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_INSTANCE, enlisted);

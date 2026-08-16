@@ -1,16 +1,15 @@
 #pragma once
 
+#include <SDL3/SDL_stdinc.h>
 #include <vulkan/vulkan.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan_core.h>
 
 #include <vector>
-#include <cstring>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../dictionary/IDIIr77PeregrineV.hpp"
 #include "../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -38,6 +37,8 @@ class Ir77PVQueue : public Ir77Enlisted, public IIr77PVQueue, public std::enable
 
         m_enlisted = std::chrono::system_clock::now();
     }
+
+    ~Ir77PVQueue() {}
 
    public:
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -80,60 +81,61 @@ class Ir77PVQueue : public Ir77Enlisted, public IIr77PVQueue, public std::enable
         VkPhysicalDevice device = GetPhysicalDevice();
         VkSurfaceKHR surface = GetSurface();
 
-        m_queue_count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(device, &m_queue_count, nullptr);
+        Uint32 queue_count = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_count, nullptr);
 
-        m_family_prop_list.resize(m_queue_count);
-        vkGetPhysicalDeviceQueueFamilyProperties(device, &m_queue_count, m_family_prop_list.data());
+        m_family_prop_list.resize(queue_count);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_count, m_family_prop_list.data());
 
-        for (uint32_t i = 0; i < m_queue_count; ++i) {
-            if (m_family_prop_list[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) m_graphics_family = i;
+        bool is_display = false;
+        for (uint32_t i = 0; i < queue_count; ++i) {
+            m_device_queues.push_back({});
+
+            m_device_queues.back().index = i;
+
+            if (m_family_prop_list[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) m_device_queues.back().type = Ir77PVQueueType::Graphics;
+            if (m_family_prop_list[i].queueFlags & VK_QUEUE_COMPUTE_BIT) m_device_queues.back().type = Ir77PVQueueType::Compute;
+            if (m_family_prop_list[i].queueFlags & VK_QUEUE_TRANSFER_BIT) m_device_queues.back().type = Ir77PVQueueType::Transfer;
+            if (m_family_prop_list[i].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) m_device_queues.back().type = Ir77PVQueueType::Sparse;
+            if (m_family_prop_list[i].queueFlags & VK_QUEUE_PROTECTED_BIT) m_device_queues.back().type = Ir77PVQueueType::Protected;
+            if (m_family_prop_list[i].queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) m_device_queues.back().type = Ir77PVQueueType::Decode;
+            if (m_family_prop_list[i].queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) m_device_queues.back().type = Ir77PVQueueType::Encode;
 
             VkBool32 present_support = VK_FALSE;
             vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &present_support);
-            if (present_support) m_present_family = i;
+            if (present_support) m_device_queues.back().presentation = VK_TRUE;
 
-            if (m_graphics_family != UINT32_MAX && m_present_family != UINT32_MAX) break;
+            if (m_device_queues.back().type == Ir77PVQueueType::Graphics && m_device_queues.back().presentation == VK_TRUE) is_display = true;
         }
 
-        if (m_graphics_family == UINT32_MAX || m_present_family == UINT32_MAX) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: required queue families not found.");
-        }
-    }
-
-    std::shared_ptr<IIr77Return const> InitQueueInfos() {
-        auto add_queue = [&](uint32_t family) {
-            VkDeviceQueueCreateInfo qi{};
-            qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            qi.queueFamilyIndex = family;
-            qi.queueCount = 1;
-            qi.pQueuePriorities = &m_priority;
-            m_queue_create_info_list.push_back(qi);
-        };
-
-        add_queue(m_graphics_family);
-        if (m_present_family != m_graphics_family) add_queue(m_present_family);
+        if (!is_display) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: required queue families not found.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateResources() { return Ir77RETURN<Ir77OperationSucceeded>(); }
+    std::shared_ptr<IIr77Return const> InitQueueCreateInfos() {
+        float priority = 1.0f;
 
-    std::shared_ptr<IIr77Return const> GetDeviceQueueCreateInfo(std::vector<VkDeviceQueueCreateInfo>& info_list) {
+        for (int i = 0; i < m_family_prop_list.size(); i++) {
+            VkDeviceQueueCreateInfo qi{};
+            qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            qi.pNext = nullptr;
+            qi.flags = m_family_prop_list.at(i).queueFlags;
+            qi.queueFamilyIndex = i;
+            qi.queueCount = 1;
+            qi.pQueuePriorities = &priority;
+            m_queue_create_info_list.push_back(qi);
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+   public:
+    std::shared_ptr<IIr77Return const> GetQueueCreateInfos(std::vector<VkDeviceQueueCreateInfo>& info_list) {
         info_list = m_queue_create_info_list;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-
-    std::shared_ptr<IIr77Return const> GetQueue(VkQueue& m_queue) { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
-    std::shared_ptr<IIr77Return const> Submit(std::shared_ptr<IIr77PVCommandBuffer const>& cmd) { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
-    std::shared_ptr<IIr77Return const> WaitIdle() { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
-    std::shared_ptr<IIr77Return const> Present(std::shared_ptr<IIr77PVSurface const>& surface) { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
-    std::shared_ptr<IIr77Return const> GetQueueType(Ir77PVQueueType& type) const { return Ir77RETURN<Ir77OperationSucceeded>(); }
 
    private:
     VkPhysicalDevice GetPhysicalDevice();
@@ -143,24 +145,10 @@ class Ir77PVQueue : public Ir77Enlisted, public IIr77PVQueue, public std::enable
    private:
     std::shared_ptr<IIr77Enlisted> m_context;
 
-    uint32_t m_queue_count = 0;
-
     std::vector<VkQueueFamilyProperties> m_family_prop_list;
-
-    uint32_t m_graphics_family{UINT32_MAX};
-
-    float m_priority = 1.0f;
 
     std::vector<VkDeviceQueueCreateInfo> m_queue_create_info_list;
 
-    uint32_t m_present_family{UINT32_MAX};
-
-    /*********************************************** */
-
-    VkQueue m_queue{VK_NULL_HANDLE};
-
-    VkQueue m_gfx_queue{VK_NULL_HANDLE};
-
-    VkQueue m_present_queue{VK_NULL_HANDLE};
+    std::vector<Ir77PVDeviceQueue> m_device_queues;
 };
 }  // namespace NSIr77PeregrineV

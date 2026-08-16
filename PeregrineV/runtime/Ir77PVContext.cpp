@@ -1,10 +1,5 @@
 #include "Ir77PVContext.hpp"
 
-#include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
-
 #include "../dictionary/IDIr77PVContext.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -14,8 +9,6 @@
 #include "../runtime/Ir77PVDevice.hpp"
 #include "../runtime/Ir77PVQueue.hpp"
 #include "../runtime/Ir77PVSurface.hpp"
-#include "../runtime/Ir77PVMemory.hpp"
-#include "../runtime/Ir77PVMemoryStrategy.hpp"
 #include "../runtime/Ir77PVAllocation.hpp"
 
 /*
@@ -50,11 +43,8 @@ std::shared_ptr<IIr77Return const> Ir77PVContext::BuildContext() {
     m_context.clear();
     m_context.emplace(ID_INSTANCE, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVInstance>()));
     m_context.emplace(ID_DEVICE, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVDevice>()));
-    m_context.emplace(ID_QUEUE_GFX, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVQueue>()));
-    m_context.emplace(ID_QUEUE_COMPUTE, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVQueue>()));
+    m_context.emplace(ID_QUEUES, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVQueue>()));
     m_context.emplace(ID_SURFACE, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVSurface>()));
-    m_context.emplace(ID_MEMORY, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVMemory>()));
-    m_context.emplace(ID_MEMORY_STRATEGY, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVMemoryStrategy>()));
     m_context.emplace(ID_ALLOCATION, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVAllocation>()));
 
     // Uncomment as implementations are ready:

@@ -6,13 +6,13 @@
 #include <chrono>
 #include <thread>
 
-#include "IDIr77RET.hpp"
+#include "../Ir77RT/dictionary/IDIr77RET.hpp"
 #include "include/internal/cef_linux.h"
 #include "include/cef_app.h"
 
 #include "./iridium.hpp"
 
-#include "../../Ir77RT/runtime/Ir77Return.hpp"
+#include "../Ir77RT/runtime/Ir77Return.hpp"
 
 struct IridiumArgs {
     std::string url{};
@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
             }
             return 0;
         }
-        Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitCEF");
+        // Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitCEF");
         return 1;
     }
 
@@ -76,14 +76,14 @@ int main(int argc, char* argv[]) {
     try {
         iridium.InitWindow();
     } catch (std::runtime_error error) {
-        Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitWindow");
+        // Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitWindow");
         return 1;
     }
 
     try {
         iridium.InitVulkan();
     } catch (std::runtime_error error) {
-        Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitVulkan");
+        // Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitVulkan");
         return 1;
     }
 

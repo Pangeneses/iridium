@@ -6,6 +6,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PVContext.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 
@@ -19,7 +20,7 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 VkInstance Ir77PVDevice::GetInstance() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_INSTANCE, enlisted);
@@ -33,7 +34,7 @@ VkInstance Ir77PVDevice::GetInstance() {
 }
 
 std::vector<VkDeviceQueueCreateInfo> Ir77PVDevice::GetQueueInfo() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_INSTANCE, enlisted);
@@ -41,7 +42,7 @@ std::vector<VkDeviceQueueCreateInfo> Ir77PVDevice::GetQueueInfo() {
     std::shared_ptr<IIr77PVQueue> queue = QueryAs<IIr77PVQueue>(&GUIDIIr77PVQueue, m_context.get());
 
     std::vector<VkDeviceQueueCreateInfo> vk_device_infos;
-    queue->GetDeviceQueueCreateInfo(vk_device_infos);
+    queue->GetQueueCreateInfos(vk_device_infos);
 
     return vk_device_infos;
 }

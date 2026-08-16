@@ -6,6 +6,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PVContext.hpp"
 
 #include "../interface/IIr77PVContext.hpp"
 
