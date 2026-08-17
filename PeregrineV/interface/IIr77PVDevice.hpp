@@ -24,10 +24,12 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> InitCreateDeviceInfo() = 0;
 
+    virtual std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport() = 0;
+
     virtual std::shared_ptr<IIr77Return const> CreateDevice() = 0;
 
     /************* GETTERS *************/
-    virtual std::shared_ptr<IIr77Return const> GetVkPhysicalDevice(VkPhysicalDevice* phys_device) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetVkPhysicalDevice(VkPhysicalDevice* phys_device, std::uint32_t index) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetVkDevice(VkDevice* device) = 0;
 

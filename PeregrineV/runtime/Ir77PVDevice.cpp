@@ -33,7 +33,7 @@ VkInstance Ir77PVDevice::GetInstance() {
     return vk_instance;
 }
 
-std::vector<VkDeviceQueueCreateInfo> Ir77PVDevice::GetQueueInfo() {
+std::vector<VkDeviceQueueCreateInfo> Ir77PVDevice::GetQueueInfos() {
     std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
@@ -45,5 +45,19 @@ std::vector<VkDeviceQueueCreateInfo> Ir77PVDevice::GetQueueInfo() {
     queue->GetQueueCreateInfos(vk_device_infos);
 
     return vk_device_infos;
+}
+
+std::vector<Ir77PVDeviceQueue>  Ir77PVDevice::GetQueueFamilies() {
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+
+    std::shared_ptr<IIr77Enlisted> enlisted;
+    context->GetMemberByID(ID_INSTANCE, enlisted);
+
+    std::shared_ptr<IIr77PVQueue> queue = QueryAs<IIr77PVQueue>(&GUIDIIr77PVQueue, m_context.get());
+
+    std::vector<Ir77PVDeviceQueue> vk_queue_families;
+    queue->GetQueueFamilies(vk_queue_families);
+
+    return vk_queue_families;
 }
 }  // namespace NSIr77PeregrineV

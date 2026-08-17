@@ -25,7 +25,7 @@ enum class Ir77PVQueueType : uint32_t {
 struct Ir77PVDeviceQueue {
     VkQueue queue{VK_NULL_HANDLE};
     Ir77PVQueueType type{Ir77PVQueueType::Unknown};
-    Uint32 index{UINT32_MAX};
+    std::uint32_t index{UINT32_MAX};
     VkBool32 presentation{false};
 };
 
@@ -46,7 +46,7 @@ typedef struct IIr77PVQueue : virtual public IIr77Enlisted {
     /************* GETTERS *************/
     virtual std::shared_ptr<IIr77Return const> GetQueueCreateInfos(std::vector<VkDeviceQueueCreateInfo>& info_list) = 0;
 
-    //virtual std::shared_ptr<IIr77Return const> GetQueue(std::vector<VkDeviceQueueCreateInfo>& info_list) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVDeviceQueue>& families) = 0;
 
     virtual ~IIr77PVQueue() = default;
 }* PIr77PVQueue;

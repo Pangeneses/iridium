@@ -85,7 +85,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         m_application_info.pEngineName = "Iridium";
         m_application_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         m_application_info.apiVersion = VK_API_VERSION_1_3;
-    
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
@@ -108,20 +108,20 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
     }
 
     std::shared_ptr<IIr77Return const> InitCreateInfo() {
-        m_instance_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        m_instance_create_info.pApplicationInfo = &m_application_info;
-        m_instance_create_info.enabledExtensionCount = static_cast<uint32_t>(m_extensions.size());
-        m_instance_create_info.ppEnabledExtensionNames = m_extensions.data();
+        m_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        m_create_info.pApplicationInfo = &m_application_info;
+        m_create_info.enabledExtensionCount = static_cast<uint32_t>(m_extensions.size());
+        m_create_info.ppEnabledExtensionNames = m_extensions.data();
         if (ENABLE_VALIDATION) {
-            m_instance_create_info.enabledLayerCount = 1;
-            m_instance_create_info.ppEnabledLayerNames = VALIDATION_LAYERS;
+            m_create_info.enabledLayerCount = 1;
+            m_create_info.ppEnabledLayerNames = VALIDATION_LAYERS;
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     std::shared_ptr<IIr77Return const> InitCreateInstance() {
-        if (vkCreateInstance(&m_instance_create_info, nullptr, &m_instance) != VK_SUCCESS) {
+        if (vkCreateInstance(&m_create_info, nullptr, &m_instance) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateInstance failed.");
         }
 
@@ -138,14 +138,14 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
     private:
     std::shared_ptr<IIr77Enlisted> m_context;
 
-    VkInstance m_instance{VK_NULL_HANDLE};
-
     VkApplicationInfo m_application_info;
+
+    VkInstanceCreateInfo m_create_info;
 
     uint32_t m_sdl_ext_count;
 
     std::vector<const char*> m_extensions;
 
-    VkInstanceCreateInfo m_instance_create_info;
+    VkInstance m_instance{VK_NULL_HANDLE};
 };
 }  // namespace NSIr77PeregrineV

@@ -83,87 +83,102 @@ class Ir77PVSurface : public Ir77Enlisted, public IIr77PVSurface, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> InitSurfaceCapabilities() {
-        VkPhysicalDevice phys_device = GetPhysicalDevice();
+    std::shared_ptr<IIr77Return const> QuerySwapChainSupport(std::uint32_t index, SwapChainSupportDetails& details) {
+        VkPhysicalDevice phys_device = GetPhysicalDevice(index);
         SDL_Window* window = GetWindow();
 
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_device, m_surface, &m_surface_capabilities);
+        vkGetPhysicalDeviceProperties(phys_device, &details.device_properties);
 
-        if (m_surface_capabilities.currentExtent.width != UINT32_MAX) {
-            m_swapchain_extent = m_surface_capabilities.currentExtent;
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_device, m_surface, &details.capabilities);
+
+        uint32_t format_count;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, m_surface, &format_count, nullptr);
+
+        if (format_count != 0) {
+            details.formats.resize(format_count);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, m_surface, &format_count, details.formats.data());
+        }
+
+        uint32_t present_mode_count;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(phys_device, m_surface, &present_mode_count, nullptr);
+
+        if (present_mode_count != 0) {
+            details.present_modes.resize(present_mode_count);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(phys_device, m_surface, &present_mode_count, details.present_modes.data());
+        }
+
+        if (details.formats.empty() || details.present_modes.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapChain: Swap Chain not supported.");
+
+        m_details.emplace(index, details);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SwapSurfaceFormat(std::uint32_t index) {
+        for (const auto& format : m_details[index].formats) {
+            if (format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                m_details[index].format = VK_FORMAT_B8G8R8A8_SRGB;
+                m_details[index].color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+                break;
+            }
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> PresentMode(std::uint32_t index, bool& available) {
+        for (const auto& mode : m_details[index].present_modes) {
+            if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+                m_details[index].present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+                break;
+            }
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SurfaceCapabilities(std::uint32_t index) {
+        auto capabilities = m_details[index].capabilities;
+
+        if (capabilities.currentExtent.width != UINT32_MAX) {
+            m_details[index].swapchain_extent = capabilities.currentExtent;
         } else {
-            int w, h;
-            SDL_GetWindowSizeInPixels(window, &w, &h);
-            m_swapchain_extent.width = static_cast<uint32_t>(w);
-            m_swapchain_extent.height = static_cast<uint32_t>(h);
+            int width, height;
+
+            SDL_GetWindowSizeInPixels(m_window, &width, &height);
+
+            VkExtent2D actual_extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+
+            m_details[index].swapchain_extent.width = std::clamp(actual_extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+            m_details[index].swapchain_extent.height = std::clamp(actual_extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
         }
 
-        m_image_count = m_surface_capabilities.minImageCount + 1;
-        if (m_surface_capabilities.maxImageCount > 0 && m_image_count > m_surface_capabilities.maxImageCount)
-            m_image_count = m_surface_capabilities.maxImageCount;
+        m_details[index].imageCount = capabilities.minImageCount + 1;
+        if (capabilities.maxImageCount > 0 && m_details[index].imageCount > capabilities.maxImageCount)
+            m_details[index].imageCount = capabilities.maxImageCount;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> InitPresentMode() {
-        VkPhysicalDevice phys_device = GetPhysicalDevice();
-
-        m_present_mode_count = 0;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(phys_device, m_surface, &m_present_mode_count, nullptr);
-
-        m_present_modes.resize(m_present_mode_count);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(phys_device, m_surface, &m_present_mode_count, m_present_modes.data());
-
-        m_present_mode = VK_PRESENT_MODE_FIFO_KHR;
-        for (auto& m : m_present_modes) {
-            if (m == VK_PRESENT_MODE_MAILBOX_KHR) {
-                m_present_mode = m;
-                break;
-            }
-        }
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> InitSurfaceFormat() {
-        VkPhysicalDevice phys_device = GetPhysicalDevice();
-
-        m_format_count = 0;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, m_surface, &m_format_count, nullptr);
-
-        m_surface_formats.resize(m_format_count);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, m_surface, &m_format_count, m_surface_formats.data());
-
-        m_surface_format = m_surface_formats[0];
-        for (auto& f : m_surface_formats) {
-            if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-                m_surface_format = f;
-                break;
-            }
-        }
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> InitSwapChainInfo() {
+    std::shared_ptr<IIr77Return const> InitSwapChainInfo(std::uint32_t index) {
         std::uint32_t gfx_family = GetGraphicsFamily();
         std::uint32_t present_family = GetPresentFamily();
 
+        auto const& details = m_details[index];
+
         m_swapchain_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         m_swapchain_info.surface = m_surface;
-        m_swapchain_info.minImageCount = m_image_count;
-        m_swapchain_info.imageFormat = m_surface_format.format;
-        m_swapchain_info.imageColorSpace = m_surface_format.colorSpace;
-        m_swapchain_info.imageExtent = m_swapchain_extent;
+        m_swapchain_info.minImageCount = details.imageCount;
+        m_swapchain_info.imageFormat = details.format;
+        m_swapchain_info.imageColorSpace = details.color_space;
+        m_swapchain_info.imageExtent = details.swapchain_extent;
         m_swapchain_info.imageArrayLayers = 1;
         m_swapchain_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        m_swapchain_info.preTransform = m_surface_capabilities.currentTransform;
+        m_swapchain_info.preTransform = details.capabilities.currentTransform;
         m_swapchain_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        m_swapchain_info.presentMode = m_present_mode;
+        m_swapchain_info.presentMode = details.present_mode;
         m_swapchain_info.clipped = VK_TRUE;
 
-        m_family_indices.push_back(gfx_family);
-        m_family_indices.push_back(present_family);
         if (gfx_family != present_family) {
             m_swapchain_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
             m_swapchain_info.queueFamilyIndexCount = 2;
@@ -235,9 +250,9 @@ class Ir77PVSurface : public Ir77Enlisted, public IIr77PVSurface, public std::en
 
     VkInstance GetInstance();
 
-    VkPhysicalDevice GetPhysicalDevice();
+    VkPhysicalDevice GetPhysicalDevice(std::uint32_t index);
 
-    VkDevice GetDevice();
+    VkDevice GetDevice(std::uint32_t index);
 
     std::uint32_t GetGraphicsFamily();
 
@@ -248,27 +263,11 @@ class Ir77PVSurface : public Ir77Enlisted, public IIr77PVSurface, public std::en
 
     VkSurfaceKHR m_surface{VK_NULL_HANDLE};
 
-    VkSurfaceCapabilitiesKHR m_surface_capabilities{};
+    std::map<std::uint32_t, SwapChainSupportDetails> m_details;
 
-    std::uint32_t m_image_count = 0;
-
-    VkExtent2D m_swapchain_extent{};
-
-    std::uint32_t m_present_mode_count = 0;
-
-    std::vector<VkPresentModeKHR> m_present_modes;
-
-    VkPresentModeKHR m_present_mode{VK_PRESENT_MODE_FIFO_KHR};
-
-    std::uint32_t m_format_count = 0;
-
-    std::vector<VkSurfaceFormatKHR> m_surface_formats;
-
-    VkSurfaceFormatKHR m_surface_format{};
+    /*****************************************************/
 
     VkSwapchainCreateInfoKHR m_swapchain_info{};
-
-    std::vector<std::uint32_t> m_family_indices;
 
     VkSwapchainKHR m_swapchain{VK_NULL_HANDLE};
 
