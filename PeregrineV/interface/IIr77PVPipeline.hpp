@@ -25,23 +25,9 @@ struct IIr77PVRenderPass;
 typedef struct IIr77PVPipeline : virtual public IIr77Enlisted {
     IIr77PVPipeline() = default;
 
-    virtual std::shared_ptr<IIr77Return const> SetShader(std::shared_ptr<IIr77PVShader const>& shader) = 0;
+    virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetShader(std::shared_ptr<IIr77PVShader const>& shader) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVDescriptorLayout const>& layout) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetLayout(std::shared_ptr<IIr77PVDescriptorLayout const>& layout) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass const>& pass) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetRenderPass(std::shared_ptr<IIr77PVRenderPass const>& pass) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetType(Ir77PVPipelineType const& type) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetType(Ir77PVPipelineType& type) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> Build() = 0;
+    virtual std::shared_ptr<IIr77Return const> CreatePipeline() = 0;
 
     virtual ~IIr77PVPipeline() = default;
 }* PIr77PVPipeline;

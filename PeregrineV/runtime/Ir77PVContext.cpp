@@ -4,17 +4,15 @@
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 
-
-#include "../runtime/Ir77PVInstance.hpp"
-#include "../runtime/Ir77PVDevice.hpp"
-#include "../runtime/Ir77PVQueue.hpp"
-#include "../runtime/Ir77PVSurface.hpp"
-#include "../runtime/Ir77PVAllocation.hpp"
+#include "../runtime/GPU/Ir77PVInstance.hpp"
+#include "../runtime/GPU/Ir77PVDevice.hpp"
+#include "../runtime/GPU/Ir77PVQueue.hpp"
+#include "../runtime/GPU/Ir77PVSwapchain.hpp"
 
 /*
 #include "../runtime/Ir77PVBarrier.hpp"
 #include "../runtime/Ir77PVBuffer.hpp"
-#include "../runtime/Ir77PVCommandBuffer.hpp"
+#include "../runtime/Ir77PVCmdBuffer.hpp"
 #include "../runtime/Ir77PVDepthTarget.hpp"
 #include "../runtime/Ir77PVDescriptorLayout.hpp"
 #include "../runtime/Ir77PVDescriptorSet.hpp"
@@ -44,10 +42,9 @@ std::shared_ptr<IIr77Return const> Ir77PVContext::BuildContext() {
     m_context.emplace(ID_INSTANCE, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVInstance>()));
     m_context.emplace(ID_DEVICE, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVDevice>()));
     m_context.emplace(ID_QUEUES, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVQueue>()));
-    m_context.emplace(ID_SURFACE, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVSurface>()));
-    m_context.emplace(ID_ALLOCATION, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVAllocation>()));
+    m_context.emplace(ID_SWAPCHAIN, std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVSwapchain>()));
 
-    // Uncomment as implementations are ready:
+    // Uncomment as implementations are ready
     // m_context.emplace(ID_BUFFER,                    std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVBuffer>()));
     // m_context.emplace(ID_BUFFER_STAGING,            std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVBuffer>()));
     // m_context.emplace(ID_BUFFER_VERTEX,             std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVBuffer>()));
@@ -85,8 +82,8 @@ std::shared_ptr<IIr77Return const> Ir77PVContext::BuildContext() {
     // m_context.emplace(ID_FRAME_1,                   std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVFrame>()));
     // m_context.emplace(ID_FRAMEBUFFER_0,             std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVFrameBuffer>()));
     // m_context.emplace(ID_FRAMEBUFFER_1,             std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVFrameBuffer>()));
-    // m_context.emplace(ID_BARRIER,                   std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVCommandBuffer>()));
-    // m_context.emplace(ID_COMMAND_BUFFER_0,          std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVCommandBuffer>()));
+    // m_context.emplace(ID_BARRIER,                   std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVCmdBuffer>()));
+    // m_context.emplace(ID_COMMAND_BUFFER_0,          std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVCmdBuffer>()));
     // m_context.emplace(ID_COMMAND_BUFFER_1,          std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVSemaphore>()));
     // m_context.emplace(ID_SEMAPHORE_IMAGE_AVAIL_0,   std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVSemaphore>()));
     // m_context.emplace(ID_SEMAPHORE_IMAGE_AVAIL_1,   std::static_pointer_cast<IIr77Enlisted>(std::make_shared<Ir77PVSemaphore>()));
@@ -98,13 +95,21 @@ std::shared_ptr<IIr77Return const> Ir77PVContext::BuildContext() {
     return Ir77RETURN<Ir77OperationSucceeded>();
 }
 
+std::shared_ptr<IIr77Return const> Ir77PVContext::InitializePipeline() { return Ir77RETURN<Ir77OperationSucceeded>(); }
+
+std::shared_ptr<IIr77Return const> Ir77PVContext::GetWindow(Ir77Window& window) {
+    window = m_window;
+
+    return Ir77RETURN<Ir77OperationSucceeded>();
+}
+
 std::shared_ptr<IIr77Return const> Ir77PVContext::GetContext(std::map<std::uint64_t const, std::shared_ptr<IIr77Enlisted>>& context) {
     context = m_context;
 
     return Ir77RETURN<Ir77OperationSucceeded>();
 }
 
-std::shared_ptr<IIr77Return const> Ir77PVContext::GetMemberByID(std::uint64_t const& id, std::shared_ptr<IIr77Enlisted> member) {
+std::shared_ptr<IIr77Return const> Ir77PVContext::GetMemberByID(std::uint64_t const& id, std::shared_ptr<IIr77Enlisted>& member) {
     member = m_context.at(id);
 
     return Ir77RETURN<Ir77OperationSucceeded>();

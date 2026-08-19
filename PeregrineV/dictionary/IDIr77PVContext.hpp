@@ -26,7 +26,7 @@ static const std::uint64_t ID_QUEUE_ENCODE = 0xceb630adbe7f4d74;
 
 static const std::uint64_t ID_QUEUE_DECODE = 0xaec751afba8f4d74;
 
-static const std::uint64_t ID_SURFACE = 0x2947183056471829;
+static const std::uint64_t ID_SWAPCHAIN = 0x2947183056471829;
 
 // Memory layer — peers, created once.
 // -----------------------------------------------------------------------------------------------------------------------------------------

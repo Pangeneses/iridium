@@ -13,6 +13,10 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+struct Ir77Window {
+    SDL_Window* window{nullptr};
+};
+
 struct IIr77PVPregrineV;
 struct IIr77PVQueue;
 
@@ -21,6 +25,10 @@ typedef struct IIr77PVContext : virtual public IIr77Enlisted {
     IIr77PVContext() = default;
 
     virtual std::shared_ptr<IIr77Return const> BuildContext() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> InitializePipeline() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetWindow(Ir77Window& window) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetContext(std::map<std::uint64_t const, std::shared_ptr<IIr77Enlisted>>& context) = 0;
 

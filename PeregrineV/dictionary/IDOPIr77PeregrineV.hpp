@@ -22,9 +22,7 @@ namespace NSIr77PeregrineV {
 
 inline Ir77GUID GUIDOPIr77PeregrineV{(static_cast<unsigned __int128>(0x7371AD5F4E4C4219) << 64) | 0x8EEB4250394B260D};
 
-inline Ir77GUID GUIDOPIr77PVLifetime{(static_cast<unsigned __int128>(0x7371AD5F4E4C4219) << 64) | 0x8EEB4250394B260D};
-inline Ir77GUID GUIDOPIr77PVAsset{(static_cast<unsigned __int128>(0x7371AD5F4E4C4219) << 64) | 0x8EEB4250394B260D};
-inline Ir77GUID GUIDOPIr77PVPump{(static_cast<unsigned __int128>(0x7371AD5F4E4C4219) << 64) | 0x8EEB4250394B260D};
+inline Ir77GUID GUIDOPIr77PVServer{(static_cast<unsigned __int128>(0x7371AD5F4E4C4219) << 64) | 0x8EEB4250394B260D};
 
 class IDOPIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std::enable_shared_from_this<IDIIr77MPVM> {
    public:
@@ -77,9 +75,7 @@ class IDOPIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public s
    private:
     std::map<std::string, IIr77GUID const*> m_index{
         {"GUIDOPIr77PeregrineV", &GUIDOPIr77PeregrineV},
-        {"GUIDOPIr77PVLifetime", &GUIDOPIr77PVLifetime},
-        {"GUIDOPIr77PVAsset", &GUIDOPIr77PVAsset},
-        {"GUIDOPIr77PVPump", &GUIDOPIr77PVPump},
+        {"GUIDOPIr77PVServer", &GUIDOPIr77PVServer},
     };
 };
 

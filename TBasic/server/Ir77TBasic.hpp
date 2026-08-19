@@ -376,7 +376,7 @@ class Ir77Basic : public Ir77Enlisted, public IIr77Dispatch, public std::enable_
     }
 
    public:
-    std::shared_ptr<IIr77Return const> Dispatch(std::shared_ptr<IIr77GUID const>& uid, std::shared_ptr<IIr77Stack const>& stack) {
+    std::shared_ptr<IIr77Return const> Dispatch(std::shared_ptr<IIr77Stack const>& stack) {
         return m_patch->Forward(stack);
     }
 
@@ -430,6 +430,47 @@ class Ir77Basic : public Ir77Enlisted, public IIr77Dispatch, public std::enable_
         if (*uid == GUIDOPIr77TextBlobW) {
             m_textblob_w_map.emplace(id, std::make_shared<Ir77TextBlobW>());
             obj = std::dynamic_pointer_cast<IIr77Enlisted>(m_textblob_w_map.at(id));
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> Garbage(std::shared_ptr<IIr77GUID const>& uid, std::uint64_t const& id) {
+        if (*uid == GUIDOPIr77AlphaNumeric) {
+            m_alpha_numeric_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77Numeric) {
+            m_numeric_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77UID) {
+            m_uid_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77MMM) {
+            m_mmm_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77CHRONO) {
+            m_chrono_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77MMDDYYYY) {
+            m_mmddyyyy_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77HHMMSS) {
+            m_hhmmss_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77MaxPath) {
+            m_maxpath_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77SysID) {
+            m_sysid_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77Hex) {
+            m_hex_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77TextBlobA) {
+            m_textblob_a_map.erase(id);
+        }
+        if (*uid == GUIDOPIr77TextBlobW) {
+            m_textblob_w_map.erase(id);
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();

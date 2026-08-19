@@ -18,7 +18,7 @@ enum class Ir77PVIndexType : uint32_t {
 };
 
 struct IIr77PVBuffer;
-struct IIr77PVCommandBuffer;
+struct IIr77PVCmdBuffer;
 
 typedef struct IIr77PVMesh : virtual public IIr77Enlisted {
     IIr77PVMesh() = default;
@@ -47,9 +47,9 @@ typedef struct IIr77PVMesh : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetIndexType(Ir77PVIndexType& type) const = 0;
 
-    virtual std::shared_ptr<IIr77Return const> Bind(std::shared_ptr<IIr77PVCommandBuffer const>& cmd) = 0;
+    virtual std::shared_ptr<IIr77Return const> Bind(std::shared_ptr<IIr77PVCmdBuffer const>& cmd) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> Draw(std::shared_ptr<IIr77PVCommandBuffer const>& cmd, uint32_t instance_count, uint32_t first_instance) = 0;
+    virtual std::shared_ptr<IIr77Return const> Draw(std::shared_ptr<IIr77PVCmdBuffer const>& cmd, uint32_t instance_count, uint32_t first_instance) = 0;
 
     virtual std::shared_ptr<IIr77Return const> Build() = 0;
 

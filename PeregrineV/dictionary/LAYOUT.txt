@@ -10,7 +10,7 @@ IIr77PVDevice wraps both the physical and logical device. It depends on Instance
 
 IIr77PVQueue sits between physical device selection and logical device creation. It performs family enumeration, builds the VkDeviceQueueCreateInfo list, and after device creation holds the VkQueue handles for graphics and present.
 
-IIr77PVSurface depends on Instance and Device. It owns the VkSurfaceKHR, queries capabilities, selects format and present mode, and creates the swapchain. The swapchain images live here.
+IIr77PVSwapchain depends on Instance and Device. It owns the VkSurfaceKHR, queries capabilities, selects format and present mode, and creates the swapchain. The swapchain images live here.
 
 
 Memory layer — peers, created once.
@@ -78,7 +78,7 @@ Inline / structural.
 -----------------------------------------------------------------------------------------------------------------------------------------
 IIr77PVBarrier is not a long-lived object — it's a description struct filled per use and recorded into a command buffer. It lives inside command recording logic, not as a standalone instance.
 
-IIr77PVCommandBuffer wraps VkCommandBuffer and VkCommandPool. It owns recording — begin, the barrier and draw calls, end. IIr77PVFrame holds a reference to one, but the command buffer interface is its own object responsible for its own pool and recording lifecycle.
+IIr77PVCmdBuffer wraps VkCommandBuffer and VkCommandPool. It owns recording — begin, the barrier and draw calls, end. IIr77PVFrame holds a reference to one, but the command buffer interface is its own object responsible for its own pool and recording lifecycle.
 
 IIr77PVSemaphore its own interface wrapping VkSemaphore. Frame holds two instances of it, not raw handles
 

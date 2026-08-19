@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstring>
 #include <map>
 
 #include "../dictionary/IDIIr77MPVM.hpp"
@@ -64,9 +63,7 @@ class Ir77Patch : public Ir77Enlisted, public IIr77Patch, public std::enable_sha
     }
 
     std::shared_ptr<IIr77Return const> AddOperation(Ir77Operator op, Ir7Execute execute) {
-        if (execute == nullptr) return Ir77RETURN<Ir77InvalidOperation>(this, "Invalid m_implementation.");
-
-        std::map<IIr77GUID const*, Ir7Execute>::iterator itt{};
+        if (execute == nullptr) return Ir77RETURN<Ir77InvalidOperation>(this, "Invalid function pointer.");
 
         if (!m_implementation.contains(op)) m_implementation.emplace(op, execute);
 

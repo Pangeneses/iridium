@@ -20,7 +20,6 @@ inline Ir77GUID GUIDIIr77Enlisted{(static_cast<unsigned __int128>(0xC052EA89334C
 inline Ir77GUID GUIDIIr77Dispatch{(static_cast<unsigned __int128>(0x53C09DF9D33C49A9) << 64) | 0x8DC2E12B514F380C};
 inline Ir77GUID GUIDIIr77Patch{(static_cast<unsigned __int128>(0xFF068938AE404482) << 64) | 0x9A01953D49250A3F};
 inline Ir77GUID GUIDIIr77Stack{(static_cast<unsigned __int128>(0x56358804686F4427) << 64) | 0x996533CAF29DD8D0};
-inline Ir77GUID GUIDIIr77Feedback{(static_cast<unsigned __int128>(0x4A68691F42BA43BD) << 64) | 0xA3A2CE2DEC46ADBB};
 inline Ir77GUID GUIDIIr77Operand{(static_cast<unsigned __int128>(0x1C6B89DA779A45D6) << 64) | 0x8F4DE47B675A62F0};
 inline Ir77GUID GUIDIIr77Iterable{(static_cast<unsigned __int128>(0x4EA2C6BEEBFE4147) << 64) | 0x807BE59C8129E025};
 inline Ir77GUID GUIDIIr77Iterator{(static_cast<unsigned __int128>(0x1EA673B27F98480A) << 64) | 0xB9E52CAD94206539};
@@ -159,11 +158,9 @@ class IDIIr77MPVM : public IIr77Dictionary, public std::enable_shared_from_this<
     std::shared_ptr<IIr77Return const> m_invalidation_condition{nullptr};
 
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDIIr77MPVM", &GUIDIIr77MPVM},         {"GUIDIIr77Enlisted", &GUIDIIr77Enlisted},
-        {"GUIDIIr77Dispatch", &GUIDIIr77Dispatch}, {"GUIDIIr77Patch", &GUIDIIr77Patch},
-        {"GUIDIIr77Stack", &GUIDIIr77Stack},       {"GUIDIIr77Feedback", &GUIDIIr77Feedback},
-        {"GUIDIIr77Iterable", &GUIDIIr77Iterable}, {"GUIDIIr77Iterator", &GUIDIIr77Iterator},
-        {"GUIDIIr77Operand", &GUIDIIr77Operand},   {"GUIDIIr77Dictionary", &GUIDIIr77Dictionary},
+        {"GUIDIIr77MPVM", &GUIDIIr77MPVM},         {"GUIDIIr77Enlisted", &GUIDIIr77Enlisted}, {"GUIDIIr77Dispatch", &GUIDIIr77Dispatch},
+        {"GUIDIIr77Patch", &GUIDIIr77Patch},       {"GUIDIIr77Stack", &GUIDIIr77Stack},       {"GUIDIIr77Iterable", &GUIDIIr77Iterable},
+        {"GUIDIIr77Iterator", &GUIDIIr77Iterator}, {"GUIDIIr77Operand", &GUIDIIr77Operand},   {"GUIDIIr77Dictionary", &GUIDIIr77Dictionary},
         {"GUIDIIr77Return", &GUIDIIr77Return},
     };
 };

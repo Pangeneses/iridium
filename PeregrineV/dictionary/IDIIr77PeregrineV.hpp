@@ -28,7 +28,7 @@ inline Ir77GUID GUIDIIr77PVContext{(static_cast<unsigned __int128>(0x77DFD659D2A
 inline Ir77GUID GUIDIIr77PVInstance{(static_cast<unsigned __int128>(0xB1136C9B855A803E) << 64) | 0x7A5E662149F03242};
 inline Ir77GUID GUIDIIr77PVDevice{(static_cast<unsigned __int128>(0xE29226960D283AA0) << 64) | 0x55C041024DC6C909};
 inline Ir77GUID GUIDIIr77PVQueue{(static_cast<unsigned __int128>(0x9808C7422F216732) << 64) | 0xF160AB859A9538F8};
-inline Ir77GUID GUIDIIr77PVSurface{(static_cast<unsigned __int128>(0x798E5BB1B58EC0BE) << 64) | 0xA69DFA5475A9111A};
+inline Ir77GUID GUIDIIr77PVSwapchain{(static_cast<unsigned __int128>(0x798E5BB1B58EC0BE) << 64) | 0xA69DFA5475A9111A};
 
 /**************** Memory layer ****************/
 inline Ir77GUID GUIDIIr77PVMemory{(static_cast<unsigned __int128>(0x0FDBCAD888E8B072) << 64) | 0xE9B695057B4F125D};
@@ -66,7 +66,7 @@ inline Ir77GUID GUIDIIr77PVFramebuffer{(static_cast<unsigned __int128>(0xF5043E5
 
 /**************** Inline / structural ****************/
 inline Ir77GUID GUIDIIr77PVBarrier{(static_cast<unsigned __int128>(0x82FAAAE6FCCB86EA) << 64) | 0xD84BC19280E07DB5};
-inline Ir77GUID GUIDIIr77PVCommandBuffer{(static_cast<unsigned __int128>(0xF71D19D109D2114D) << 64) | 0x1186ADBD29983077};
+inline Ir77GUID GUIDIIr77PVCmdBuffer{(static_cast<unsigned __int128>(0xF71D19D109D2114D) << 64) | 0x1186ADBD29983077};
 inline Ir77GUID GUIDIIr77PVSemaphore{(static_cast<unsigned __int128>(0x08D2B66138427009) << 64) | 0xD88C8BC038D1DE22};
 
 class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std::enable_shared_from_this<IDIIr77PeregrineV> {
@@ -142,7 +142,7 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
         {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},
         {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},
         {"GUIDIIr77PVQueue", &GUIDIIr77PVQueue},
-        {"GUIDIIr77PVSurface", &GUIDIIr77PVSurface},
+        {"GUIDIIr77PVSwapchain", &GUIDIIr77PVSwapchain},
 
         /**************** Memory layer ****************/
         {"GUIDIIr77PVMemory", &GUIDIIr77PVMemory},
@@ -180,7 +180,7 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
 
         /**************** Inline / structural ****************/
         {"GUIDIIr77PVBarrier", &GUIDIIr77PVBarrier},
-        {"GUIDIIr77PVCommandBuffer", &GUIDIIr77PVCommandBuffer},
+        {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
         {"GUIDIIr77PVSemaphore", &GUIDIIr77PVSemaphore},
 
     };

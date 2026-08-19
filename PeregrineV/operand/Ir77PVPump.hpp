@@ -15,7 +15,6 @@
 #include "../../Ir77RT/runtime/Ir77Operand.hpp"
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
-
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
@@ -67,57 +66,41 @@ class Ir77PVPump : public Ir77Enlisted, public Ir77Operand, public std::enable_s
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const> obj) {
-
+    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const>& obj) {
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    public:
     static std::shared_ptr<IIr77Return const> PumpNextFrame(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
-
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     static std::shared_ptr<IIr77Return const> PumpCommand(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
-
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
+
     static std::shared_ptr<IIr77Return const> PumpBarrier(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
-
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
+
     static std::shared_ptr<IIr77Return const> PumpSubmit(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
-
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
+
     static std::shared_ptr<IIr77Return const> PumpCobalt(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
-
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
+
     static std::shared_ptr<IIr77Return const> PumpFrame(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
-
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
+
     static std::shared_ptr<IIr77Return const> PumpPresent(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
-
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
     std::shared_ptr<IIr77Patch> m_patch{nullptr};
-
 };
 
-}  // namespace NSIr77TBasic
+}  // namespace NSIr77PeregrineV

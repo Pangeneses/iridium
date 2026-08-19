@@ -17,7 +17,7 @@ struct IIr77PVPipeline;
 struct IIr77PVDescriptorSet;
 struct IIr77PVSampler;
 struct IIr77PVImageView;
-struct IIr77PVCommandBuffer;
+struct IIr77PVCmdBuffer;
 
 typedef struct IIr77PVMaterial : virtual public IIr77Enlisted {
     IIr77PVMaterial() = default;
@@ -38,10 +38,10 @@ typedef struct IIr77PVMaterial : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetPushConstant(void const* data, uint32_t size, uint32_t offset) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> Bind(std::shared_ptr<IIr77PVCommandBuffer const>& cmd) = 0;
+    virtual std::shared_ptr<IIr77Return const> Bind(std::shared_ptr<IIr77PVCmdBuffer const>& cmd) = 0;
 
     virtual std::shared_ptr<IIr77Return const> Build() = 0;
 
     virtual ~IIr77PVMaterial() = default;
 }* PIr77PVMaterial;
-}  // namespace NSIr77REDOS
+}  // namespace NSIr77PeregrineV

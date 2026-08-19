@@ -72,7 +72,7 @@ class Ir77UID : public Ir77Enlisted, public Ir77Operand, public std::enable_shar
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const> obj) {
+    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const>& obj) {
         auto raw = QueryAs<IIr77MPVMOP<Ir77UUID>>(&GUIDOPIr77TimePoint, std::const_pointer_cast<IIr77Enlisted>(obj).get());
 
         if (!raw.get()) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid RHS Operand.");

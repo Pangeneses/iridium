@@ -1,28 +1,32 @@
 #pragma once
 
-#include <map>
+#include <vulkan/vulkan.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+#include <vulkan/vulkan_core.h>
+
 #include <memory>
-#include <string>
 
-#include "../dictionary/IDOPIr77PeregrineV.hpp"
+#include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../../Ir77RT/interface/IIr77GUID.hpp"
+#include "../../dictionary/IDIIr77PeregrineV.hpp"
+#include "../../dictionary/IDIr77PeregrineV.hpp"
+
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
-#include "../../Ir77RT/interface/IIr77Patch.hpp"
-#include "../../Ir77RT/interface/IIr77Operand.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
+#include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
-#include "../../Ir77RT/runtime/Ir77Operand.hpp"
-#include "../../Ir77RT/runtime/Ir77Return.hpp"
-#include "Ir77GUID.hpp"
+
+#include "../../interface/IIr77PVPipeline.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-class Ir77PVLifetime : public Ir77Enlisted, public Ir77Operand, public std::enable_shared_from_this<Ir77PVLifetime> {
+
+class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::enable_shared_from_this<Ir77PVPipeline> {
    public:
-    Ir77PVLifetime() {
+    Ir77PVPipeline() {
         try {
             m_enlisted_uuid.Generate();
         } catch (std::invalid_argument a) {
@@ -30,13 +34,11 @@ class Ir77PVLifetime : public Ir77Enlisted, public Ir77Operand, public std::enab
         }
 
         m_enlisted = std::chrono::system_clock::now();
-
-        m_operand.resize(1);
     }
 
    public:
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDOPIr77PVLifetime>(uid);
+        seat_shared_uuid<&GUIDIr77PVPipeline>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -44,7 +46,7 @@ class Ir77PVLifetime : public Ir77Enlisted, public Ir77Operand, public std::enab
     }
 
     std::shared_ptr<IIr77Return const> CollectionUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDOPIr77PeregrineV>(uid);
+        seat_shared_uuid<&GUIDIr77PeregrineV>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -55,11 +57,8 @@ class Ir77PVLifetime : public Ir77Enlisted, public Ir77Operand, public std::enab
         if (iid == &GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Operand)
-            obj = std::shared_ptr<IIr77Operand>(shared_from_this(), static_cast<IIr77Operand*>(this));
-
-        else if (iid == &GUIDOPIr77PVLifetime)
-            obj = std::shared_ptr<Ir77PVLifetime>(shared_from_this(), static_cast<Ir77PVLifetime*>(this));
+        else if (iid == &GUIDIr77PVPipeline)
+            obj = std::shared_ptr<Ir77PVPipeline>(shared_from_this(), static_cast<Ir77PVPipeline*>(this));
 
         else
             return &GUIDQueryFailed;
@@ -68,18 +67,13 @@ class Ir77PVLifetime : public Ir77Enlisted, public Ir77Operand, public std::enab
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const>& obj) {
+    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
+        m_context = context;
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-
-   public:
-    static std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
+    
    private:
-    std::shared_ptr<IIr77Return const> BuildContext();
-
-   private:
-    std::map<const std::uint64_t, std::shared_ptr<IIr77Enlisted>> m_context;
+    std::shared_ptr<IIr77Enlisted> m_context;
 };
-
 }  // namespace NSIr77PeregrineV

@@ -22,7 +22,7 @@ enum class Ir77PVQueueType : uint32_t {
     Decode = 7,
 };
 
-struct Ir77PVDeviceQueue {
+struct Ir77PVQueueFamily {
     VkQueue queue{VK_NULL_HANDLE};
     Ir77PVQueueType type{Ir77PVQueueType::Unknown};
     std::uint32_t index{UINT32_MAX};
@@ -30,8 +30,8 @@ struct Ir77PVDeviceQueue {
 };
 
 struct IIr77PVPregrineV;
-struct IIr77PVCommandBuffer;
-struct IIr77PVSurface;
+struct IIr77PVCmdBuffer;
+struct IIr77PVSwapchain;
 
 typedef struct IIr77PVQueue : virtual public IIr77Enlisted {
     IIr77PVQueue() = default;
@@ -39,14 +39,14 @@ typedef struct IIr77PVQueue : virtual public IIr77Enlisted {
     /************* RUNTIME *************/
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> InitQueueFamilyProps() = 0;
+    virtual std::shared_ptr<IIr77Return const> InitQueueFamilyProps(std::uint32_t const& index) = 0;
 
     virtual std::shared_ptr<IIr77Return const> InitQueueCreateInfos() = 0;
 
     /************* GETTERS *************/
     virtual std::shared_ptr<IIr77Return const> GetQueueCreateInfos(std::vector<VkDeviceQueueCreateInfo>& info_list) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVDeviceQueue>& families) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVQueueFamily>& families) = 0;
 
     virtual ~IIr77PVQueue() = default;
 }* PIr77PVQueue;

@@ -63,11 +63,17 @@ class Ir77PVContext : public Ir77Enlisted, public IIr77PVContext, public std::en
    public:
     std::shared_ptr<IIr77Return const> BuildContext();
 
+    std::shared_ptr<IIr77Return const> InitializePipeline();
+
+    std::shared_ptr<IIr77Return const> GetWindow(Ir77Window& window);
+
     std::shared_ptr<IIr77Return const> GetContext(std::map<std::uint64_t const, std::shared_ptr<IIr77Enlisted>>& context);
 
-    std::shared_ptr<IIr77Return const> GetMemberByID(std::uint64_t const& id, std::shared_ptr<IIr77Enlisted> member);
+    std::shared_ptr<IIr77Return const> GetMemberByID(std::uint64_t const& id, std::shared_ptr<IIr77Enlisted>& context);
 
    private:
+    Ir77Window m_window;
+
     std::map<const std::uint64_t, std::shared_ptr<IIr77Enlisted>> m_context;
 };
 }  // namespace NSIr77PeregrineV

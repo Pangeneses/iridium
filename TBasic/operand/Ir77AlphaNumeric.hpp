@@ -72,7 +72,7 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const> obj) {
+    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const>& obj) {
         auto raw = QueryAs<IIr77MPVMOP<Ir77String>>(&GUIDOPIr77String, std::const_pointer_cast<IIr77Enlisted>(obj).get());
 
         if (!raw.get()) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid RHS Operand.");
@@ -206,7 +206,6 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
 
    private:
     std::shared_ptr<IIr77Patch> m_patch{nullptr};
-
 };
 
 }  // namespace NSIr77TBasic

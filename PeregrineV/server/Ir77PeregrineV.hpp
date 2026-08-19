@@ -49,6 +49,10 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77Dispatch, public std::en
 
         m_patch = std::make_shared<Ir77Patch>();
 
+        m_lifetime = std::make_shared<Ir77PVLifetime>();
+        m_asset = std::make_shared<Ir77PVAsset>();
+        m_pump = std::make_shared<Ir77PVPump>();
+
         m_patch->AddOperation({GUIDOPIr77PVLifetime, GUIDOCIr77Initialize},
                               [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
                                   return m_lifetime->Initialize(rhs, lhs);
@@ -128,7 +132,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77Dispatch, public std::en
     }
 
    public:
-    std::shared_ptr<IIr77Return const> Dispatch(std::shared_ptr<IIr77GUID const>& uid, std::shared_ptr<IIr77Stack const>& stack) {
+    std::shared_ptr<IIr77Return const> Dispatch(std::shared_ptr<IIr77Stack const>& stack) {
         return m_patch->Forward(stack);
     }
 
@@ -159,8 +163,21 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77Dispatch, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-   public:
-    static constexpr const char* VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
+    std::shared_ptr<IIr77Return const> Garbage(std::shared_ptr<IIr77GUID const>& uid, std::uint64_t const& id) {
+        if (*uid == GUIDOPIr77PVLifetime) {
+            m_lifetime_map.erase(id);
+        }
+
+        if (*uid == GUIDOPIr77PVAsset) {
+            m_asset_map.erase(id);
+        }
+
+        if (*uid == GUIDOPIr77PVPump) {
+            m_pump_map.erase(id);
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
 
    private:
     std::shared_ptr<IIr77Patch> m_patch{nullptr};
