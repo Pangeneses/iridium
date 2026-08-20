@@ -31,4 +31,4 @@ typedef struct IIr77PVPipeline : virtual public IIr77Enlisted {
 
     virtual ~IIr77PVPipeline() = default;
 }* PIr77PVPipeline;
-}  // namespace NSIr77REDOS
+}  // namespace NSIr77PeregrineV

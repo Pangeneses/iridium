@@ -74,7 +74,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> AddShader(Ir77PVShaderInfo& info, std::shared_ptr<IIr77GUID const>& uid) {
+    std::shared_ptr<IIr77Return const> AddShader(Ir77PVShaderInfo& info, std::uint64_t const& id) {
         VkDevice device = GetDevice();
 
         VkShaderModuleCreateInfo createInfo{};
@@ -86,23 +86,33 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateShaderModule failed.");
         }
 
-        shader_infos.emplace(reinterpret_cast<Ir77GUID const*>(uid.get()), info);
+        m_shader_infos.emplace(id, info);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetShaderInfo(Ir77PVShaderInfo& info, std::shared_ptr<IIr77GUID const> uid) {
-        info = shader_infos.at(reinterpret_cast<Ir77GUID const*>(uid.get()));
+    std::shared_ptr<IIr77Return const> GetShaderInfo(Ir77PVShaderInfo& info, std::uint64_t const& id) {
+        info = m_shader_infos.at(id);
 
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetPipelineShaderStageInfos(std::vector<VkPipelineShaderStageCreateInfo>& infos, std::vector<std::uint64_t> id_list) {
+        for (int i = 0; i < id_list.size(); i++ ) {
+            infos.push_back(m_shader_infos.at(id_list[i]).create_info);
+        }
+        
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
+    std::uint32_t CurrentDevice();
+
     VkDevice GetDevice();
 
    private:
     std::shared_ptr<IIr77Enlisted> m_context;
 
-    std::map<Ir77GUID const*, Ir77PVShaderInfo> shader_infos;
+    std::map<std::uint64_t, Ir77PVShaderInfo> m_shader_infos;
 };
 }  // namespace NSIr77PeregrineV

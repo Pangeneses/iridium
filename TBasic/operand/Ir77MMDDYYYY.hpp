@@ -48,6 +48,14 @@ class Ir77MMDDYYYY : public Ir77Enlisted, public Ir77Operand, public std::enable
     }
 
    public:
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Operand>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDOPIr77MMDDYYYY>(uid);
 
@@ -114,7 +122,7 @@ class Ir77MMDDYYYY : public Ir77Enlisted, public Ir77Operand, public std::enable
 
         auto lhs_mutable = std::const_pointer_cast<IIr77Operand>(lhs);
 
-        lhs_mutable->SetIndexed(0, raw);
+        lhs_mutable->SetIndexed(0, enlisted_rhs);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -294,8 +302,10 @@ class Ir77MMDDYYYY : public Ir77Enlisted, public Ir77Operand, public std::enable
         auto result = std::make_shared<Ir77MPVMOP<Ir77String>>();
         result->Set(str);
 
+        auto result_immutable = std::const_pointer_cast<const IIr77Enlisted>(result);
+
         auto lhs_mutable = std::const_pointer_cast<IIr77Operand>(lhs);
-        lhs_mutable->SetIndexed(0, result);
+        lhs_mutable->SetIndexed(0, result_immutable);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

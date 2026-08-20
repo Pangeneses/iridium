@@ -103,6 +103,12 @@ std::shared_ptr<IIr77Return const> Ir77PVContext::GetWindow(Ir77Window& window) 
     return Ir77RETURN<Ir77OperationSucceeded>();
 }
 
+std::shared_ptr<IIr77Return const> Ir77PVContext::CurrentDevice(std::uint32_t& index) {
+    index = m_index;
+
+    return Ir77RETURN<Ir77OperationSucceeded>();
+}
+
 std::shared_ptr<IIr77Return const> Ir77PVContext::GetContext(std::map<std::uint64_t const, std::shared_ptr<IIr77Enlisted>>& context) {
     context = m_context;
 

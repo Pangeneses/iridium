@@ -13,7 +13,16 @@
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice(std::uint32_t const& index) {
+std::uint32_t Ir77PVQueue::CurrentDevice() {
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+
+    std::uint32_t index;
+    context->CurrentDevice(index);
+
+    return index;
+}
+
+VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice() {
     std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
@@ -22,7 +31,7 @@ VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice(std::uint32_t const& index) {
     std::shared_ptr<IIr77PVDevice> device = QueryAs<IIr77PVDevice>(&GUIDIIr77PVDevice, enlisted.get());
 
     VkPhysicalDevice vk_phys_device;
-    device->GetVkPhysicalDevice(&vk_phys_device, index);
+    device->GetVkPhysicalDevice(&vk_phys_device);
 
     return vk_phys_device;
 }

@@ -12,6 +12,7 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
+#include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -42,6 +43,14 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     ~Ir77PVDevice() { vkDestroyDevice(m_device, nullptr); }
 
    public:
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVDevice>(uid);
 
@@ -61,6 +70,9 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
         if (iid == &GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
+
+        else if (iid == &GUIDIIr77PVDevice)
+            obj = std::shared_ptr<IIr77PVDevice>(shared_from_this(), static_cast<IIr77PVDevice*>(this));
 
         else if (iid == &GUIDIr77PVDevice)
             obj = std::shared_ptr<Ir77PVDevice>(shared_from_this(), static_cast<Ir77PVDevice*>(this));
@@ -96,7 +108,9 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport(std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport() {
+        std::uint32_t index = CurrentDevice();
+
         uint32_t extensionCount = 0;
         vkEnumerateDeviceExtensionProperties(m_phys_devices[index], nullptr, &extensionCount, nullptr);
 
@@ -133,7 +147,9 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateDevice(std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> CreateDevice() {
+        std::uint32_t index = CurrentDevice();
+
         std::vector<Ir77PVQueueFamily> families = GetQueueFamilies();
 
         if (vkCreateDevice(m_phys_devices.at(index), &m_device_create_info, nullptr, &m_device) != VK_SUCCESS) {
@@ -154,7 +170,9 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetVkPhysicalDevice(VkPhysicalDevice* phys_device, std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> GetVkPhysicalDevice(VkPhysicalDevice* phys_device) {
+        std::uint32_t index = CurrentDevice();
+
         *phys_device = m_phys_devices[index];
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -167,6 +185,8 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     }
 
    private:
+    std::uint32_t CurrentDevice();
+
     VkInstance GetInstance();
 
     std::vector<VkDeviceQueueCreateInfo> GetQueueInfos();

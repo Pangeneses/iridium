@@ -3,7 +3,6 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-#include <cstring>
 #include <memory>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -13,10 +12,6 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-struct IIr77PVDevice;
-struct IIr77PVQueue;
-
-// Instance-level (one per process):
 typedef struct IIr77PVInstance : virtual public IIr77Enlisted {
     IIr77PVInstance() = default;
 

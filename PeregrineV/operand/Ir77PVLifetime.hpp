@@ -15,6 +15,7 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 #include "../../Ir77RT/runtime/Ir77Operand.hpp"
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
+#include "IDIIr77MPVM.hpp"
 #include "Ir77GUID.hpp"
 
 using namespace NSIr77RT;
@@ -35,6 +36,14 @@ class Ir77PVLifetime : public Ir77Enlisted, public Ir77Operand, public std::enab
     }
 
    public:
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Operand>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDOPIr77PVLifetime>(uid);
 

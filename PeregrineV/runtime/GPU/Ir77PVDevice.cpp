@@ -18,6 +18,14 @@
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
+std::uint32_t Ir77PVDevice::CurrentDevice() {
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+
+    std::uint32_t index;
+    context->CurrentDevice(index);
+
+    return index;
+}
 
 VkInstance Ir77PVDevice::GetInstance() {
     std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());

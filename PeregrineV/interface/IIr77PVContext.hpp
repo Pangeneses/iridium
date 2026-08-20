@@ -28,6 +28,8 @@ typedef struct IIr77PVContext : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> InitializePipeline() = 0;
 
+    virtual std::shared_ptr<IIr77Return const> CurrentDevice(std::uint32_t& index) = 0;
+
     virtual std::shared_ptr<IIr77Return const> GetWindow(Ir77Window& window) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetContext(std::map<std::uint64_t const, std::shared_ptr<IIr77Enlisted>>& context) = 0;

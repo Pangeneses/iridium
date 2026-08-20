@@ -236,7 +236,7 @@ class Ir77Return : public IIr77Return, public std::enable_shared_from_this<Ir77R
     }
 
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIIr77Return>(uid);
+        seat_shared_uuid<&GUIDIr77Enlisted>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 

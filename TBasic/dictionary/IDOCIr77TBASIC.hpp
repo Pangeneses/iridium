@@ -45,6 +45,14 @@ class IDOCIr7TBASIC : public Ir77Enlisted, public IIr77Dictionary, public std::e
 
     // ── IIr77Enlisted ────────────────────────────────────────────
    public:
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Dictionary>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) {
         seat_shared_uuid<&GUIDOCIr7TBASIC>(uid);
         return Ir77RETURN<Ir77OperationSucceeded>();

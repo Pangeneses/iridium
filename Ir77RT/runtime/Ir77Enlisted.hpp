@@ -13,13 +13,7 @@ class Ir77Enlisted : virtual public IIr77Enlisted {
     Ir77Enlisted() = default;
 
    public:
-    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
-
-        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
+    virtual std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const = 0;
 
     std::shared_ptr<IIr77Return const> EnlistedUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         uid.reset(reinterpret_cast<IIr77GUID const*>(&m_enlisted_uuid), [](auto*) {});

@@ -4,7 +4,6 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-#include <cstring>
 #include <memory>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -37,26 +36,28 @@ typedef struct IIr77PVSwapchain : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> CreateSurface() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> QuerySwapchainSupport(std::uint32_t const& index, SwapchainSupportDetails& details) = 0;
+    virtual std::shared_ptr<IIr77Return const> QuerySwapchainSupport(SwapchainSupportDetails& details) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SwapSurfaceFormat(std::uint32_t const& index) = 0;
+    virtual std::shared_ptr<IIr77Return const> SwapSurfaceFormat() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> PresentMode(std::uint32_t const& index, bool& available) = 0;
+    virtual std::shared_ptr<IIr77Return const> PresentMode(bool& available) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SurfaceCapabilities(std::uint32_t const& index) = 0;
+    virtual std::shared_ptr<IIr77Return const> SurfaceCapabilities() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> InitSwapchainInfo(std::uint32_t const& index) = 0;
+    virtual std::shared_ptr<IIr77Return const> InitSwapchainInfo() = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreateSwapchain() = 0;
 
     virtual std::shared_ptr<IIr77Return const> InitSwapchainImages() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> CreateImageView(std::uint32_t const& index) = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateImageView() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetImage(VkImage* image, std::uint32_t const& index) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetImage(VkImage* image) = 0;
 
     /************* GETTERS *************/
     virtual std::shared_ptr<IIr77Return const> GetSurface(VkSurfaceKHR* surface) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetSwapchainSupportDetails(SwapchainSupportDetails& details) = 0;
 
     virtual ~IIr77PVSwapchain() = default;
 }* PIr77PVSwapchain;

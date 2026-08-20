@@ -39,7 +39,7 @@ typedef struct IIr77PVQueue : virtual public IIr77Enlisted {
     /************* RUNTIME *************/
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> InitQueueFamilyProps(std::uint32_t const& index) = 0;
+    virtual std::shared_ptr<IIr77Return const> InitQueueFamilyProps() = 0;
 
     virtual std::shared_ptr<IIr77Return const> InitQueueCreateInfos() = 0;
 

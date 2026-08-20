@@ -17,6 +17,15 @@
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
+std::uint32_t Ir77PVSwapchain::CurrentDevice() {
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+
+    std::uint32_t index;
+    context->CurrentDevice(index);
+
+    return index;
+}
+
 SDL_Window* Ir77PVSwapchain::GetWindow() {
     std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
@@ -40,7 +49,7 @@ VkInstance Ir77PVSwapchain::GetInstance() {
     return vk_instance;
 }
 
-VkPhysicalDevice Ir77PVSwapchain::GetPhysicalDevice(std::uint32_t const& index) {
+VkPhysicalDevice Ir77PVSwapchain::GetPhysicalDevice() {
     std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
@@ -49,7 +58,7 @@ VkPhysicalDevice Ir77PVSwapchain::GetPhysicalDevice(std::uint32_t const& index) 
     std::shared_ptr<IIr77PVDevice> device = QueryAs<IIr77PVDevice>(&GUIDIIr77PVDevice, enlisted.get());
 
     VkPhysicalDevice vk_phys_device;
-    device->GetVkPhysicalDevice(&vk_phys_device, index);
+    device->GetVkPhysicalDevice(&vk_phys_device);
 
     return vk_phys_device;
 }

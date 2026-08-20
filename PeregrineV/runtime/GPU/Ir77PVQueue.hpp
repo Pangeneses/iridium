@@ -10,6 +10,7 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
+#include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -40,6 +41,14 @@ class Ir77PVQueue : public Ir77Enlisted, public IIr77PVQueue, public std::enable
     ~Ir77PVQueue() {}
 
    public:
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVQueue>(uid);
 
@@ -60,6 +69,9 @@ class Ir77PVQueue : public Ir77Enlisted, public IIr77PVQueue, public std::enable
         if (iid == &GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
+        else if (iid == &GUIDIIr77PVQueue)
+            obj = std::shared_ptr<IIr77PVQueue>(shared_from_this(), static_cast<IIr77PVQueue*>(this));
+
         else if (iid == &GUIDIr77PVQueue)
             obj = std::shared_ptr<Ir77PVQueue>(shared_from_this(), static_cast<Ir77PVQueue*>(this));
 
@@ -76,8 +88,8 @@ class Ir77PVQueue : public Ir77Enlisted, public IIr77PVQueue, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> InitQueueFamilyProps(std::uint32_t const& index) {
-        VkPhysicalDevice device = GetPhysicalDevice(index);
+    std::shared_ptr<IIr77Return const> InitQueueFamilyProps() {
+        VkPhysicalDevice device = GetPhysicalDevice();
         VkSurfaceKHR surface = GetSurface();
 
         Uint32 queue_family_count = 0;
@@ -143,7 +155,9 @@ class Ir77PVQueue : public Ir77Enlisted, public IIr77PVQueue, public std::enable
     }
 
    private:
-    VkPhysicalDevice GetPhysicalDevice(std::uint32_t const& index);
+    std::uint32_t CurrentDevice();
+
+    VkPhysicalDevice GetPhysicalDevice();
 
     VkSurfaceKHR GetSurface();
 

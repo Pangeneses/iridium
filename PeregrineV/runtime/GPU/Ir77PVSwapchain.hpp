@@ -10,6 +10,7 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
+#include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -43,6 +44,14 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     }
 
    public:
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVSwapchain>(uid);
 
@@ -62,6 +71,9 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
         if (iid == &GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
+
+        else if (iid == &GUIDIIr77PVSwapchain)
+            obj = std::shared_ptr<IIr77PVSwapchain>(shared_from_this(), static_cast<IIr77PVSwapchain*>(this));
 
         else if (iid == &GUIDIr77PVSwapchain)
             obj = std::shared_ptr<Ir77PVSwapchain>(shared_from_this(), static_cast<Ir77PVSwapchain*>(this));
@@ -91,8 +103,9 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> QuerySwapchainSupport(std::uint32_t const& index, SwapchainSupportDetails& details) {
-        VkPhysicalDevice phys_device = GetPhysicalDevice(index);
+    std::shared_ptr<IIr77Return const> QuerySwapchainSupport(SwapchainSupportDetails& details) {
+        std::int32_t index = CurrentDevice();
+        VkPhysicalDevice phys_device = GetPhysicalDevice();
         SDL_Window* window = GetWindow();
 
         vkGetPhysicalDeviceProperties(phys_device, &details.device_properties);
@@ -122,7 +135,9 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SwapSurfaceFormat(std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> SwapSurfaceFormat() {
+        std::int32_t index = CurrentDevice();
+
         for (const auto& format : m_details[index].formats) {
             if (format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
                 m_details[index].format = VK_FORMAT_B8G8R8A8_SRGB;
@@ -134,7 +149,9 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> PresentMode(std::uint32_t const& index, bool& available) {
+    std::shared_ptr<IIr77Return const> PresentMode(bool& available) {
+        std::int32_t index = CurrentDevice();
+
         for (const auto& mode : m_details[index].present_modes) {
             if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
                 m_details[index].present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
@@ -145,7 +162,9 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SurfaceCapabilities(std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> SurfaceCapabilities() {
+        std::int32_t index = CurrentDevice();
+
         SDL_Window* window = GetWindow();
 
         auto capabilities = m_details[index].capabilities;
@@ -170,7 +189,9 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> InitSwapchainInfo(std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> InitSwapchainInfo() {
+        std::int32_t index = CurrentDevice();
+
         std::vector<Ir77PVQueueFamily> queue_families = GetQueueFamilies();
 
         auto const& details = m_details[index];
@@ -218,7 +239,8 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateImageView(std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> CreateImageView() {
+        std::int32_t index = CurrentDevice();
         VkDevice device = GetDevice();
 
         m_swapchain_views.resize(m_swapchain_images.size());
@@ -250,18 +272,30 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetImage(VkImage* image, std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> GetSwapchainSupportDetails(SwapchainSupportDetails& details) {
+        std::int32_t index = CurrentDevice();
+
+        details = m_details.at(index);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetImage(VkImage* image) {
+        std::int32_t index = CurrentDevice();
+        
         *image = m_swapchain_images.at(index);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
+    std::uint32_t CurrentDevice();
+
     SDL_Window* GetWindow();
 
     VkInstance GetInstance();
 
-    VkPhysicalDevice GetPhysicalDevice(std::uint32_t const& index);
+    VkPhysicalDevice GetPhysicalDevice();
 
     VkDevice GetDevice();
 
