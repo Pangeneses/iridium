@@ -52,6 +52,8 @@ static const std::uint64_t ID_BUFFER_UNIFORM = 0x6291047582916374;
 
 // ASSETS
 // -----------------------------------------------------------------------------------------------------------------------------------------
+static const std::uint64_t ID_SHADER = 0x3001943705423802;
+
 static const std::uint64_t ID_SHADER_VERT = 0x1829304756182930;
 
 static const std::uint64_t ID_SHADER_FRAG = 0x5374629108473920;

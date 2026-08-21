@@ -5,6 +5,7 @@
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan_core.h>
 
+#include <fstream>
 #include <map>
 #include <memory>
 
@@ -12,6 +13,7 @@
 
 #include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PeregrineV.hpp"
+#include "../../dictionary/IDIr77PVContext.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -74,18 +76,68 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> ReadShader(std::string const& filename) {
+        std::ifstream vert("/home/alpha/workspace/iridium/Shader/shader.vert", std::ios::ate | std::ios::binary);
+
+        if (!vert.is_open()) {
+            throw std::runtime_error("failed to open file!");
+        }
+
+        size_t vert_file_size = (size_t)vert.tellg();
+        std::vector<char> vert_buffer(vert_file_size);
+
+        vert.seekg(0);
+        vert.read(vert_buffer.data(), vert_file_size);
+
+        vert.close();
+
+        Ir77PVShaderInfo vert_info;
+        vert_info.size = vert_file_size;
+        vert_info.byte_code = vert_buffer;
+        vert_info.stage = Ir77PVShaderStage::Vertex;
+
+        AddShader(vert_info, ID_SHADER_VERT);
+        
+        std::ifstream frag("/home/alpha/workspace/iridium/Shader/shader.vert", std::ios::ate | std::ios::binary);
+
+        if (!frag.is_open()) {
+            throw std::runtime_error("failed to open file!");
+        }
+
+        size_t frag_file_size = (size_t)frag.tellg();
+        std::vector<char> frag_buffer(frag_file_size);
+
+        frag.seekg(0);
+        frag.read(frag_buffer.data(), frag_file_size);
+
+        frag.close();
+
+        Ir77PVShaderInfo frag_info;
+        frag_info.size = frag_file_size;
+        frag_info.byte_code = frag_buffer;
+        frag_info.stage = Ir77PVShaderStage::Fragment;
+
+        AddShader(frag_info, ID_SHADER_FRAG);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> AddShader(Ir77PVShaderInfo& info, std::uint64_t const& id) {
         VkDevice device = GetDevice();
 
-        VkShaderModuleCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        createInfo.codeSize = info.size;
-        createInfo.pCode = info.byte_code.data();
+        VkShaderModuleCreateInfo create_info{};
+        create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        create_info.codeSize = info.size;
+        create_info.pCode = reinterpret_cast<const uint32_t*>(info.byte_code.data());
 
-        if (vkCreateShaderModule(device, &createInfo, nullptr, &info.shader_module) != VK_SUCCESS) {
+        if (vkCreateShaderModule(device, &create_info, nullptr, &info.stage_create_info.module) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateShaderModule failed.");
         }
 
+        info.stage_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        info.stage_create_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        info.stage_create_info.pName = "main";
+        
         m_shader_infos.emplace(id, info);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -98,10 +150,10 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     }
 
     std::shared_ptr<IIr77Return const> GetPipelineShaderStageInfos(std::vector<VkPipelineShaderStageCreateInfo>& infos, std::vector<std::uint64_t> id_list) {
-        for (int i = 0; i < id_list.size(); i++ ) {
-            infos.push_back(m_shader_infos.at(id_list[i]).create_info);
+        for (int i = 0; i < id_list.size(); i++) {
+            infos.push_back(m_shader_infos.at(id_list[i]).stage_create_info);
         }
-        
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 

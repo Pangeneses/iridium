@@ -14,6 +14,7 @@
 #include "../../interface/IIr77PVDevice.hpp"
 #include "../../interface/IIr77PVLayout.hpp"
 #include "../../interface/IIr77PVRenderPass.hpp"
+#include "../../interface/IIr77PVShader.hpp"
 
 using namespace NSIr77RT;
 
@@ -81,5 +82,19 @@ VkRenderPass Ir77PVPipelineGFX::GetRenderPass() {
     render_pass->GetRenderPass(&vk_render_pass);
 
     return vk_render_pass;
+}
+
+std::vector<VkPipelineShaderStageCreateInfo> Ir77PVPipelineGFX::GetPipelineShaderStageInfos() {
+    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+
+    std::shared_ptr<IIr77Enlisted> enlisted;
+    context->GetMemberByID(ID_SHADER, enlisted);
+
+    std::shared_ptr<IIr77PVShader> shaders = QueryAs<IIr77PVShader>(&GUIDIIr77PVShader, enlisted.get());
+
+    std::vector<VkPipelineShaderStageCreateInfo> create_info;
+    shaders->GetPipelineShaderStageInfos(create_info, {ID_SHADER_VERT, ID_SHADER_FRAG});
+
+    return create_info;
 }
 }  // namespace NSIr77PeregrineV

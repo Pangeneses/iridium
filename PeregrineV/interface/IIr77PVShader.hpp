@@ -30,18 +30,18 @@ enum class Ir77PVShaderStage : uint32_t {
 };
 
 struct Ir77PVShaderInfo {
-    VkPipelineShaderStageCreateInfo create_info;
+    VkPipelineShaderStageCreateInfo stage_create_info;
     Ir77PVShaderStage stage;
-    std::vector<uint32_t> byte_code;
+    std::vector<char> byte_code;
     std::uint32_t size;
-    std::string entry_point;
-    VkShaderModule shader_module;
 };
 
 typedef struct IIr77PVShader : virtual public IIr77Enlisted {
     IIr77PVShader() = default;
 
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> ReadShader(std::string const& file) = 0;
 
     virtual std::shared_ptr<IIr77Return const> AddShaderInfo(Ir77PVShaderInfo const& info, std::uint64_t const& id) = 0;
 
@@ -50,7 +50,7 @@ typedef struct IIr77PVShader : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> GetPipelineShaderStageInfos(std::vector<VkPipelineShaderStageCreateInfo>& infos,
                                                                            std::vector<std::uint64_t> id_list) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetShaders(Ir77PVShaderInfo& info, std::shared_ptr<IIr77GUID const>& uid) const = 0;
+    virtual std::shared_ptr<IIr77Return const> GetShaders(Ir77PVShaderInfo& info, std::shared_ptr<std::uint64_t const>& uid) const = 0;
 
     virtual ~IIr77PVShader() = default;
 }* PIr77PVShader;

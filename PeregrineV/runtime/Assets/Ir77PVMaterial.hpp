@@ -10,8 +10,8 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../dictionary/IDIIr77PeregrineV.hpp"
-#include "../dictionary/IDIr77PeregrineV.hpp"
+#include "../../dictionary/IDIIr77PeregrineV.hpp"
+#include "../../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -19,7 +19,7 @@
 #include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "../interface/IIr77PVMaterial.hpp"
+#include "../../interface/IIr77PVMaterial.hpp"
 
 using namespace NSIr77RT;
 

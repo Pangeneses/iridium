@@ -23,42 +23,8 @@ struct IIr77PVCmdBuffer;
 typedef struct IIr77PVMesh : virtual public IIr77Enlisted {
     IIr77PVMesh() = default;
 
-    virtual std::shared_ptr<IIr77Return const> SetVertexBuffer(std::shared_ptr<IIr77PVBuffer const>& buffer) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetVertexBuffer(std::shared_ptr<IIr77PVBuffer const>& buffer) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetVertexCount(uint32_t count) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetVertexCount(uint32_t& count) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetVertexStride(uint32_t stride) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetVertexStride(uint32_t& stride) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetIndexBuffer(std::shared_ptr<IIr77PVBuffer const>& buffer) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetIndexBuffer(std::shared_ptr<IIr77PVBuffer const>& buffer) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetIndexCount(uint32_t count) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetIndexCount(uint32_t& count) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetIndexType(Ir77PVIndexType const& type) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetIndexType(Ir77PVIndexType& type) const = 0;
-
-    virtual std::shared_ptr<IIr77Return const> Bind(std::shared_ptr<IIr77PVCmdBuffer const>& cmd) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> Draw(std::shared_ptr<IIr77PVCmdBuffer const>& cmd, uint32_t instance_count, uint32_t first_instance) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> Build() = 0;
+    virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
     virtual ~IIr77PVMesh() = default;
 }* PIr77PVMesh;
 }  // namespace NSIr77PeregrineV
-
-/*
-Internal — vertex offset, index offset into buffers, topology (VkPrimitiveTopology) driven by property page.
-Bind does vkCmdBindVertexBuffers + vkCmdBindIndexBuffer in one shot. Draw follows immediately with vkCmdDrawIndexed or vkCmdDraw depending on whether an index
-buffer is set. Caller just calls Bind then Draw — no raw Vulkan touch.
-*/

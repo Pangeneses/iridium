@@ -13,7 +13,7 @@
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-std::uint32_t Ir77PVQueue::CurrentDevice() {
+std::uint32_t Ir77PVQueue::GetCurrentDevice() {
     std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::uint32_t index;
@@ -22,18 +22,18 @@ std::uint32_t Ir77PVQueue::CurrentDevice() {
     return index;
 }
 
-VkPhysicalDevice Ir77PVQueue::GetPhysicalDevice() {
+std::vector<Ir77PVDeviceInfo> Ir77PVQueue::GetDeviceInfos() {
     std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    context->GetMemberByID(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_DEVICE, enlisted);
 
     std::shared_ptr<IIr77PVDevice> device = QueryAs<IIr77PVDevice>(&GUIDIIr77PVDevice, enlisted.get());
 
-    VkPhysicalDevice vk_phys_device;
-    device->GetVkPhysicalDevice(&vk_phys_device);
+    std::vector<Ir77PVDeviceInfo> device_infos;
+    device->GetDeviceInfos(device_infos);
 
-    return vk_phys_device;
+    return device_infos;
 }
 
 VkSurfaceKHR Ir77PVQueue::GetSurface() {

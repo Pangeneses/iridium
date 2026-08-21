@@ -33,8 +33,8 @@ class iridium {
         m_rt_state = std::make_shared<CEFRTState>();
     }
 
-    // iridium.hpp — InitCEF
-    void InitCEF(int argc, char* argv[]) {
+    // iridium.hpp — InitCEF 
+    /* void InitCEF(int argc, char* argv[]) {
         m_rt_state->Initialize(argc, argv);
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Succeeded: InitCEF");
     }
@@ -56,17 +56,18 @@ class iridium {
 
         running = true;
     }
+    */
 
     void InitVulkan() {
-        m_adapter = std::make_shared<IIr77PVRenderer>();
+        // m_adapter = std::make_shared<IIr77PVRenderer>();
 
-        m_adapter->SetWindow(m_window);
+        // m_adapter->SetWindow(m_window);
 
-        m_rt_state->GetRenderHandler()->SetPaintCallback([this](const void* buffer, int w, int h) { m_adapter->Ir77VulkanUploadCEF(buffer, w, h); });
+        // m_rt_state->GetRenderHandler()->SetPaintCallback([this](const void* buffer, int w, int h) { m_adapter->Ir77VulkanUploadCEF(buffer, w, h); });
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
 
-        m_adapter->Initialize();
+        // m_adapter->Initialize();
     }
 
     bool IsRunning() { return running; }
@@ -85,17 +86,17 @@ class iridium {
         }
     }
 
-    void ChromeStep() { m_message_loop->CEFDoMessageLoop(m_rt_state->GetBrowser()); }
+    // void ChromeStep() { m_message_loop->CEFDoMessageLoop(m_rt_state->GetBrowser()); }
 
-    void IridiumStep() {}
+    // void IridiumStep() {}
 
     void VulkanStep() {}
 
     void VulkanFrameStart() {}
 
-    void HUD() {}
+    // void HUD() {}
 
-    void Composition() {}
+    // void Composition() {}
 
     void VulkanFrameEnd() { m_adapter->Ir77VulkanFrame(); }
 
@@ -117,7 +118,7 @@ class iridium {
 
     SDL_Window* m_window = nullptr;
 
-    std::shared_ptr<IIr77PVRenderer> m_adapter;
+    // std::shared_ptr<IIr77PVRenderer> m_adapter;
 
     bool running = false;
 };

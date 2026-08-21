@@ -12,10 +12,9 @@ namespace NSIr77PeregrineV {
 
 typedef struct IIr77PVBarrier : virtual public IIr77Enlisted {
     IIr77PVBarrier() = default;
+    
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> Barrier() = 0;
-
+    
     virtual ~IIr77PVBarrier() = default;
 }* PIr77PVBarrier;
 }  // namespace NSIr77PeregrineV

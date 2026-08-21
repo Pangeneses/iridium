@@ -10,8 +10,14 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-struct IIr77PVPregrineV;
-struct IIr77PVQueue;
+struct Ir77PVDeviceInfo {
+    VkPhysicalDevice phys_device;
+    VkDevice device;
+    std::vector<VkExtensionProperties> available_extensions;
+    VkPhysicalDeviceFeatures phys_device_features;
+    VkPhysicalDeviceLimits phys_device_limits;
+    VkDeviceCreateInfo device_create_info;
+};
 
 // Device-level (one per physical GPU):
 typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
@@ -20,18 +26,10 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
     /************* RUNTIME *************/
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> EnumeratePhysicalDevice() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> InitCreateDeviceInfo() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> CreateDevice() = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateDevices() = 0;
 
     /************* GETTERS *************/
-    virtual std::shared_ptr<IIr77Return const> GetVkPhysicalDevice(VkPhysicalDevice* phys_device) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetVkDevice(VkDevice* device) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetDeviceInfos(std::vector<Ir77PVDeviceInfo>& device_info) = 0;
 
     virtual ~IIr77PVDevice() = default;
 }* PIr77PVDevice;

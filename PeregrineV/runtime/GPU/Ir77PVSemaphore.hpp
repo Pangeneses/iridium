@@ -75,40 +75,6 @@ class Ir77PVSemaphore : public Ir77Enlisted, public IIr77PVSemaphore, public std
         return &GUIDQuerySucceeded;
     }
 
-   public:
-    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
-        m_context = context;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> CreateSemaphore() {
-        VkSemaphoreCreateInfo sem_info{};
-        sem_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-        VkFenceCreateInfo fence_info{};
-        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
-        if (vkCreateSemaphore(m_device, &sem_info, nullptr, &m_sem_image_avail) != VK_SUCCESS ||
-            vkCreateSemaphore(m_device, &sem_info, nullptr, &m_sem_render_done) != VK_SUCCESS ||
-            vkCreateFence(m_device, &fence_info, nullptr, &m_fence_frame) != VK_SUCCESS) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: sync object creation failed.");
-        }
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> SetType(Ir77PVSemaphoreType const& type) { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
-    std::shared_ptr<IIr77Return const> GetType(Ir77PVSemaphoreType& type) const { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
-    std::shared_ptr<IIr77Return const> SetValue(uint64_t value) { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
-    std::shared_ptr<IIr77Return const> GetValue(uint64_t& value) const { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
-    std::shared_ptr<IIr77Return const> Wait(uint64_t value, uint64_t timeout) { return Ir77RETURN<Ir77OperationSucceeded>(); }
-
    private:
     std::shared_ptr<IIr77Enlisted> m_context;
 

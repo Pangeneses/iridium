@@ -223,10 +223,11 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         VkDevice device = GetDevice();
         VkPipelineLayout layout = GetLayout();
         VkRenderPass render_pass = GetRenderPass();
+        std::vector<VkPipelineShaderStageCreateInfo> shader_stages = GetPipelineShaderStageInfos();
 
         m_pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         m_pipeline_info.stageCount = 2;
-        m_pipeline_info.pStages = shaderStages;
+        m_pipeline_info.pStages = shader_stages.data();
         m_pipeline_info.pVertexInputState = &m_vertex_input_info;
         m_pipeline_info.pInputAssemblyState = &m_input_assembly;
         m_pipeline_info.pViewportState = &m_viewport_state_info;
@@ -258,6 +259,8 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
     VkPipelineLayout GetLayout();
 
     VkRenderPass GetRenderPass();
+
+    std::vector<VkPipelineShaderStageCreateInfo> GetPipelineShaderStageInfos();
 
    private:
     std::shared_ptr<IIr77Enlisted> m_context;
