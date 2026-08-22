@@ -26,9 +26,11 @@ typedef enum class Ir77MPVMOPType : unsigned int {
     Ir77TimePoint = 18,
     Ir77System = 19,
     Ir77Tag = 20,
-    Ir77Item = 21,
-    Ir77Collect = 22,
-    Ir77RetVar = 23,
+    Ir77TaggedObject = 21,
+    Ir77TaggedEnlisted = 22,
+    Ir77CollectObject = 23,
+    Ir77CollectEnlisted = 24,
+    Ir77RetVar = 25,
 } Ir77MPVMOPType;
 
 template <typename T>

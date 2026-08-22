@@ -39,8 +39,10 @@ inline Ir77GUID GUIDOPIr77Data{(static_cast<unsigned __int128>(0xB8B214482DEB4A5
 inline Ir77GUID GUIDOPIr77TimePoint{(static_cast<unsigned __int128>(0xACAE74B3D12E4519) << 64) | 0xB12B0460C783CDB6};
 inline Ir77GUID GUIDOPIr77System{(static_cast<unsigned __int128>(0x05F2EA48E07944A2) << 64) | 0xA984D85934D43D49};
 inline Ir77GUID GUIDOPIr77Tag{(static_cast<unsigned __int128>(0x511036B02ED54516) << 64) | 0x8758C6B605071CF8};
-inline Ir77GUID GUIDOPIr77Item{(static_cast<unsigned __int128>(0x7AAC17CE9D754275) << 64) | 0xB3D4A78D27C06B76};
-inline Ir77GUID GUIDOPIr77Collect{(static_cast<unsigned __int128>(0xA159C8C40E374037) << 64) | 0x8D6F5718B1F2AC31};
+inline Ir77GUID GUIDOPIr77TaggedObject{(static_cast<unsigned __int128>(0xa25e2a20c1f84ca8) << 64) | 0xbe86cf7d5415352b};
+inline Ir77GUID GUIDOPIr77TaggedEnlisted{(static_cast<unsigned __int128>(0x7AAC17CE9D754275) << 64) | 0xB3D4A78D27C06B76};
+inline Ir77GUID GUIDOPIr77CollectObject{(static_cast<unsigned __int128>(0x8e8b165602ce4e8c) << 64) | 0xb14460f001bc7631};
+inline Ir77GUID GUIDOPIr77CollectEnlisted{(static_cast<unsigned __int128>(0xA159C8C40E374037) << 64) | 0x8D6F5718B1F2AC31};
 inline Ir77GUID GUIDOPIr77RetVar{(static_cast<unsigned __int128>(0x436FD47728ED4A97) << 64) | 0x80D34DCDCA5A5CC0};
 
 class IDOPIr77MPVM : public IIr77Dictionary, public std::enable_shared_from_this<IDOPIr77MPVM> {
@@ -175,13 +177,29 @@ class IDOPIr77MPVM : public IIr77Dictionary, public std::enable_shared_from_this
     std::shared_ptr<IIr77Return const> m_invalidation_condition{nullptr};
 
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDOPIr77MPVM", &GUIDOPIr77MPVM},       {"GUIDOPIr77Object", &GUIDOPIr77Object}, {"GUIDOPIr77UUID", &GUIDOPIr77UUID},
-        {"GUIDOPIr77Boolean", &GUIDOPIr77Boolean}, {"GUIDOPIr77Char", &GUIDOPIr77Char},     {"GUIDOPIr77WChar", &GUIDOPIr77WChar},
-        {"GUIDOPIr77String", &GUIDOPIr77String},   {"GUIDOPIr77UInt8", &GUIDOPIr77UInt8},   {"GUIDOPIr77UInt16", &GUIDOPIr77UInt16},
-        {"GUIDOPIr77UInt32", &GUIDOPIr77UInt32},   {"GUIDOPIr77UInt64", &GUIDOPIr77UInt64}, {"GUIDOPIr77Int16", &GUIDOPIr77Int16},
-        {"GUIDOPIr77Int32", &GUIDOPIr77Int32},     {"GUIDOPIr77Int64", &GUIDOPIr77Int64},   {"GUIDOPIr77F32", &GUIDOPIr77F32},
-        {"GUIDOPIr77F64", &GUIDOPIr77F64},         {"GUIDOPIr77F128", &GUIDOPIr77F128},     {"GUIDOPIr77Tag", &GUIDOPIr77Tag},
-        {"GUIDOPIr77Collect", &GUIDOPIr77Collect}, {"GUIDOPIr77Item", &GUIDOPIr77Item},     {"GUIDOPIr77System", &GUIDOPIr77System},
+        {"GUIDOPIr77MPVM", &GUIDOPIr77MPVM},
+        {"GUIDOPIr77Object", &GUIDOPIr77Object},
+        {"GUIDOPIr77UUID", &GUIDOPIr77UUID},
+        {"GUIDOPIr77Boolean", &GUIDOPIr77Boolean},
+        {"GUIDOPIr77Char", &GUIDOPIr77Char},
+        {"GUIDOPIr77WChar", &GUIDOPIr77WChar},
+        {"GUIDOPIr77String", &GUIDOPIr77String},
+        {"GUIDOPIr77UInt8", &GUIDOPIr77UInt8},
+        {"GUIDOPIr77UInt16", &GUIDOPIr77UInt16},
+        {"GUIDOPIr77UInt32", &GUIDOPIr77UInt32},
+        {"GUIDOPIr77UInt64", &GUIDOPIr77UInt64},
+        {"GUIDOPIr77Int16", &GUIDOPIr77Int16},
+        {"GUIDOPIr77Int32", &GUIDOPIr77Int32},
+        {"GUIDOPIr77Int64", &GUIDOPIr77Int64},
+        {"GUIDOPIr77F32", &GUIDOPIr77F32},
+        {"GUIDOPIr77F64", &GUIDOPIr77F64},
+        {"GUIDOPIr77F128", &GUIDOPIr77F128},
+        {"GUIDOPIr77Tag", &GUIDOPIr77Tag},
+        {"GUIDOPIr77TaggedObject", &GUIDOPIr77TaggedObject},
+        {"GUIDOPIr77TaggedEnlisted", &GUIDOPIr77TaggedEnlisted},
+        {"GUIDOPIr77CollectObject", &GUIDOPIr77CollectObject},
+        {"GUIDOPIr77CollectEnlisted", &GUIDOPIr77CollectEnlisted},
+        {"GUIDOPIr77System", &GUIDOPIr77System},
         {"GUIDOPIr77RetVar", &GUIDOPIr77RetVar},
     };
 };

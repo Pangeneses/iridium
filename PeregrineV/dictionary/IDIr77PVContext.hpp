@@ -11,7 +11,13 @@ static const std::uint64_t ID_DEVICE = 0x7192836475920384;
 
 static const std::uint64_t ID_QUEUES = 0xdb18f07cf9c54504;
 
-static const std::uint64_t ID_SWAPCHAIN = 0x2947183056471829;
+static const std::uint64_t ID_SWAPCHAIN_001 = 0x2947183056471829;
+
+static const std::uint64_t ID_SWAPCHAIN_002 = 0x7394422840574737;
+
+static const std::uint64_t ID_SWAPCHAIN_003 = 0x2947183056471829;
+
+static const std::uint64_t ID_SWAPCHAIN_004 = 0x2947183056471829;
 
 static const std::uint64_t ID_COMMAND_BUFFER = 0x6475839201647583;
 

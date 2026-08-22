@@ -13,28 +13,6 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-enum class Ir77PVShaderStage : uint32_t {
-    Vertex = 0,
-    Fragment = 1,
-    Compute = 2,
-    Geometry = 3,
-    TessellationControl = 4,
-    TessellationEvaluation = 5,
-    Mesh = 6,
-    Task = 7,
-    RayGeneration = 8,
-    RayMiss = 9,
-    RayClosestHit = 10,
-    RayAnyHit = 11,
-    RayIntersection = 12,
-};
-
-struct Ir77PVShaderInfo {
-    VkPipelineShaderStageCreateInfo stage_create_info;
-    Ir77PVShaderStage stage;
-    std::vector<char> byte_code;
-    std::uint32_t size;
-};
 
 typedef struct IIr77PVShader : virtual public IIr77Enlisted {
     IIr77PVShader() = default;

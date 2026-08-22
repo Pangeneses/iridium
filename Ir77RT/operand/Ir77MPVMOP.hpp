@@ -124,18 +124,31 @@ struct Ir77Tag {
     static IIr77GUID* M_UUID() { return &GUIDOPIr77Tag; };
     static Ir77MPVMOPType M_RAW() { return Ir77MPVMOPType::Ir77Tag; };
 };
-struct Ir77Item {
+struct Ir77TaggedObject {
+    using type = struct {
+        Ir77Tag tag;
+        std::shared_ptr<void> obj;
+    };
+    static IIr77GUID* M_UUID() { return &GUIDOPIr77TaggedObject; };
+    static Ir77MPVMOPType M_RAW() { return Ir77MPVMOPType::Ir77TaggedObject; };
+};
+struct Ir77TaggedEnlisted {
     using type = struct {
         Ir77Tag tag;
         Ir77System system;
     };
-    static IIr77GUID* M_UUID() { return &GUIDOPIr77Item; };
-    static Ir77MPVMOPType M_RAW() { return Ir77MPVMOPType::Ir77Item; };
+    static IIr77GUID* M_UUID() { return &GUIDOPIr77TaggedEnlisted; };
+    static Ir77MPVMOPType M_RAW() { return Ir77MPVMOPType::Ir77TaggedEnlisted; };
 };
-struct Ir77Collect {
-    using type = std::vector<Ir77Item>;
-    static IIr77GUID* M_UUID() { return &GUIDOPIr77Collect; };
-    static Ir77MPVMOPType M_RAW() { return Ir77MPVMOPType::Ir77Collect; };
+struct Ir77CollectObject {
+    using type = std::vector<Ir77TaggedObject>;
+    static IIr77GUID* M_UUID() { return &GUIDOPIr77CollectObject; };
+    static Ir77MPVMOPType M_RAW() { return Ir77MPVMOPType::Ir77CollectObject; };
+};
+struct Ir77CollectEnlisted {
+    using type = std::vector<Ir77TaggedEnlisted>;
+    static IIr77GUID* M_UUID() { return &GUIDOPIr77CollectEnlisted; };
+    static Ir77MPVMOPType M_RAW() { return Ir77MPVMOPType::Ir77CollectEnlisted; };
 };
 struct Ir77RetVar {
     using type = std::shared_ptr<IIr77Return const>;

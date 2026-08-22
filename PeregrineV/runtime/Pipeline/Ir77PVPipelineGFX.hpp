@@ -37,9 +37,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVPipelineGFX() {
-        vkDestroyPipeline(GetDevice(), m_pipeline, nullptr);
-    }
+    ~Ir77PVPipelineGFX() { vkDestroyPipeline(GetDevice(), m_pipeline, nullptr); }
 
    public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -140,6 +138,10 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
     }
 
     std::shared_ptr<IIr77Return const> DefineViewportState() {
+        std::uint32_t index = CurrentDevice();
+
+
+
         SwapchainSupportDetails details = GetSwapchainSupportDetails();
 
         m_viewport.x = 0.0f;
@@ -252,7 +254,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
    private:
     std::uint32_t CurrentDevice();
 
-    SwapchainSupportDetails GetSwapchainSupportDetails();
+    std::vector<Ir77PVSwapchainInfo> GetSwapchainInfos();
 
     VkDevice GetDevice();
 

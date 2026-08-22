@@ -1,0 +1,174 @@
+#pragma once
+
+#include <memory>
+
+#include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
+
+#include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PeregrineV.hpp"
+
+#include "../../Ir77RT/interface/IIr77Enlisted.hpp"
+#include "../../Ir77RT/interface/IIr77Return.hpp"
+
+#include "../../Ir77RT/runtime/Ir77GUID.hpp"
+#include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
+#include "../../Ir77RT/runtime/Ir77Operand.hpp"
+
+#include "../interface/IIr77PeregrineV.hpp"
+
+#include "../../Ir77RT/interface/IIr77MPVMOP.hpp"
+
+#include "../../Ir77RT/operand/Ir77MPVMOP.hpp"
+
+using namespace NSIr77RT;
+
+namespace NSIr77PeregrineV {
+
+class Ir77PeregrineV : public Ir77Enlisted, public Ir77Operand, public IIr77PeregrineV, public std::enable_shared_from_this<Ir77PeregrineV> {
+   public:
+    Ir77PeregrineV() {
+        try {
+            m_enlisted_uuid.Generate();
+        } catch (std::invalid_argument a) {
+            throw a;
+        }
+
+        m_enlisted = std::chrono::system_clock::now();
+    }
+
+   public:
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIr77PeregrineV>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> CollectionUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIr77PeregrineV>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
+        if (iid == &GUIDIIr77Enlisted)
+            obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
+
+        else if (iid == &GUIDIIr77Operand)
+            obj = std::shared_ptr<IIr77Operand>(shared_from_this(), static_cast<IIr77Operand*>(this));
+
+        else if (iid == &GUIDIIr77PeregrineV)
+            obj = std::shared_ptr<IIr77PeregrineV>(shared_from_this(), static_cast<IIr77PeregrineV*>(this));
+
+        else if (iid == &GUIDIr77PeregrineV)
+            obj = std::shared_ptr<Ir77PeregrineV>(shared_from_this(), static_cast<Ir77PeregrineV*>(this));
+
+        else
+            return &GUIDQueryFailed;
+
+        return &GUIDQuerySucceeded;
+    }
+
+   public:
+    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const>& obj) {
+        m_operand.at(at) = obj;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+   public:
+    static std::shared_ptr<IIr77Return const> CreateDeviceInterface(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> DestroyDeviceInterface(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> AddWindow(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> DestroyWindow(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> CreatePipeline(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> DestroyInstance(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> UpdateShaders(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> ClearShaders(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> UploadVertexToBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> ClearVertexBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> UploadMaterialToBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> ClearMaterialBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> UploadComputeToBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> ClearComputeBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+
+    static std::shared_ptr<IIr77Return const> Assign(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
+        /*
+        std::shared_ptr<IIr77Enlisted const> enlisted_rhs;
+        rhs->GetIndexed(0, enlisted_rhs);
+
+        auto rhs_mutable = std::const_pointer_cast<IIr77Operand>(rhs);
+
+        auto raw = QueryAs<IIr77MPVMOP<Ir77String>>(&GUIDOPIr77String, std::const_pointer_cast<IIr77Enlisted>(enlisted_rhs).get());
+
+        if (!raw.get()) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid RHS Operand.");
+
+        try {
+            IsValidHEX(raw->Get());
+        } catch (std::domain_error) {
+            return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid Operand.");
+        }
+
+        auto lhs_mutable = std::const_pointer_cast<IIr77Operand>(lhs);
+
+        lhs_mutable->SetIndexed(0, enlisted_rhs);
+        */
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+   public:
+    std::shared_ptr<IIr77Return const> CreateInstance(std::uint32_t& count);
+
+    std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices();
+
+    std::shared_ptr<IIr77Return const> EnumerateDeviceQueues();
+
+    std::shared_ptr<IIr77Return const> CreateLogicalDevices();
+
+
+
+
+
+
+
+
+
+    
+
+    std::shared_ptr<IIr77Return const> GetMemberByID(std::uint64_t const& id, std::uint32_t const& device_index, std::shared_ptr<IIr77Enlisted>& obj);
+
+   private:
+    std::shared_ptr<IIr77Enlisted> m_instance;
+
+    std::vector<std::map<const std::uint64_t, std::shared_ptr<IIr77Enlisted>>> m_context;
+
+    std::vector<Ir77PVWindowInfo> m_windows;
+
+    std::uint32_t m_current_device{0};
+};
+}  // namespace NSIr77PeregrineV

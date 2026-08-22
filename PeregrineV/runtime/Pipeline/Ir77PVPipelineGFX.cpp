@@ -8,7 +8,7 @@
 #include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PVContext.hpp"
 
-#include "../../interface/IIr77PVContext.hpp"
+#include "../../interface/IIr77PeregrineV.hpp"
 
 #include "../../interface/IIr77PVSwapchain.hpp"
 #include "../../interface/IIr77PVDevice.hpp"
@@ -20,7 +20,7 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 std::uint32_t Ir77PVPipelineGFX::CurrentDevice() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::uint32_t index;
     context->CurrentDevice(index);
@@ -28,22 +28,22 @@ std::uint32_t Ir77PVPipelineGFX::CurrentDevice() {
     return index;
 }
 
-SwapchainSupportDetails Ir77PVPipelineGFX::GetSwapchainSupportDetails() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+std::vector<Ir77PVSwapchainInfo> Ir77PVPipelineGFX::GetSwapchainInfos() {
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_SWAPCHAIN, enlisted);
 
     std::shared_ptr<IIr77PVSwapchain> swapchain = QueryAs<IIr77PVSwapchain>(&GUIDIIr77PVSwapchain, enlisted.get());
 
-    SwapchainSupportDetails details;
-    swapchain->GetSwapchainSupportDetails(details);
+    std::vector<Ir77PVSwapchainInfo> swapchain_infos;
+    swapchain->GetSwapchainInfos(swapchain_infos);
 
-    return details;
+    return swapchain_infos;
 }
 
 VkDevice Ir77PVPipelineGFX::GetDevice() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_DEVICE, enlisted);
@@ -56,22 +56,8 @@ VkDevice Ir77PVPipelineGFX::GetDevice() {
     return vk_device;
 }
 
-VkPipelineLayout Ir77PVPipelineGFX::GetLayout() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
-
-    std::shared_ptr<IIr77Enlisted> enlisted;
-    context->GetMemberByID(ID_LAYOUT_001, enlisted);
-
-    std::shared_ptr<IIr77PVLayout> layout = QueryAs<IIr77PVLayout>(&GUIDIIr77PVLayout, enlisted.get());
-
-    VkPipelineLayout vk_layout;
-    layout->GetPipelineLayout(&vk_layout);
-
-    return vk_layout;
-}
-
 VkRenderPass Ir77PVPipelineGFX::GetRenderPass() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_RENDER_PASS_COLOR, enlisted);
@@ -85,7 +71,7 @@ VkRenderPass Ir77PVPipelineGFX::GetRenderPass() {
 }
 
 std::vector<VkPipelineShaderStageCreateInfo> Ir77PVPipelineGFX::GetPipelineShaderStageInfos() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_SHADER, enlisted);

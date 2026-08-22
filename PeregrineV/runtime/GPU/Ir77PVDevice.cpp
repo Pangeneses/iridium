@@ -10,7 +10,7 @@
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 
-#include "../../interface/IIr77PVContext.hpp"
+#include "../../interface/IIr77PeregrineV.hpp"
 
 #include "../../interface/IIr77PVInstance.hpp"
 #include "../../interface/IIr77PVQueue.hpp"
@@ -18,20 +18,11 @@
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-std::uint32_t Ir77PVDevice::CurrentDevice() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
-
-    std::uint32_t index;
-    context->CurrentDevice(index);
-
-    return index;
-}
-
 VkInstance Ir77PVDevice::GetInstance() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    context->GetMemberByID(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_INSTANCE, 0, enlisted);
 
     std::shared_ptr<IIr77PVInstance> instance = QueryAs<IIr77PVInstance>(&GUIDIIr77PVInstance, m_context.get());
 
@@ -41,17 +32,17 @@ VkInstance Ir77PVDevice::GetInstance() {
     return vk_instance;
 }
 
-std::vector<Ir77PVQueueInfo> Ir77PVDevice::GetQueueInfos() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+Ir77PVQueueInfo Ir77PVDevice::GetQueueInfo() {
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
-    context->GetMemberByID(ID_INSTANCE, enlisted);
+    context->GetMemberByID(ID_QUEUES, m_device_index, enlisted);
 
     std::shared_ptr<IIr77PVQueue> queue = QueryAs<IIr77PVQueue>(&GUIDIIr77PVQueue, m_context.get());
 
-    std::vector<Ir77PVQueueInfo> queue_infos;
-    queue->GetQueueInfos(queue_infos);
+    Ir77PVQueueInfo queue_info;
+    queue->GetQueueInfo(queue_info);
 
-    return queue_infos;
+    return queue_info;
 }
 }  // namespace NSIr77PeregrineV

@@ -12,15 +12,6 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-enum class Ir77PVPipelineType : uint32_t {
-    Graphics = 0,
-    Compute = 1,
-    RayTrace = 2,
-};
-
-struct IIr77PVShader;
-struct IIr77PVDescriptorLayout;
-struct IIr77PVRenderPass;
 
 typedef struct IIr77PVPipeline : virtual public IIr77Enlisted {
     IIr77PVPipeline() = default;

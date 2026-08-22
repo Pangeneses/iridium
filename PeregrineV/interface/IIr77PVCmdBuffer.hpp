@@ -15,16 +15,6 @@ enum class Ir77PVCmdBufferLevel : uint32_t {
     Secondary = 1,  // executed from primary via vkCmdExecuteCommands
 };
 
-struct IIr77PVPeregrineV;
-struct IIr77PVRenderPass;
-struct IIr77PVFramebuffer;
-struct IIr77PVPipeline;
-struct IIr77PVBuffer;
-struct IIr77PVDescriptorSet;
-struct IIr77PVBarrier;
-struct IIr77PVSemaphore;
-struct IIr77PVImage;
-
 typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     IIr77PVCmdBuffer() = default;
 

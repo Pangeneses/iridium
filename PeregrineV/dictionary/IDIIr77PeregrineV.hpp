@@ -21,7 +21,6 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 inline Ir77GUID GUIDIIr77PeregrineV{(static_cast<unsigned __int128>(0xA67D31AC1DDF4A7E) << 64) | 0xB628CE2A9641A8A2};
-inline Ir77GUID GUIDIIr77PVContext{(static_cast<unsigned __int128>(0x77DFD659D2AB4750) << 64) | 0xAC8581A603B4C82A};
 
 /**************** GPU Interface ****************/
 inline Ir77GUID GUIDIIr77PVInstance{(static_cast<unsigned __int128>(0xB1136C9B855A803E) << 64) | 0x7A5E662149F03242};
@@ -124,7 +123,6 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
 
     std::map<std::string, IIr77GUID const*> m_index{
         {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},
-        {"GUIDIIr77PVContext", &GUIDIIr77PVContext},
         {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},
         {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},
         {"GUIDIIr77PVQueue", &GUIDIIr77PVQueue},

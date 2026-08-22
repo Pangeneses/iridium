@@ -5,7 +5,7 @@
 
 #include "../../Ir77RT/interface//IIr77Enlisted.hpp"
 
-#include "../../interface/IIr77PVContext.hpp"
+#include "../../interface/IIr77PeregrineV.hpp"
 
 #include "../../interface/IIr77PVDevice.hpp"
 #include "../../interface/IIr77PVSwapchain.hpp"
@@ -13,17 +13,8 @@
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-std::uint32_t Ir77PVQueue::GetCurrentDevice() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
-
-    std::uint32_t index;
-    context->CurrentDevice(index);
-
-    return index;
-}
-
 std::vector<Ir77PVDeviceInfo> Ir77PVQueue::GetDeviceInfos() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_DEVICE, enlisted);
@@ -36,17 +27,17 @@ std::vector<Ir77PVDeviceInfo> Ir77PVQueue::GetDeviceInfos() {
     return device_infos;
 }
 
-VkSurfaceKHR Ir77PVQueue::GetSurface() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+std::vector<Ir77PVSwapchainInfo> Ir77PVQueue::GetSwapchainInfos() {
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_SWAPCHAIN, enlisted);
 
-    std::shared_ptr<IIr77PVSwapchain> surface = QueryAs<IIr77PVSwapchain>(&GUIDIIr77PVSwapchain, enlisted.get());
+    std::shared_ptr<IIr77PVSwapchain> swapchain = QueryAs<IIr77PVSwapchain>(&GUIDIIr77PVSwapchain, enlisted.get());
 
-    VkSurfaceKHR vk_surface;
-    surface->GetSurface(&vk_surface);
+    std::vector<Ir77PVSwapchainInfo> swapchain_infos;
+    swapchain->GetSwapchainInfos(swapchain_infos);
 
-    return vk_surface;
+    return swapchain_infos;
 }
 }  // namespace NSIr77PeregrineV

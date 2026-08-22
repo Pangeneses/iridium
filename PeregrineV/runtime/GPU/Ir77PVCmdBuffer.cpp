@@ -8,7 +8,7 @@
 #include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PVContext.hpp"
 
-#include "../../interface/IIr77PVContext.hpp"
+#include "../../interface/IIr77PeregrineV.hpp"
 #include "../../interface/IIr77PVDevice.hpp"
 #include "../../interface/IIr77PVQueue.hpp"
 
@@ -16,7 +16,7 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 VkDevice Ir77PVCmdBuffer::GetDevice() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PeregrineV, m_context.get());
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_DEVICE, enlisted);
@@ -30,7 +30,7 @@ VkDevice Ir77PVCmdBuffer::GetDevice() {
 }
 
 std::vector<Ir77PVQueueFamily> Ir77PVCmdBuffer::GetQueueFamilies() {
-    std::shared_ptr<IIr77PVContext> context = QueryAs<IIr77PVContext>(&GUIDIIr77PVContext, m_context.get());
+    std::shared_ptr<IIr77PeregrineV> context = QueryAs<IIr77PeregrineV>(&GUIDIIr77PeregrineV, m_context.get());
 
     std::shared_ptr<IIr77Enlisted> enlisted;
     context->GetMemberByID(ID_INSTANCE, enlisted);
@@ -42,4 +42,4 @@ std::vector<Ir77PVQueueFamily> Ir77PVCmdBuffer::GetQueueFamilies() {
 
     return vk_queue_families;
 }
-}
+}  // namespace NSIr77PeregrineV

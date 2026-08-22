@@ -36,9 +36,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVInstance() {
-      vkDestroyInstance(m_instance, nullptr);
-    }
+    ~Ir77PVInstance() { vkDestroyInstance(m_instance, nullptr); }
 
    public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -86,6 +84,14 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
 
     std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
         m_context = context;
+
+        InitAppInfo();
+
+        InitExtensions();
+
+        InitCreateInfo();
+
+        InitCreateInstance();
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -140,6 +146,13 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> QueryDeviceCount(std::uint32_t const& count) {
+        std::uint32_t physical_device_count = 0;
+        vkEnumeratePhysicalDevices(m_instance, &physical_device_count, nullptr);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
    public:
     std::shared_ptr<IIr77Return const> GetVkInstance(VkInstance* instance) {
         *instance = m_instance;
@@ -147,7 +160,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    private:
+   private:
     std::shared_ptr<IIr77Enlisted> m_context;
 
     VkApplicationInfo m_application_info;

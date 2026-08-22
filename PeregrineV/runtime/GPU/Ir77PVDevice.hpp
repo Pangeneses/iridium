@@ -22,7 +22,6 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
 #include "../../interface/IIr77PVDevice.hpp"
-#include "../../interface/IIr77PVQueue.hpp"
 
 using namespace NSIr77RT;
 
@@ -41,9 +40,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     }
 
     ~Ir77PVDevice() {
-        for (int i = 0; i < m_devices.size(); i++) {
-            vkDestroyDevice(m_devices.at(i).device, nullptr);
-        }
+            vkDestroyDevice(m_device.device, nullptr);
     }
 
    public:
@@ -90,13 +87,15 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
    public:
     const std::vector<const char*> DEVICE_EXTENSIONS = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
+    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context, std::uint32_t const& device_index) {
         m_context = context;
+
+        m_device_index = device_index;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateDevices() {
+    std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices() {
         VkInstance instance = GetInstance();
 
         std::uint32_t physical_device_count = 0;
@@ -106,96 +105,82 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: no Vulkan devices found.");
         }
 
-        std::vector<VkPhysicalDevice> m_phys_devices;
-        m_phys_devices.resize(physical_device_count);
-        m_devices.resize(physical_device_count);
+        std::vector<VkPhysicalDevice> phys_devices;
+        phys_devices.resize(physical_device_count);
 
-        vkEnumeratePhysicalDevices(instance, &physical_device_count, m_phys_devices.data());
+        vkEnumeratePhysicalDevices(instance, &physical_device_count, phys_devices.data());
 
-        for (int i = 0; i < m_phys_devices.size(); i++) {
-            m_devices.at(i).phys_device = m_phys_devices.at(i);
-
-            CheckDeviceExtensionSupport(i);
-
-            DefineDeviceInfo(i);
-
-            CreateDevice(i);
-        }
+        m_device.phys_device = phys_devices.at(m_device_index);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport(std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport() {
         uint32_t extensionCount = 0;
-        vkEnumerateDeviceExtensionProperties(m_devices[index].phys_device, nullptr, &extensionCount, nullptr);
+        vkEnumerateDeviceExtensionProperties(m_device.phys_device, nullptr, &extensionCount, nullptr);
 
-        m_devices.at(index).available_extensions.resize(extensionCount);
-        vkEnumerateDeviceExtensionProperties(m_devices.at(index).phys_device, nullptr, &extensionCount, m_devices.at(index).available_extensions.data());
+        m_device.available_extensions.resize(extensionCount);
+        vkEnumerateDeviceExtensionProperties(m_device.phys_device, nullptr, &extensionCount, m_device.available_extensions.data());
 
         std::set<std::string> requiredExtensions(DEVICE_EXTENSIONS.begin(), DEVICE_EXTENSIONS.end());
 
-        for (const auto& extension : m_devices.at(index).available_extensions) {
+        for (const auto& extension : m_device.available_extensions) {
             requiredExtensions.erase(extension.extensionName);
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DefineDeviceInfo(std::uint32_t const& index) {
-        Ir77PVQueueInfo queue = GetQueueInfos().at(index);
+    std::shared_ptr<IIr77Return const> DefineDeviceInfo() {
+        Ir77PVQueueInfo queue = GetQueueInfo();
 
-        m_devices.at(index).phys_device_features.samplerAnisotropy = VK_TRUE;
-        m_devices.at(index).phys_device_features.geometryShader = VK_TRUE;
-        m_devices.at(index).phys_device_features.multiDrawIndirect = VK_TRUE;
-        m_devices.at(index).phys_device_features.independentBlend = VK_TRUE;
+        m_device.phys_device_features.samplerAnisotropy = VK_TRUE;
+        m_device.phys_device_features.geometryShader = VK_TRUE;
+        m_device.phys_device_features.multiDrawIndirect = VK_TRUE;
+        m_device.phys_device_features.independentBlend = VK_TRUE;
 
-        m_devices.at(index).device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        m_devices.at(index).device_create_info.queueCreateInfoCount = static_cast<uint32_t>(queue.create_infos.size());
-        m_devices.at(index).device_create_info.pQueueCreateInfos = queue.create_infos.data();
-        m_devices.at(index).device_create_info.enabledExtensionCount = 1;
-        m_devices.at(index).device_create_info.ppEnabledExtensionNames = DEVICE_EXTENSIONS.data();
-        m_devices.at(index).device_create_info.pEnabledFeatures = &m_devices.at(index).phys_device_features;
+        m_device.device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        m_device.device_create_info.queueCreateInfoCount = static_cast<uint32_t>(queue.create_infos.size());
+        m_device.device_create_info.pQueueCreateInfos = queue.create_infos.data();
+        m_device.device_create_info.enabledExtensionCount = 1;
+        m_device.device_create_info.ppEnabledExtensionNames = DEVICE_EXTENSIONS.data();
+        m_device.device_create_info.pEnabledFeatures = &m_device.phys_device_features;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateDevice(std::uint32_t const& index) {
-        Ir77PVQueueInfo queue = GetQueueInfos().at(index);
+    std::shared_ptr<IIr77Return const> CreateDevice() {
+        Ir77PVQueueInfo queue = GetQueueInfo();
 
-        if (vkCreateDevice(m_devices.at(index).phys_device, &m_devices.at(index).device_create_info, nullptr, &m_devices.at(index).device) != VK_SUCCESS) {
+        if (vkCreateDevice(m_device.phys_device, &m_device.device_create_info, nullptr, &m_device.device) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateDevice failed.");
         }
 
         for (int i = 0; i < queue.create_infos.size(); i++) {
-            vkGetDeviceQueue(m_devices.at(index).device, queue.create_infos.at(i).queueFamilyIndex, 0, &queue.queues.at(i));
+            vkGetDeviceQueue(m_device.device, queue.create_infos.at(i).queueFamilyIndex, 0, &queue.queues.at(i));
         }
 
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-   public:
-    std::shared_ptr<IIr77Return const> GetDeviceCount(std::uint32_t& size) {
-        size = m_devices.size();
+        vkGetPhysicalDeviceProperties(m_device.phys_device, &m_device.device_properties);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetDeviceInfo(std::uint32_t const& index, Ir77PVDeviceInfo& device_info) {
-        device_info = m_devices.at(index);
+    std::shared_ptr<IIr77Return const> GetDeviceInfo(Ir77PVDeviceInfo& device_info) {
+        device_info = m_device;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
-    std::uint32_t CurrentDevice();
-
     VkInstance GetInstance();
 
-    std::vector<Ir77PVQueueInfo> GetQueueInfos();
+    Ir77PVQueueInfo GetQueueInfo();
 
    private:
     std::shared_ptr<IIr77Enlisted> m_context;
 
-    std::vector<Ir77PVDeviceInfo> m_devices;
+    std::uint32_t m_device_index;
+
+    Ir77PVDeviceInfo m_device;
 };
 }  // namespace NSIr77PeregrineV

@@ -26,6 +26,8 @@ typedef struct IIr77PVInstance : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> InitCreateInstance() = 0;
 
+    virtual std::shared_ptr<IIr77Return const> QueryDeviceCount(std::uint32_t const& count) = 0;
+
     /************* GETTERS *************/
     virtual std::shared_ptr<IIr77Return const> GetVkInstance(VkInstance* instance) = 0;
 
