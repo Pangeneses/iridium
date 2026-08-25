@@ -1,21 +1,18 @@
 #include "Ir77PeregrineV.hpp"
 #include <memory>
 
-#include "../dictionary/IDIr77PVContext.hpp"
-
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 
 #include "../runtime/GPU/Ir77PVInstance.hpp"
 #include "../runtime/GPU/Ir77PVDevice.hpp"
-#include "../runtime/GPU/Ir77PVQueue.hpp"
 #include "../runtime/GPU/Ir77PVSwapchain.hpp"
+#include "../runtime/Pipeline Layout/Ir77PVLayoutStd.hpp"
+#include "../runtime/GPU/Ir77PVRenderPass.hpp"
 #include "../runtime/GPU/Ir77PVCmdBuffer.hpp"
 
 #include "../runtime/Pipeline/Ir77PVPipelineGFX.hpp"
 
-#include "../runtime/Pipeline Layout//Ir77PVLayout001.hpp"
-
-#include "../runtime/Render Pass/Ir77PVRPColor.hpp"
+#include "../runtime/Pipeline Layout//Ir77PVLayoutStd.hpp"
 
 #include "../runtime/Assets/Ir77PVShader.hpp"
 
@@ -89,35 +86,121 @@ std::shared_ptr<IIr77Return const> Ir77PeregrineV::ClearComputeBuffer(std::share
 }
 
 std::shared_ptr<IIr77Return const> Ir77PeregrineV::CreateInstance(std::uint32_t& count) {
+    auto context = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
+
     m_instance = std::make_shared<Ir77PVInstance>();
 
     std::shared_ptr<IIr77PVInstance> instance = std::reinterpret_pointer_cast<IIr77PVInstance>(m_instance);
 
-    instance->InitAppInfo();
+    instance->DefineAppInfo();
 
-    instance->InitExtensions();
+    instance->DefineExtensions();
 
-    instance->InitCreateInfo();
+    instance->DefineCreateInfo();
 
-    instance->InitCreateInstance();
+    instance->DefineCreateInstance();
 
-    instance->QueryDeviceCount(count);
+    instance->QueryDeviceCount(m_device_count);
 
     return Ir77RETURN<Ir77OperationSucceeded>();
 }
 
 std::shared_ptr<IIr77Return const> Ir77PeregrineV::EnumeratePhysicalDevices() {
+    auto device = std::reinterpret_pointer_cast<IIr77PVDevice>(std::make_shared<Ir77PVDevice>());
 
+    m_devices.emplace(m_current_device, device);
 
+    device->SetInstance(m_instance);
 
-    return Ir77RETURN<Ir77OperationSucceeded>();
-}
-
-std::shared_ptr<IIr77Return const> Ir77PeregrineV::GetMemberByID(std::uint64_t const& id, std::uint32_t const& device_index,
-                                                                 std::shared_ptr<IIr77Enlisted>& obj) {
-    obj = m_context.at(device_index).at(id);
+    device->EnumeratePhysicalDevices();
 
     return Ir77RETURN<Ir77OperationSucceeded>();
 }
 
+std::shared_ptr<IIr77Return const> Ir77PeregrineV::CreateSurfaces() {
+    std::vector<SDL_Window*> windows = m_windows.at(m_current_device);
+
+    if (windows.size() > 8) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: too many windows.");
+
+    std::vector<std::shared_ptr<IIr77PVSwapchain>> swapchains;
+    for (int i = 0; i < windows.size(); i++) {
+        auto swapchain = std::reinterpret_pointer_cast<IIr77PVSwapchain>(std::make_shared<Ir77PVSwapchain>());
+
+        swapchains.push_back(swapchain);
+
+        swapchains.back()->CreateSurface(windows.at(i));
+    }
+
+    m_swapchains.emplace(m_current_device, swapchains);
+
+    return Ir77RETURN<Ir77OperationSucceeded>();
+}
+
+std::shared_ptr<IIr77Return const> Ir77PeregrineV::EnumerateDeviceQueues() {
+    m_devices.at(m_current_device)->DefineQueueFamilyProps(m_windows.at(m_current_device).at(0));
+
+    m_devices.at(m_current_device)->DefineQueueCreateInfos();
+
+    return Ir77RETURN<Ir77OperationSucceeded>();
+}
+
+std::shared_ptr<IIr77Return const> Ir77PeregrineV::CreateLogicalDevices() {
+    m_devices.at(m_current_device)->CheckDeviceExtensionSupport();
+
+    m_devices.at(m_current_device)->DefineDeviceInfo() = 0;
+
+    m_devices.at(m_current_device)->CreateDevice() = 0;
+
+    return Ir77RETURN<Ir77OperationSucceeded>();
+}
+
+std::shared_ptr<IIr77Return const> Ir77PeregrineV::CreateLayout() {
+    auto layout = std::reinterpret_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayoutStd>());
+
+    m_pipeline_layouts.emplace(m_current_device, layout);
+
+    layout->CreatePipelineLayout();
+
+    return Ir77RETURN<Ir77OperationSucceeded>();
+}
+
+std::shared_ptr<IIr77Return const> Ir77PeregrineV::CreateRenderPass() {
+    auto render_pass = std::reinterpret_pointer_cast<IIr77PVRenderPass>(std::make_shared<Ir77PVRenderPass>());
+
+    m_render_pass.emplace(m_current_device, render_pass);
+
+    render_pass->DefineColorAttachment(m_windows.at(m_current_device).at(0));
+
+    render_pass->DefineColorAttachmentRef();
+
+    render_pass->DefineSubpass();
+
+    render_pass->DefineRenderPass();
+
+    return Ir77RETURN<Ir77OperationSucceeded>();
+}
+
+std::shared_ptr<IIr77Return const> Ir77PeregrineV::CreateSwapchains() {
+    for (int i = 0; i < m_swapchains.at(m_current_device).size(); i++) {
+        m_swapchains.at(m_current_device).at(i)->QuerySwapchainSupport();
+
+        m_swapchains.at(m_current_device).at(i)->SwapSurfaceFormat();
+
+        m_swapchains.at(m_current_device).at(i)->PresentMode();
+
+        m_swapchains.at(m_current_device).at(i)->SurfaceCapabilities();
+
+        m_swapchains.at(m_current_device).at(i)->InitSwapchainInfo();
+
+        m_swapchains.at(m_current_device).at(i)->CreateSwapchain();
+
+        m_swapchains.at(m_current_device).at(i)->InitSwapchainImages();
+
+        m_swapchains.at(m_current_device).at(i)->CreateImageView();
+
+        m_swapchains.at(m_current_device).at(i)->CreateFramebuffers();
+    }
+
+    return Ir77RETURN<Ir77OperationSucceeded>();
+}
 }  // namespace NSIr77PeregrineV

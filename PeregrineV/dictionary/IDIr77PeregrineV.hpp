@@ -34,7 +34,7 @@ inline Ir77GUID GUIDIr77PVSemaphore{(static_cast<unsigned __int128>(0x4C9B72F5A1
 inline Ir77GUID GUIDIr77PVPipelineGFX{(static_cast<unsigned __int128>(0x7B3F90D2C5A418E6) << 64) | 0x4A8E610F93B2D75C};
 
 /**************** Pipeline Layout ****************/
-inline Ir77GUID GUIDIr77PVLayout001{(static_cast<unsigned __int128>(0xF9C41B8E3A706D25) << 64) | 0x53BD70F1248A9CE6};
+inline Ir77GUID GUIDIr77PVLayoutStd{(static_cast<unsigned __int128>(0xF9C41B8E3A706D25) << 64) | 0x53BD70F1248A9CE6};
 
 /**************** Render Pass ****************/
 inline Ir77GUID GUIDIr77PVRenderPassColor{(static_cast<unsigned __int128>(0x5F2A91D8E4703C6B) << 64) | 0x0B8E53C1F96A4D72};
@@ -139,7 +139,7 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
         {"GUIDIr77PVBarrier", &GUIDIr77PVBarrier},
         {"GUIDIr77PVSemaphore", &GUIDIr77PVSemaphore},
         {"GUIDIr77PVPipelineGFX", &GUIDIr77PVPipelineGFX},
-        {"GUIDIr77PVLayout001", &GUIDIr77PVLayout001},
+        {"GUIDIr77PVLayoutStd", &GUIDIr77PVLayoutStd},
         {"GUIDIr77PVRenderPassColor", &GUIDIr77PVRenderPassColor},
         {"GUIDIr77PVBuffer", &GUIDIr77PVBuffer},
         {"GUIDIr77PVCompute", &GUIDIr77PVCompute},

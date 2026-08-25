@@ -25,5 +25,5 @@ typedef struct IIr77PVSemaphore : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
     virtual ~IIr77PVSemaphore() = default;
-}* PIr77PVSemaphore;
+}* pIIr77PVSemaphore;
 }  // namespace NSIr77PeregrineV

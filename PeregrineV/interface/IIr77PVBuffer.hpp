@@ -31,7 +31,7 @@ typedef struct IIr77PVBuffer : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
     virtual ~IIr77PVBuffer() = default;
-}* PIr77Buffer;
+}* pIIr77Buffer;
 }  // namespace NSIr77PeregrineV
 
 /*

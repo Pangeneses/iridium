@@ -12,14 +12,14 @@
 #include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PeregrineV.hpp"
 
+#include "../../dictionary/IDIr77PVContext.hpp"
+
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
 #include "../../interface/IIr77PVCmdBuffer.hpp"
-#include "../../interface/IIr77PVQueue.hpp"
 
 using namespace NSIr77RT;
 
@@ -37,7 +37,12 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVCmdBuffer() { vkDestroyCommandPool(GetDevice(), m_cmd_pool, nullptr); }
+    ~Ir77PVCmdBuffer() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        vkDestroyCommandPool(device, m_cmd_pool, nullptr); 
+    }
 
    public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -80,21 +85,48 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return &GUIDQuerySucceeded;
     }
 
-   public:
-    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
-        m_context = context;
+   public:    
+    std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) {
+        m_instance = instance;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
+        m_device = device;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) {
+        m_swapchain = swapchain;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetPipelines(std::map<std::uint64_t, std::shared_ptr<IIr77PVPipeline>> pipelines) {
+        m_pipelines = pipelines;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     std::shared_ptr<IIr77Return const> DefineCommandPool() {
-        VkDevice device = GetDevice();
-        std::vector<Ir77PVQueueFamily> queue_families = GetQueueFamilies();
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        std::vector<Ir77PVQueueFamily> queue_family;
+        m_device->GetQueueFamily(queue_family);
 
         VkCommandPoolCreateInfo pool_info{};
         pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pool_info.queueFamilyIndex = queue_families.graphicsFamily.value();
+
+        for(int i = 0; i < queue_family.size(); i++) {
+            if(queue_family[i].presentation == VK_TRUE) {
+                pool_info.queueFamilyIndex = i;
+                break;
+            }
+        }       
 
         if (vkCreateCommandPool(device, &pool_info, nullptr, &m_cmd_pool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
@@ -103,7 +135,22 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> RecordCommands(std::shared_ptr<IIr77Enlisted>& context) {
+    std::shared_ptr<IIr77Return const> RecordCommands(std::shared_ptr<IIr77Enlisted>& context, std::uint32_t const& index) {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        VkRenderPass render_pass;
+        m_render_pass->GetRenderPass(&render_pass);
+
+        VkExtent2D swapchain_extent;
+        m_swapchain->GetSwapchainExtents(swapchain_extent);
+
+        std::vector<VkFramebuffer> swapchain_framebuffers;
+        m_swapchain->GetSwapchainFramebuffers(swapchain_framebuffers);
+
+        VkPipeline pipeline_gfx;
+        m_pipelines.at(ID_PIPELINE_GFX)->GetPipeline(&pipeline_gfx);
+
         VkCommandBufferBeginInfo begin_info{};
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin_info.flags = 0;                   // Optional
@@ -113,33 +160,33 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             throw std::runtime_error("failed to begin recording command buffer!");
         }
 
-        VkRenderPassBeginInfo renderPassInfo{};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassInfo.renderPass = renderPass;
-        renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
-        renderPassInfo.renderArea.offset = {0, 0};
-        renderPassInfo.renderArea.extent = swapChainExtent;
+        VkRenderPassBeginInfo render_pass_info{};
+        render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        render_pass_info.renderPass = render_pass;
+        render_pass_info.framebuffer = swapchain_framebuffers[index];
+        render_pass_info.renderArea.offset = {0, 0};
+        render_pass_info.renderArea.extent = swapchain_extent;
 
-        VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-        renderPassInfo.clearValueCount = 1;
-        renderPassInfo.pClearValues = &clearColor;
+        VkClearValue clear_color = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+        render_pass_info.clearValueCount = 1;
+        render_pass_info.pClearValues = &clear_color;
 
-        vkCmdBeginRenderPass(m_cmd_buf, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(m_cmd_buf, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdBindPipeline(m_cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        vkCmdBindPipeline(m_cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_gfx);
 
         VkViewport viewport{};
         viewport.x = 0.0f;
         viewport.y = 0.0f;
-        viewport.width = static_cast<float>(swapChainExtent.width);
-        viewport.height = static_cast<float>(swapChainExtent.height);
+        viewport.width = static_cast<float>(swapchain_extent.width);
+        viewport.height = static_cast<float>(swapchain_extent.height);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
         vkCmdSetViewport(m_cmd_buf, 0, 1, &viewport);
 
         VkRect2D scissor{};
         scissor.offset = {0, 0};
-        scissor.extent = swapChainExtent;
+        scissor.extent = swapchain_extent;
         vkCmdSetScissor(m_cmd_buf, 0, 1, &scissor);
 
         vkCmdDraw(m_cmd_buf, 3, 1, 0, 0);
@@ -154,12 +201,15 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     }
 
    private:
-    VkDevice GetDevice();
+    std::shared_ptr<IIr77PVInstance> m_instance;
 
-    std::vector<Ir77PVQueueFamily> GetQueueFamilies();
+    std::shared_ptr<IIr77PVDevice> m_device;
 
-   private:
-    std::shared_ptr<IIr77Enlisted> m_context;
+    std::shared_ptr<IIr77PVSwapchain> m_swapchain;
+
+    std::shared_ptr<IIr77PVRenderPass> m_render_pass;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVPipeline>> m_pipelines;
 
     VkCommandPool m_cmd_pool{VK_NULL_HANDLE};
 

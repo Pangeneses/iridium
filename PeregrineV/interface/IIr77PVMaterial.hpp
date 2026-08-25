@@ -25,5 +25,5 @@ typedef struct IIr77PVMaterial : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
     virtual ~IIr77PVMaterial() = default;
-}* PIr77PVMaterial;
+}* pIIr77PVMaterial;
 }  // namespace NSIr77PeregrineV

@@ -28,10 +28,6 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 #include "../../Ir77RT/runtime/Ir77Patch.hpp"
 
-#include "../operand/Ir77PVLifetime.hpp"
-#include "../operand/Ir77PVAsset.hpp"
-#include "../operand/Ir77PVPump.hpp"
-
 using namespace NSIr77RT;
 // using namespace NSIr77REDOS;
 

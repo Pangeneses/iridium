@@ -6,6 +6,11 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
+#include "IIr77PVDevice.hpp"
+#include "IIr77PVPipeline.hpp"
+#include "IIr77PVRenderPass.hpp"
+#include "IIr77PVSwapchain.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
@@ -18,11 +23,16 @@ enum class Ir77PVCmdBufferLevel : uint32_t {
 typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     IIr77PVCmdBuffer() = default;
 
-    virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetPipelines(std::map<std::uint64_t, std::shared_ptr<IIr77PVPipeline>> const& pipelines) = 0;
 
     virtual ~IIr77PVCmdBuffer() = default;
-
-}* PIr77PVCmdBuffer;
+}* pIIr77PVCmdBuffer;
 }  // namespace NSIr77PeregrineV
 
 /*

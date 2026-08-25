@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SDL3/SDL_video.h>
+#include <map>
 #include <memory>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
@@ -10,15 +12,16 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 #include "../../Ir77RT/runtime/Ir77Operand.hpp"
 
 #include "../interface/IIr77PeregrineV.hpp"
 
-#include "../../Ir77RT/interface/IIr77MPVMOP.hpp"
-
-#include "../../Ir77RT/operand/Ir77MPVMOP.hpp"
+#include "../interface/IIr77PVInstance.hpp"
+#include "../interface/IIr77PVDevice.hpp"
+#include "../interface/IIr77PVSwapchain.hpp"
+#include "../interface/IIr77PVLayout.hpp"
+#include "../interface/IIr77PVRenderPass.hpp"
 
 using namespace NSIr77RT;
 
@@ -146,29 +149,39 @@ class Ir77PeregrineV : public Ir77Enlisted, public Ir77Operand, public IIr77Pere
 
     std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices();
 
+    std::shared_ptr<IIr77Return const> CreateSurfaces();
+
     std::shared_ptr<IIr77Return const> EnumerateDeviceQueues();
 
     std::shared_ptr<IIr77Return const> CreateLogicalDevices();
 
+    std::shared_ptr<IIr77Return const> CreateLayout() ;
 
+    std::shared_ptr<IIr77Return const> CreateRenderPass();
 
-
-
-
-
-
-
-    
-
-    std::shared_ptr<IIr77Return const> GetMemberByID(std::uint64_t const& id, std::uint32_t const& device_index, std::shared_ptr<IIr77Enlisted>& obj);
+    std::shared_ptr<IIr77Return const> CreateSwapchains();
 
    private:
-    std::shared_ptr<IIr77Enlisted> m_instance;
+    std::uint32_t m_device_count;
 
-    std::vector<std::map<const std::uint64_t, std::shared_ptr<IIr77Enlisted>>> m_context;
+    std::uint64_t m_current_device;
 
-    std::vector<Ir77PVWindowInfo> m_windows;
+    std::shared_ptr<IIr77PVInstance> m_instance;
 
-    std::uint32_t m_current_device{0};
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVDevice>> m_devices;
+
+    std::map<std::uint64_t, std::vector<SDL_Window*>> m_windows;
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVSwapchain>>> m_swapchains;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVLayout>> m_pipeline_layouts;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVRenderPass>> m_render_pass;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77Enlisted>> m_pipelines;
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77Enlisted>>> m_compute;
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77Enlisted>>> m_command_buffers;
 };
 }  // namespace NSIr77PeregrineV

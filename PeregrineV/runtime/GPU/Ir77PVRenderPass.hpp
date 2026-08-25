@@ -19,15 +19,14 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
 #include "../../interface/IIr77PVRenderPass.hpp"
-#include "../../interface/IIr77PVSwapchain.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-class Ir77PVRenderPassColor : public Ir77Enlisted, public IIr77PVRenderPass, public std::enable_shared_from_this<Ir77PVRenderPassColor> {
+class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public std::enable_shared_from_this<Ir77PVRenderPass> {
    public:
-    Ir77PVRenderPassColor() {
+    Ir77PVRenderPass() {
         try {
             m_enlisted_uuid.Generate();
         } catch (std::invalid_argument a) {
@@ -37,7 +36,12 @@ class Ir77PVRenderPassColor : public Ir77Enlisted, public IIr77PVRenderPass, pub
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVRenderPassColor() { vkDestroyRenderPass(GetDevice(), m_render_pass, nullptr); }
+    ~Ir77PVRenderPass() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        vkDestroyRenderPass(device, m_render_pass, nullptr);
+    }
 
    public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -72,7 +76,7 @@ class Ir77PVRenderPassColor : public Ir77Enlisted, public IIr77PVRenderPass, pub
             obj = std::shared_ptr<IIr77PVRenderPass>(shared_from_this(), static_cast<IIr77PVRenderPass*>(this));
 
         else if (iid == &GUIDIr77PVRenderPassColor)
-            obj = std::shared_ptr<Ir77PVRenderPassColor>(shared_from_this(), static_cast<Ir77PVRenderPassColor*>(this));
+            obj = std::shared_ptr<Ir77PVRenderPass>(shared_from_this(), static_cast<Ir77PVRenderPass*>(this));
 
         else
             return &GUIDQueryFailed;
@@ -81,28 +85,50 @@ class Ir77PVRenderPassColor : public Ir77Enlisted, public IIr77PVRenderPass, pub
     }
 
    public:
-    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
-        m_context = context;
+    std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) {
+        m_instance = instance;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateRenderPass() {
-        DefineColorAttachment();
-
-        DefineColorAttachmentRef();
-
-        DefineSubpass();
-
-        DefineRenderPass();
+    std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
+        m_device = device;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DefineColorAttachment() {
-        SwapchainSupportDetails swapchain = GetSwapchainSupportDetails();
+    std::shared_ptr<IIr77Return const> DefineColorAttachment(SDL_Window* window) {
+        VkInstance instance;
+        m_instance->GetInstance(&instance);
 
-        m_color_attachment.format = swapchain.format;
+        VkPhysicalDevice phys_device;
+        m_device->GetPhysicalDevice(&phys_device);
+
+        VkSurfaceKHR surface;
+        if (!SDL_Vulkan_CreateSurface(window, instance, nullptr, &surface)) {
+            std::string str{SDL_GetError()};
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: SDL_Vulkan_CreateSurface failed: " + str);
+        }
+
+        uint32_t format_count;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, surface, &format_count, nullptr);
+
+        std::vector<VkSurfaceFormatKHR> formats;
+        if (format_count != 0) {
+            formats.resize(format_count);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, surface, &format_count, formats.data());
+        }
+
+        for (int i = 0; i < formats.size(); i++) {
+            if (formats[i].format == VK_FORMAT_B8G8R8A8_SRGB) {
+                m_color_attachment.format = VK_FORMAT_B8G8R8A8_SRGB;
+            }
+        }
+
+        if (m_color_attachment.format != VK_FORMAT_B8G8R8A8_SRGB) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVRPColor: format failed: ");
+        }
+
         m_color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
         m_color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         m_color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -110,6 +136,8 @@ class Ir77PVRenderPassColor : public Ir77Enlisted, public IIr77PVRenderPass, pub
         m_color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         m_color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         m_color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        vkDestroySurfaceKHR(instance, surface, nullptr);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -130,7 +158,9 @@ class Ir77PVRenderPassColor : public Ir77Enlisted, public IIr77PVRenderPass, pub
     }
 
     std::shared_ptr<IIr77Return const> DefineRenderPass() {
-        VkDevice device = GetDevice();
+        VkDevice device;
+        m_device->GetDevice(&device);
+
 
         m_render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         m_render_pass_info.attachmentCount = 1;
@@ -152,14 +182,11 @@ class Ir77PVRenderPassColor : public Ir77Enlisted, public IIr77PVRenderPass, pub
     }
 
    private:
-    std::uint32_t CurrentDevice();
+    std::shared_ptr<IIr77PVInstance> m_instance;
 
-    VkDevice GetDevice();
+    std::shared_ptr<IIr77PVDevice> m_device;
 
-    SwapchainSupportDetails GetSwapchainSupportDetails();
-
-   private:
-    std::shared_ptr<IIr77Enlisted> m_context;
+    std::uint64_t m_device_id{UINT64_MAX};
 
     VkAttachmentDescription m_color_attachment{};
 

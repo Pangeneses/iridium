@@ -9,6 +9,8 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
+#include "../../dictionary/IDIr77PVContext.hpp"
+
 #include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PeregrineV.hpp"
 
@@ -19,7 +21,6 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
 #include "../../interface/IIr77PVPipeline.hpp"
-#include "../../interface/IIr77PVSwapchain.hpp"
 
 using namespace NSIr77RT;
 
@@ -37,7 +38,12 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVPipelineGFX() { vkDestroyPipeline(GetDevice(), m_pipeline, nullptr); }
+    ~Ir77PVPipelineGFX() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        vkDestroyPipeline(device, m_pipeline, nullptr);
+    }
 
    public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -81,8 +87,38 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
     }
 
    public:
-    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
-        m_context = context;
+    std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) {
+        m_instance = instance;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
+        m_device = device;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) {
+        m_swapchain = swapchain;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) {
+        m_render_pass = render_pass;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> pipeline_layout) {
+        m_pipeline_layout = pipeline_layout;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetShader(std::shared_ptr<IIr77PVShader> shader_stack) {
+        m_shader_stack = shader_stack;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -138,21 +174,18 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
     }
 
     std::shared_ptr<IIr77Return const> DefineViewportState() {
-        std::uint32_t index = CurrentDevice();
-
-
-
-        SwapchainSupportDetails details = GetSwapchainSupportDetails();
+        VkExtent2D swapchain_extent;
+        m_swapchain->GetSwapchainExtents(swapchain_extent);
 
         m_viewport.x = 0.0f;
         m_viewport.y = 0.0f;
-        m_viewport.width = (float)details.swapchain_extent.width;
-        m_viewport.height = (float)details.swapchain_extent.height;
+        m_viewport.width = (float)swapchain_extent.width;
+        m_viewport.height = (float)swapchain_extent.height;
         m_viewport.minDepth = 0.0f;
         m_viewport.maxDepth = 1.0f;
 
         m_scissor.offset = {0, 0};
-        m_scissor.extent = details.swapchain_extent;
+        m_scissor.extent = swapchain_extent;
 
         // dynamic
         m_viewport_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -222,13 +255,20 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
     }
 
     std::shared_ptr<IIr77Return const> DefinePipeline() {
-        VkDevice device = GetDevice();
-        VkPipelineLayout layout = GetLayout();
-        VkRenderPass render_pass = GetRenderPass();
-        std::vector<VkPipelineShaderStageCreateInfo> shader_stages = GetPipelineShaderStageInfos();
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        VkPipelineLayout pipeline_layout;
+        m_pipeline_layout->GetPipelineLayout(&pipeline_layout);
+
+        VkRenderPass render_pass;
+        m_render_pass->GetRenderPass(&render_pass);
+
+        std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
+        m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_VERT, ID_SHADER_FRAG});
 
         m_pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        m_pipeline_info.stageCount = 2;
+        m_pipeline_info.stageCount = shader_stages.size();
         m_pipeline_info.pStages = shader_stages.data();
         m_pipeline_info.pVertexInputState = &m_vertex_input_info;
         m_pipeline_info.pInputAssemblyState = &m_input_assembly;
@@ -238,7 +278,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         m_pipeline_info.pDepthStencilState = nullptr;  // Optional
         m_pipeline_info.pColorBlendState = &m_color_blend_state_info;
         m_pipeline_info.pDynamicState = &m_dynamic_state_info;
-        m_pipeline_info.layout = layout;
+        m_pipeline_info.layout = pipeline_layout;
         m_pipeline_info.renderPass = render_pass;
         m_pipeline_info.subpass = 0;
         m_pipeline_info.basePipelineHandle = VK_NULL_HANDLE;  // Optional
@@ -251,21 +291,24 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-   private:
-    std::uint32_t CurrentDevice();
+    std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) {
+        *pipeline = m_pipeline;
 
-    std::vector<Ir77PVSwapchainInfo> GetSwapchainInfos();
-
-    VkDevice GetDevice();
-
-    VkPipelineLayout GetLayout();
-
-    VkRenderPass GetRenderPass();
-
-    std::vector<VkPipelineShaderStageCreateInfo> GetPipelineShaderStageInfos();
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
 
    private:
-    std::shared_ptr<IIr77Enlisted> m_context;
+    std::shared_ptr<IIr77PVInstance> m_instance;
+
+    std::shared_ptr<IIr77PVDevice> m_device;
+
+    std::shared_ptr<IIr77PVSwapchain> m_swapchain;
+
+    std::shared_ptr<IIr77PVRenderPass> m_render_pass;
+
+    std::shared_ptr<IIr77PVLayout> m_pipeline_layout;
+
+    std::shared_ptr<IIr77PVShader> m_shader_stack;
 
     std::vector<VkDynamicState> m_dynamic_states{};
 

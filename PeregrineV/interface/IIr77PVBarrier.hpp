@@ -16,5 +16,5 @@ typedef struct IIr77PVBarrier : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
     
     virtual ~IIr77PVBarrier() = default;
-}* PIr77PVBarrier;
+}* pIIr77PVBarrier;
 }  // namespace NSIr77PeregrineV

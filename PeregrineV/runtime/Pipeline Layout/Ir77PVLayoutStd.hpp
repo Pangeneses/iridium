@@ -24,9 +24,9 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-class Ir77PVLayout001 : public Ir77Enlisted, public IIr77PVLayout, public std::enable_shared_from_this<Ir77PVLayout001> {
+class Ir77PVLayoutStd : public Ir77Enlisted, public IIr77PVLayout, public std::enable_shared_from_this<Ir77PVLayoutStd> {
    public:
-    Ir77PVLayout001() {
+    Ir77PVLayoutStd() {
         try {
             m_enlisted_uuid.Generate();
         } catch (std::invalid_argument a) {
@@ -36,8 +36,11 @@ class Ir77PVLayout001 : public Ir77Enlisted, public IIr77PVLayout, public std::e
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVLayout001() {
-        vkDestroyPipelineLayout(GetDevice(), m_pipeline_layout, nullptr);
+    ~Ir77PVLayoutStd() { 
+        VkDevice device;
+        m_device->GetDevice(&device);
+        
+        vkDestroyPipelineLayout(device, m_pipeline_layout, nullptr); 
     }
 
    public:
@@ -50,7 +53,7 @@ class Ir77PVLayout001 : public Ir77Enlisted, public IIr77PVLayout, public std::e
     }
 
     std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIr77PVLayout001>(uid);
+        seat_shared_uuid<&GUIDIr77PVLayoutStd>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -72,8 +75,8 @@ class Ir77PVLayout001 : public Ir77Enlisted, public IIr77PVLayout, public std::e
         else if (iid == &GUIDIIr77PVLayout)
             obj = std::shared_ptr<IIr77PVLayout>(shared_from_this(), static_cast<IIr77PVLayout*>(this));
 
-        else if (iid == &GUIDIr77PVLayout001)
-            obj = std::shared_ptr<Ir77PVLayout001>(shared_from_this(), static_cast<Ir77PVLayout001*>(this));
+        else if (iid == &GUIDIr77PVLayoutStd)
+            obj = std::shared_ptr<Ir77PVLayoutStd>(shared_from_this(), static_cast<Ir77PVLayoutStd*>(this));
 
         else
             return &GUIDQueryFailed;
@@ -82,18 +85,19 @@ class Ir77PVLayout001 : public Ir77Enlisted, public IIr77PVLayout, public std::e
     }
 
    public:
-    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
-        m_context = context;
+    std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
+        m_device = device;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     std::shared_ptr<IIr77Return const> CreatePipelineLayout() {
-        VkDevice device = GetDevice();
+        VkDevice device;
+        m_device->GetDevice(&device);
 
         m_pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        m_pipeline_layout_info.setLayoutCount = 0;             // Optional
-        m_pipeline_layout_info.pSetLayouts = nullptr;          // Optional
+        m_pipeline_layout_info.setLayoutCount = 0;                      // Optional
+        m_pipeline_layout_info.pSetLayouts = nullptr;                   // Optional
         m_pipeline_layout_info.pushConstantRangeCount = 0;     // Optional
         m_pipeline_layout_info.pPushConstantRanges = nullptr;  // Optional
 
@@ -105,19 +109,15 @@ class Ir77PVLayout001 : public Ir77Enlisted, public IIr77PVLayout, public std::e
     }
 
     std::shared_ptr<IIr77Return const> GetPipelineLayout(VkPipelineLayout* pipeline_layout) {
-        *pipeline_layout = m_pipeline_layout;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
-    std::uint32_t CurrentDevice();
+    std::shared_ptr<IIr77PVDevice> m_device;
 
-    VkDevice GetDevice();
-
-   private:
-    std::shared_ptr<IIr77Enlisted> m_context;
-
+    std::uint64_t m_device_id{UINT64_MAX};
+    
     VkPipelineLayoutCreateInfo m_pipeline_layout_info{};
 
     VkPipelineLayout m_pipeline_layout;

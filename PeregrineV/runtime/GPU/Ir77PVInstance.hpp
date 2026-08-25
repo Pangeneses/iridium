@@ -82,21 +82,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
    public:
     static constexpr const char* VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
 
-    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
-        m_context = context;
-
-        InitAppInfo();
-
-        InitExtensions();
-
-        InitCreateInfo();
-
-        InitCreateInstance();
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> InitAppInfo() {
+    std::shared_ptr<IIr77Return const> DefineAppInfo() {
         m_application_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
         m_application_info.pApplicationName = "Iridium";
         m_application_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -113,7 +99,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
     static constexpr bool ENABLE_VALIDATION = true;
 #endif
 
-    std::shared_ptr<IIr77Return const> InitExtensions() {
+    std::shared_ptr<IIr77Return const> DefineExtensions() {
         m_sdl_ext_count = 0;
 
         const char* const* sdl_exts = SDL_Vulkan_GetInstanceExtensions(&m_sdl_ext_count);
@@ -125,7 +111,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> InitCreateInfo() {
+    std::shared_ptr<IIr77Return const> DefineCreateInfo() {
         m_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         m_create_info.pApplicationInfo = &m_application_info;
         m_create_info.enabledExtensionCount = static_cast<uint32_t>(m_extensions.size());
@@ -138,7 +124,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> InitCreateInstance() {
+    std::shared_ptr<IIr77Return const> DefineCreateInstance() {
         if (vkCreateInstance(&m_create_info, nullptr, &m_instance) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateInstance failed.");
         }
@@ -154,15 +140,13 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
     }
 
    public:
-    std::shared_ptr<IIr77Return const> GetVkInstance(VkInstance* instance) {
+    std::shared_ptr<IIr77Return const> GetInstance(VkInstance* instance) {
         *instance = m_instance;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
-    std::shared_ptr<IIr77Enlisted> m_context;
-
     VkApplicationInfo m_application_info;
 
     VkInstanceCreateInfo m_create_info;

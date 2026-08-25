@@ -26,5 +26,5 @@ typedef struct IIr77PVMesh : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) = 0;
 
     virtual ~IIr77PVMesh() = default;
-}* PIr77PVMesh;
+}* pIIr77PVMesh;
 }  // namespace NSIr77PeregrineV

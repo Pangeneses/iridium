@@ -11,7 +11,6 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../../dictionary/IDIIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PeregrineV.hpp"
 #include "../../dictionary/IDIr77PVContext.hpp"
 
@@ -20,6 +19,7 @@
 
 #include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
+#include "../../Ir77RT/runtime/Ir77Return.hpp"
 
 #include "../../interface/IIr77PVShader.hpp"
 
@@ -70,17 +70,18 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     }
 
    public:
-    std::shared_ptr<IIr77Return const> Initialize(std::shared_ptr<IIr77Enlisted>& context) {
-        m_context = context;
+    std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
+        m_device = device;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
+
 
     std::shared_ptr<IIr77Return const> ReadShader(std::string const& filename) {
         std::ifstream vert("/home/alpha/workspace/iridium/Shader/shader.vert", std::ios::ate | std::ios::binary);
 
         if (!vert.is_open()) {
-            throw std::runtime_error("failed to open file!");
+            return Ir77RETURN<Ir77NotConfigured>(this, "Enlisted has been invalidated.");
         }
 
         size_t vert_file_size = (size_t)vert.tellg();
@@ -123,7 +124,8 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     }
 
     std::shared_ptr<IIr77Return const> AddShader(Ir77PVShaderInfo& info, std::uint64_t const& id) {
-        VkDevice device = GetDevice();
+        VkDevice device;
+        m_device->GetDevice(&device);
 
         VkShaderModuleCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -143,12 +145,6 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetShaderInfo(Ir77PVShaderInfo& info, std::uint64_t const& id) {
-        info = m_shader_infos.at(id);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     std::shared_ptr<IIr77Return const> GetPipelineShaderStageInfos(std::vector<VkPipelineShaderStageCreateInfo>& infos, std::vector<std::uint64_t> id_list) {
         for (int i = 0; i < id_list.size(); i++) {
             infos.push_back(m_shader_infos.at(id_list[i]).stage_create_info);
@@ -158,12 +154,9 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     }
 
    private:
-    std::uint32_t CurrentDevice();
+    std::shared_ptr<IIr77PVDevice> m_device;
 
-    VkDevice GetDevice();
-
-   private:
-    std::shared_ptr<IIr77Enlisted> m_context;
+    std::uint32_t m_device_index;
 
     std::map<std::uint64_t, Ir77PVShaderInfo> m_shader_infos;
 };
