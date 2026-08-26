@@ -41,7 +41,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         VkDevice device;
         m_device->GetDevice(&device);
 
-        vkDestroyCommandPool(device, m_cmd_pool, nullptr); 
+        vkDestroyCommandPool(device, m_cmd_pool, nullptr);
     }
 
    public:
@@ -85,7 +85,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return &GUIDQuerySucceeded;
     }
 
-   public:    
+   public:
     std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) {
         m_instance = instance;
 
@@ -104,8 +104,20 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetPipelines(std::map<std::uint64_t, std::shared_ptr<IIr77PVPipeline>> pipelines) {
-        m_pipelines = pipelines;
+    std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) {
+        m_render_pass = render_pass;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetPipeline(std::shared_ptr<IIr77PVPipeline> pipeline) {
+        m_pipeline = pipeline;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetIndex(std::uint32_t const& index) {
+        m_index = index;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -121,12 +133,12 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
-        for(int i = 0; i < queue_family.size(); i++) {
-            if(queue_family[i].presentation == VK_TRUE) {
+        for (int i = 0; i < queue_family.size(); i++) {
+            if (queue_family[i].presentation == VK_TRUE) {
                 pool_info.queueFamilyIndex = i;
                 break;
             }
-        }       
+        }
 
         if (vkCreateCommandPool(device, &pool_info, nullptr, &m_cmd_pool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
@@ -135,7 +147,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> RecordCommands(std::shared_ptr<IIr77Enlisted>& context, std::uint32_t const& index) {
+    std::shared_ptr<IIr77Return const> RecordCommands() {
         VkDevice device;
         m_device->GetDevice(&device);
 
@@ -149,7 +161,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_swapchain->GetSwapchainFramebuffers(swapchain_framebuffers);
 
         VkPipeline pipeline_gfx;
-        m_pipelines.at(ID_PIPELINE_GFX)->GetPipeline(&pipeline_gfx);
+        m_pipeline->GetPipeline(&pipeline_gfx);
 
         VkCommandBufferBeginInfo begin_info{};
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -163,7 +175,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         VkRenderPassBeginInfo render_pass_info{};
         render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         render_pass_info.renderPass = render_pass;
-        render_pass_info.framebuffer = swapchain_framebuffers[index];
+        render_pass_info.framebuffer = swapchain_framebuffers[m_index];
         render_pass_info.renderArea.offset = {0, 0};
         render_pass_info.renderArea.extent = swapchain_extent;
 
@@ -201,6 +213,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     }
 
    private:
+    std::uint32_t m_index{0};
+
     std::shared_ptr<IIr77PVInstance> m_instance;
 
     std::shared_ptr<IIr77PVDevice> m_device;
@@ -209,7 +223,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     std::shared_ptr<IIr77PVRenderPass> m_render_pass;
 
-    std::map<std::uint64_t, std::shared_ptr<IIr77PVPipeline>> m_pipelines;
+    std::shared_ptr<IIr77PVPipeline> m_pipeline;
 
     VkCommandPool m_cmd_pool{VK_NULL_HANDLE};
 

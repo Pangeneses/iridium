@@ -12,7 +12,7 @@
 namespace CEF {
 
 class CEFRequestHandler : public CefRequestHandler {
-   public:
+    public:
     bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request, bool user_gesture, bool is_redirect) override {
         return false;
     }

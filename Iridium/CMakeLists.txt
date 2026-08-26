@@ -13,8 +13,8 @@ file(GLOB_RECURSE Ir77_SOURCES
 add_executable(Ir77 ${Ir77_SOURCES})
 
 set_target_properties(Ir77 PROPERTIES
-    BUILD_RPATH "/usr/lib/x86_64-linux-gnu;${CEF_ROOT}/Release"
-    INSTALL_RPATH "/usr/lib/x86_64-linux-gnu;${CEF_ROOT}/Release"
+    BUILD_RPATH "$ORIGIN;/usr/lib/x86_64-linux-gnu"
+    INSTALL_RPATH "$ORIGIN;/usr/lib/x86_64-linux-gnu"
     BUILD_RPATH_USE_ORIGIN TRUE
 )
 
@@ -34,9 +34,8 @@ find_package(Vulkan REQUIRED)
 target_link_libraries(Ir77 PRIVATE Vulkan::Vulkan)
 
 # SDL3
-set(SDL3_ROOT "$ENV{HOME}/workspace/sdl3")
-target_include_directories(Ir77 PRIVATE ${SDL3_ROOT}/include)
-target_link_libraries(Ir77 PRIVATE ${SDL3_ROOT}/build/libSDL3.so)
+find_package(SDL3 REQUIRED)
+target_link_libraries(Ir77 PRIVATE SDL3::SDL3)
 
 # --- CEF ---
 set(CEF_ROOT "$ENV{HOME}/workspace/cef")
@@ -59,7 +58,8 @@ target_compile_definitions(Ir77 PRIVATE WRAPPING_CEF_SHARED)
 # Copy runtime resources next to the executable
 add_custom_command(TARGET Ir77 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${CEF_ROOT}/Release/libcef.so $<TARGET_FILE_DIR:Ir77>
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CEF_ROOT}/Resources $<TARGET_FILE_DIR:Ir77>/Resources
+    COMMAND ${CMAKE_COMMAND} -E copy ${CEF_ROOT}/Release/v8_context_snapshot.bin $<TARGET_FILE_DIR:Ir77>
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CEF_ROOT}/Resources $<TARGET_FILE_DIR:Ir77>
 )
 
 target_link_libraries(Ir77 PRIVATE

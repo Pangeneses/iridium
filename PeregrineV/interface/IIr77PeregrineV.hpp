@@ -22,7 +22,7 @@ typedef struct Ir77PVEdge {
 typedef struct IIr77PeregrineV : virtual public IIr77Enlisted {
     IIr77PeregrineV() = default;
 
-    virtual std::shared_ptr<IIr77Return const> CreateInstance(std::uint32_t& count) = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateInstance() = 0;
 
     virtual std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices() = 0;
 
@@ -37,6 +37,12 @@ typedef struct IIr77PeregrineV : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> CreateRenderPass() = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreateSwapchains() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> CreatePipelineGFX() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> CreateCommandBuffers() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> CreateShaders() = 0;
 
     virtual ~IIr77PeregrineV() = default;
 }* pIIr77PeregrineV;

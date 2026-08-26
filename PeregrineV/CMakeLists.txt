@@ -32,9 +32,8 @@ target_include_directories(PeregrineV PUBLIC ${Vulkan_INCLUDE_DIRS})
 target_link_libraries(PeregrineV PUBLIC Vulkan::Vulkan)
 
 # SDL3
-set(SDL3_ROOT "$ENV{HOME}/workspace/sdl3")
-target_include_directories(PeregrineV PUBLIC ${SDL3_ROOT}/include)
-target_link_libraries(PeregrineV PUBLIC ${SDL3_ROOT}/build/libSDL3.so)
+find_package(SDL3 REQUIRED)
+target_link_libraries(Ir77 PRIVATE SDL3::SDL3)
 
 # Ir77RT
 target_include_directories(PeregrineV PUBLIC

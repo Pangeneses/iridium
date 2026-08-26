@@ -15,8 +15,8 @@ typedef struct Ir77Operator {
     Ir77GUID operand;
     Ir77GUID opcode;
     bool operator<(Ir77Operator const& o) const {
-        if (operand != o.operand) return operand < o.operand;
-        return opcode < o.opcode;
+        if (opcode != o.opcode) return opcode < o.opcode;
+        return operand < o.operand;
     }
 } Ir77Operator;
 

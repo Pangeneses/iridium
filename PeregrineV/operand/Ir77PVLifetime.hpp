@@ -22,14 +22,16 @@
 #include "../interface/IIr77PVSwapchain.hpp"
 #include "../interface/IIr77PVLayout.hpp"
 #include "../interface/IIr77PVRenderPass.hpp"
+#include "../interface/IIr77PVPipeline.hpp"
+#include "../interface/IIr77PVCmdBuffer.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-class Ir77PeregrineV : public Ir77Enlisted, public Ir77Operand, public IIr77PeregrineV, public std::enable_shared_from_this<Ir77PeregrineV> {
+class Ir77PVLifetime : public Ir77Enlisted, public Ir77Operand, public IIr77PeregrineV, public std::enable_shared_from_this<Ir77PVLifetime> {
    public:
-    Ir77PeregrineV() {
+    Ir77PVLifetime() {
         try {
             m_enlisted_uuid.Generate();
         } catch (std::invalid_argument a) {
@@ -75,7 +77,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public Ir77Operand, public IIr77Pere
             obj = std::shared_ptr<IIr77PeregrineV>(shared_from_this(), static_cast<IIr77PeregrineV*>(this));
 
         else if (iid == &GUIDIr77PeregrineV)
-            obj = std::shared_ptr<Ir77PeregrineV>(shared_from_this(), static_cast<Ir77PeregrineV*>(this));
+            obj = std::shared_ptr<Ir77PVLifetime>(shared_from_this(), static_cast<Ir77PVLifetime*>(this));
 
         else
             return &GUIDQueryFailed;
@@ -93,34 +95,10 @@ class Ir77PeregrineV : public Ir77Enlisted, public Ir77Operand, public IIr77Pere
    public:
     static std::shared_ptr<IIr77Return const> CreateDeviceInterface(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
 
-    static std::shared_ptr<IIr77Return const> DestroyDeviceInterface(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> AddWindow(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> DestroyWindow(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> CreatePipeline(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> DestroyInstance(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> UpdateShaders(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> ClearShaders(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> UploadVertexToBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> ClearVertexBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> UploadMaterialToBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> ClearMaterialBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> UploadComputeToBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
-    static std::shared_ptr<IIr77Return const> ClearComputeBuffer(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
-
+    static std::shared_ptr<IIr77Return const> CreateSwapchains(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs);
+     /*
     static std::shared_ptr<IIr77Return const> Assign(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
-        /*
+   
         std::shared_ptr<IIr77Enlisted const> enlisted_rhs;
         rhs->GetIndexed(0, enlisted_rhs);
 
@@ -139,13 +117,13 @@ class Ir77PeregrineV : public Ir77Enlisted, public Ir77Operand, public IIr77Pere
         auto lhs_mutable = std::const_pointer_cast<IIr77Operand>(lhs);
 
         lhs_mutable->SetIndexed(0, enlisted_rhs);
-        */
+
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-
+        */
    public:
-    std::shared_ptr<IIr77Return const> CreateInstance(std::uint32_t& count);
+    std::shared_ptr<IIr77Return const> CreateInstance();
 
     std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices();
 
@@ -155,11 +133,17 @@ class Ir77PeregrineV : public Ir77Enlisted, public Ir77Operand, public IIr77Pere
 
     std::shared_ptr<IIr77Return const> CreateLogicalDevices();
 
-    std::shared_ptr<IIr77Return const> CreateLayout() ;
+    std::shared_ptr<IIr77Return const> CreateLayout();
 
     std::shared_ptr<IIr77Return const> CreateRenderPass();
 
     std::shared_ptr<IIr77Return const> CreateSwapchains();
+
+    std::shared_ptr<IIr77Return const> CreatePipelineGFX();
+
+    std::shared_ptr<IIr77Return const> CreateCommandBuffers();
+
+    std::shared_ptr<IIr77Return const> CreateShaders();
 
    private:
     std::uint32_t m_device_count;
@@ -178,10 +162,12 @@ class Ir77PeregrineV : public Ir77Enlisted, public Ir77Operand, public IIr77Pere
 
     std::map<std::uint64_t, std::shared_ptr<IIr77PVRenderPass>> m_render_pass;
 
-    std::map<std::uint64_t, std::shared_ptr<IIr77Enlisted>> m_pipelines;
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVPipeline>>> m_pipelines;
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVCmdBuffer>>> m_command_buffers;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVShader>> m_shaders;
 
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77Enlisted>>> m_compute;
-
-    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77Enlisted>>> m_command_buffers;
 };
 }  // namespace NSIr77PeregrineV

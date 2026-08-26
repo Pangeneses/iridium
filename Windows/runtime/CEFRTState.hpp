@@ -2,6 +2,8 @@
 
 #include <limits.h>
 #include <stdexcept>
+#include <filesystem>
+#include <iostream>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -34,13 +36,20 @@ class CEFRTState {
         int exit_code = CefExecuteProcess(cef_args, nullptr, nullptr);
         if (exit_code >= 0) throw std::runtime_error{"__cef_subprocess__:" + std::to_string(exit_code)};
 
+        std::filesystem::path exe_dir = std::filesystem::canonical("/proc/self/exe").parent_path();
+        std::cerr << "[DEBUG] exe_dir = " << exe_dir.string() << std::endl;
+        std::cerr << "[DEBUG] resources_dir_path will be = " << exe_dir.string() << std::endl;
+
         CefSettings settings{};
         settings.multi_threaded_message_loop = false;
         settings.no_sandbox = true;
         settings.windowless_rendering_enabled = true;
         CefString(&settings.root_cache_path).FromASCII("/tmp/iridium_cef_cache");
-        CefString(&settings.resources_dir_path).FromASCII("/home/alpha/workspace/cef/Release");
-        CefString(&settings.locales_dir_path).FromASCII("/home/alpha/workspace/cef/Release/locales");
+        CefString(&settings.resources_dir_path).FromString(exe_dir.string());
+        CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
+
+        settings.log_severity = LOGSEVERITY_VERBOSE;
+        CefString(&settings.log_file).FromASCII("/tmp/cef_debug.log");
 
         m_app = new CEFApp();
 
@@ -77,8 +86,7 @@ class CEFRTState {
         CefBrowserSettings browser_settings{};
         browser_settings.windowless_frame_rate = 60;
 
-        m_browser = CefBrowserHost::CreateBrowserSync(window_info, new CEFClient(m_render_handler), "https://cobalt.pangeneses.com/landing", browser_settings,
-                                                      nullptr, nullptr);
+        m_browser = CefBrowserHost::CreateBrowserSync(window_info, new CEFClient(m_render_handler), "https://google.com", browser_settings, nullptr, nullptr);
 
         if (!m_browser) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CreateBrowserSync failed");

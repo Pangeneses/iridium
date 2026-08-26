@@ -81,11 +81,13 @@ class Ir77Patch : public Ir77Enlisted, public IIr77Patch, public std::enable_sha
     std::shared_ptr<IIr77Return const> Forward(std::shared_ptr<IIr77Stack const>& stack) {
         std::shared_ptr<IIr77Iterator const> fitt{};
 
-        auto fitt_mut = std::const_pointer_cast<IIr77Iterator>(fitt);
-
         auto stack_mut = std::const_pointer_cast<IIr77Stack>(stack);
 
-        if (stack_mut->ForwardIterator(fitt)->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77MPVMError>(this, "Cannot acquire iterator.");
+        if (stack_mut->ForwardIterator(fitt)->ID() != &GUIDIr77OperationSucceeded) {
+            return Ir77RETURN<Ir77MPVMError>(this, "Cannot acquire iterator.");
+        }
+
+        auto fitt_mut = std::const_pointer_cast<IIr77Iterator>(fitt);
 
         std::int32_t step{1};
 
@@ -110,7 +112,7 @@ class Ir77Patch : public Ir77Enlisted, public IIr77Patch, public std::enable_sha
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
+
    private:
     std::map<Ir77Operator, Ir7Execute> m_implementation{};
 };

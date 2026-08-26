@@ -17,7 +17,7 @@
 #include "../Windows/runtime/CEFMouseEvent.hpp"
 
 // #include "../REDOS/service/Ir77REDOS.hpp"
-// #include "../PeregrineV/service/Ir77PeregrineV.hpp"
+#include "../PeregrineV/server/Ir77PVServer.hpp"
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
@@ -34,7 +34,7 @@ class iridium {
     }
 
     // iridium.hpp — InitCEF 
-    /* void InitCEF(int argc, char* argv[]) {
+    void InitCEF(int argc, char* argv[]) {
         m_rt_state->Initialize(argc, argv);
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Succeeded: InitCEF");
     }
@@ -56,8 +56,7 @@ class iridium {
 
         running = true;
     }
-    */
-
+    
     void InitVulkan() {
         // m_adapter = std::make_shared<IIr77PVRenderer>();
 
@@ -86,19 +85,20 @@ class iridium {
         }
     }
 
-    // void ChromeStep() { m_message_loop->CEFDoMessageLoop(m_rt_state->GetBrowser()); }
+    void ChromeStep() { m_message_loop->CEFDoMessageLoop(m_rt_state->GetBrowser()); }
 
-    // void IridiumStep() {}
+    void IridiumStep() {}
 
     void VulkanStep() {}
 
     void VulkanFrameStart() {}
 
-    // void HUD() {}
+    void HUD() {}
 
-    // void Composition() {}
+    void Composition() {}
 
-    void VulkanFrameEnd() { m_adapter->Ir77VulkanFrame(); }
+    void VulkanFrameEnd() { //m_adapter->Ir77VulkanFrame(); 
+        }
 
     void Shutdown() {
         m_rt_state->DestroyRTState();
@@ -117,8 +117,6 @@ class iridium {
     std::shared_ptr<CEFRTState> m_rt_state;
 
     SDL_Window* m_window = nullptr;
-
-    // std::shared_ptr<IIr77PVRenderer> m_adapter;
 
     bool running = false;
 };

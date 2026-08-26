@@ -1,6 +1,8 @@
 
 #pragma once
+
 #include <SDL3/SDL.h>
+
 #include "include/cef_browser.h"
 
 inline CefBrowserHost::MouseButtonType SDLButtonToCEF(uint8_t btn) {

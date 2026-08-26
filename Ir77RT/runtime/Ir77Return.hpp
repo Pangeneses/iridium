@@ -1,10 +1,8 @@
 #pragma once
 
 #include <chrono>
-#include <cstring>
 #include <memory>
 
-#include "../dictionary/IDIIr77MPVM.hpp"
 #include "../dictionary/IDIr77RET.hpp"
 
 #include "../interface/IIr77GUID.hpp"
@@ -236,7 +234,9 @@ class Ir77Return : public IIr77Return, public std::enable_shared_from_this<Ir77R
     }
 
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIr77Enlisted>(uid);
+        //seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
+
+        uid = nullptr;
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -330,10 +330,13 @@ class Ir77Return : public IIr77Return, public std::enable_shared_from_this<Ir77R
     }
 
     IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+        Ir77GUID enlisted_id{(static_cast<unsigned __int128>(0xC052EA89334C43AE) << 64) | 0x9F976D7E354FC406};
+        Ir77GUID return_id{(static_cast<unsigned __int128>(0x4B8F4936CB414575) << 64) | 0x8B58952FE375F7D7};
+
+        if (iid == &enlisted_id)
             obj = std::shared_ptr<IIr77Enlisted>(this->shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Return)
+        else if (iid == &return_id)
             obj = std::shared_ptr<IIr77Return>(this->shared_from_this(), static_cast<IIr77Return*>(this));
 
         else if (iid == T::MemberUUID())

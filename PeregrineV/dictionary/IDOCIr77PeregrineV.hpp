@@ -23,7 +23,10 @@ namespace NSIr77PeregrineV {
 inline Ir77GUID GUIDOCIr77PeregrineV{(static_cast<unsigned __int128>(0xA3F8C2E1D4B67059) << 64) | 0x1E9A3C7F82D4B605};
 
 /* LIFETIME */
-inline Ir77GUID GUIDOCIr77InitializeServer{(static_cast<unsigned __int128>(0x7B2E9F4A1C8D3E56) << 64) | 0xF0A5C3D2E7B49018};
+inline Ir77GUID GUIDOCIr77CreateDeviceInterface{(static_cast<unsigned __int128>(0x7B2E9F4A1C8D3E56) << 64) | 0xF0A5C3D2E7B49018};
+inline Ir77GUID GUIDOCIr77CreateSwapchains{(static_cast<unsigned __int128>(0x21682AE712AB44A5) << 64) | 0x919578AD94B2642F};
+//inline Ir77GUID GUIDOCIr77DestroySwapchains{(static_cast<unsigned __int128>(0x3092F47924C34E4C) << 64) | 0x9FCAE25A54CB6BB4};
+//inline Ir77GUID GUIDOCIr77DestroyDeviceInterface{(static_cast<unsigned __int128>(0xFEE587D14292489D) << 64) | 0x8B709E65AC8FC2BC};
 
 class IDOCIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std::enable_shared_from_this<IDIIr77MPVM> {
    public:
@@ -84,7 +87,8 @@ class IDOCIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public s
    private:
     std::map<std::string, IIr77GUID const*> m_index{
         {"GUIDOCIr77PeregrineV", &GUIDOCIr77PeregrineV},
-        {"GUIDOCIr77InitializeServer", &GUIDOCIr77InitializeServer},
+        {"GUIDOCIr77CreateDeviceInterface", &GUIDOCIr77CreateDeviceInterface},
+        {"GUIDOCIr77CreateSwapchains", &GUIDOCIr77CreateSwapchains},
     };
 };
 }  // namespace NSIr77REDOS

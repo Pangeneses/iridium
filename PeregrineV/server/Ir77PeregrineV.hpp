@@ -28,6 +28,8 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 #include "../../Ir77RT/runtime/Ir77Patch.hpp"
 
+#include "../operand/Ir77PVLifetime.hpp"
+
 using namespace NSIr77RT;
 // using namespace NSIr77REDOS;
 
@@ -46,48 +48,15 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77Dispatch, public std::en
         m_patch = std::make_shared<Ir77Patch>();
 
         m_lifetime = std::make_shared<Ir77PVLifetime>();
-        m_asset = std::make_shared<Ir77PVAsset>();
-        m_pump = std::make_shared<Ir77PVPump>();
 
-        m_patch->AddOperation({GUIDOPIr77PVLifetime, GUIDOCIr77Initialize},
+        m_patch->AddOperation({GUIDOPIr77PVLifetime, GUIDOCIr77CreateDeviceInterface},
                               [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_lifetime->Initialize(rhs, lhs);
+                                  return m_lifetime->CreateDeviceInterface(rhs, lhs);
                               });
 
-
-        m_patch->AddOperation({GUIDOPIr77PVAsset, GUIDOCIr77AssetUpload},
+        m_patch->AddOperation({GUIDOPIr77PVLifetime, GUIDOCIr77CreateSwapchains},
                               [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_asset->AssetUpload(rhs, lhs);
-                              });
-
-
-        m_patch->AddOperation({GUIDOPIr77PVPump, GUIDOCIr77PumpNextFrame},
-                              [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_pump->PumpNextFrame(rhs, lhs);
-                              });
-        m_patch->AddOperation({GUIDOPIr77PVPump, GUIDOCIr77PumpCommand},
-                              [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_pump->PumpCommand(rhs, lhs);
-                              });
-        m_patch->AddOperation({GUIDOPIr77PVPump, GUIDOCIr77PumpBarrier},
-                              [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_pump->PumpBarrier(rhs, lhs);
-                              });
-        m_patch->AddOperation({GUIDOPIr77PVPump, GUIDOCIr77PumpSubmit},
-                              [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_pump->PumpSubmit(rhs, lhs);
-                              });
-        m_patch->AddOperation({GUIDOPIr77PVPump, GUIDOCIr77PumpCobalt},
-                              [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_pump->PumpCobalt(rhs, lhs);
-                              });
-        m_patch->AddOperation({GUIDOPIr77PVPump, GUIDOCIr77PumpFrame},
-                              [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_pump->PumpFrame(rhs, lhs);
-                              });
-        m_patch->AddOperation({GUIDOPIr77PVPump, GUIDOCIr77PumpPresent},
-                              [this](std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) -> std::shared_ptr<IIr77Return const> {
-                                  return m_pump->PumpPresent(rhs, lhs);
+                                  return m_lifetime->CreateSwapchains(rhs, lhs);
                               });
     }
 
@@ -128,9 +97,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77Dispatch, public std::en
     }
 
    public:
-    std::shared_ptr<IIr77Return const> Dispatch(std::shared_ptr<IIr77Stack const>& stack) {
-        return m_patch->Forward(stack);
-    }
+    std::shared_ptr<IIr77Return const> Dispatch(std::shared_ptr<IIr77Stack const>& stack) { return m_patch->Forward(stack); }
 
     uint64_t random_u64() {
         static std::mt19937_64 rng(std::random_device{}());
@@ -146,30 +113,12 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77Dispatch, public std::en
             obj = m_lifetime_map.at(id);
         }
 
-        if (*uid == GUIDOPIr77PVAsset) {
-            m_asset_map.emplace(id, std::make_shared<Ir77PVAsset>());
-            obj = m_asset_map.at(id);
-        }
-
-        if (*uid == GUIDOPIr77PVPump) {
-            m_pump_map.emplace(id, std::make_shared<Ir77PVPump>());
-            obj = m_pump_map.at(id);
-        }
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     std::shared_ptr<IIr77Return const> Garbage(std::shared_ptr<IIr77GUID const>& uid, std::uint64_t const& id) {
         if (*uid == GUIDOPIr77PVLifetime) {
             m_lifetime_map.erase(id);
-        }
-
-        if (*uid == GUIDOPIr77PVAsset) {
-            m_asset_map.erase(id);
-        }
-
-        if (*uid == GUIDOPIr77PVPump) {
-            m_pump_map.erase(id);
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -183,15 +132,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77Dispatch, public std::en
    private:
     std::shared_ptr<Ir77PVLifetime> m_lifetime{nullptr};
 
-    std::shared_ptr<Ir77PVAsset> m_asset{nullptr};
-
-    std::shared_ptr<Ir77PVPump> m_pump{nullptr};
-
     std::map<std::uint64_t const, std::shared_ptr<Ir77PVLifetime>> m_lifetime_map;
-
-    std::map<std::uint64_t const, std::shared_ptr<Ir77PVAsset>> m_asset_map;
-
-    std::map<std::uint64_t const, std::shared_ptr<Ir77PVPump>> m_pump_map;
 };
 
 }  // namespace NSIr77PeregrineV
