@@ -32,7 +32,7 @@ enum class Ir77PVShaderStage : uint32_t {
 
 typedef struct Ir77PVShaderInfo {
     Ir77PVShaderStage stage;
-    VkPipelineShaderStageCreateInfo stage_create_info;
+    VkPipelineShaderStageCreateInfo stage_create_info{};
     std::vector<char> byte_code;
     std::uint32_t size;
 }* pIr77PVShaderInfo;
@@ -44,7 +44,7 @@ typedef struct IIr77PVShader : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> ReadShader(std::string const& file) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> AddShaderInfo(Ir77PVShaderInfo const& info, std::uint64_t const& id) = 0;
+    virtual std::shared_ptr<IIr77Return const> AddShader(Ir77PVShaderInfo& info, std::uint64_t const& id) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipelineShaderStageInfos(std::vector<VkPipelineShaderStageCreateInfo>& infos,
                                                                            std::vector<std::uint64_t> const& id_list) = 0;

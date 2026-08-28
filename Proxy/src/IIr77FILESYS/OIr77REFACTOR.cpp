@@ -61,7 +61,7 @@ IIr77BASE::IIr77RETURN OIr77REFACTOR::DelistedChrono(uint64_t& moment) {
         return IIr77BASE::Ir77_OPERATION_SUCCEEDED{};
 }
 
-IIr77BASE::IIr77RETURN OIr77REFACTOR::MemberOfUuid(winrt::guid& uid) {
+IIr77BASE::IIr77RETURN OIr77REFACTOR::MemberUuid(winrt::guid& uid) {
     uid = IIr77FILESYS::IDOIr77DIRECTORY::HVIDOIr77REFACTOR();
 
     if (!IsValid)
@@ -112,7 +112,7 @@ IIr77BASE::IIr77RETURN OIr77REFACTOR::Result(IIr77BASE::IIr77BALE const& outcome
 
     winrt::guid uid;
 
-    if (outcome.MemberOfUuid(uid).ID() == IIr77BASE::Ir77RETURN::HVID_Ir77_INVALIDATED()) {
+    if (outcome.MemberUuid(uid).ID() == IIr77BASE::Ir77RETURN::HVID_Ir77_INVALIDATED()) {
         return IIr77BASE::Ir77_INVALIDATED{*this, "Outcome is invalid."};
     }
 

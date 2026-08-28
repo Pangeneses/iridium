@@ -54,7 +54,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVSwapchain>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -115,6 +115,23 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
             std::string str{SDL_GetError()};
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SDL_Vulkan_CreateSurface failed: " + str);
         }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> CleanupSwapchain() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        for (auto framebuffer : m_swapchain_framebuffers) {
+            vkDestroyFramebuffer(device, framebuffer, nullptr);
+        }
+
+        for (auto image_view : m_swapchain_views) {
+            vkDestroyImageView(device, image_view, nullptr);
+        }
+
+        vkDestroySwapchainKHR(device, m_swapchain, nullptr);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -210,7 +227,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateSwapchain() {
+    std::shared_ptr<IIr77Return const> DefineSwapchain() {
         VkDevice device;
         m_device->GetDevice(&device);
 
@@ -233,7 +250,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateImageView() {
+    std::shared_ptr<IIr77Return const> DefineImageView() {
         VkDevice device;
         m_device->GetDevice(&device);
 
@@ -261,7 +278,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateFramebuffers() {
+    std::shared_ptr<IIr77Return const> DefineFramebuffers() {
         VkDevice device;
         m_device->GetDevice(&device);
 
@@ -290,6 +307,12 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> GetSwapchain(VkSwapchainKHR* swapchain) {
+        *swapchain = m_swapchain;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> GetSwapchainExtents(VkExtent2D& swapchain_extent) {
         swapchain_extent = m_swapchain_extent;
 
@@ -307,7 +330,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
+
    private:
     std::shared_ptr<IIr77PVInstance> m_instance;
 
@@ -317,11 +340,11 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
     std::uint32_t m_device_index{UINT32_MAX};
 
-    SDL_Window* m_window;
+    SDL_Window* m_window{nullptr};
 
     VkSurfaceKHR m_surface{VK_NULL_HANDLE};
 
-    VkSurfaceCapabilitiesKHR m_capabilities;
+    VkSurfaceCapabilitiesKHR m_capabilities{};
 
     std::vector<VkSurfaceFormatKHR> m_formats;
 
@@ -329,7 +352,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
     VkColorSpaceKHR m_color_space{VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
 
-    std::vector<VkPresentModeKHR> m_present_modes;
+    std::vector<VkPresentModeKHR> m_present_modes{};
 
     VkPresentModeKHR m_present_mode{VK_PRESENT_MODE_FIFO_KHR};
 

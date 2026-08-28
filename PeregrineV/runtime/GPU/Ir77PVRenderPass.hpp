@@ -52,7 +52,7 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVRenderPassColor>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -160,7 +160,6 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
     std::shared_ptr<IIr77Return const> DefineRenderPass() {
         VkDevice device;
         m_device->GetDevice(&device);
-
 
         m_render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         m_render_pass_info.attachmentCount = 1;

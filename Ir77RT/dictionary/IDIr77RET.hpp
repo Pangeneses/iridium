@@ -129,7 +129,7 @@ class IDIr77Return : public IIr77Dictionary, public std::enable_shared_from_this
         return nullptr;
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         static Ir77GUID s_uid{(static_cast<unsigned __int128>(0xBE11AEB5923A4854) << 64) | 0xB8B71CC80D56A296};
         uid.reset(&s_uid, [](auto*) {});
         return nullptr;

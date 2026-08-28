@@ -53,7 +53,7 @@ IIr77BASE::IIr77RETURN DIr77WIDGET::DelistedChrono(uint64_t& moment) {
     return IIr77BASE::Ir77_OPERATION_SUCCEEDED{};
 }
 
-IIr77BASE::IIr77RETURN DIr77WIDGET::MemberOfUuid(winrt::guid& uid) {
+IIr77BASE::IIr77RETURN DIr77WIDGET::MemberUuid(winrt::guid& uid) {
     uid = IIr77WIDGET::IDDIr77WIDGET::HVIDDIr77WIDGET();
 
     if (!IsValid) return IIr77BASE::Ir77_INVALIDATED{*this, "Enlisted has been invalidated."};

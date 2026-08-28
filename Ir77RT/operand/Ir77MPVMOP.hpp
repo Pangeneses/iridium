@@ -155,7 +155,7 @@ struct Ir77RetVar {
 };
 
 template <typename T>
-class Ir77MPVMOP : public std::enable_shared_from_this<IIr77MPVMOP<T>> {
+class Ir77MPVMOP : public IIr77Enlisted, public std::enable_shared_from_this<IIr77MPVMOP<T>> {
    public:
     Ir77MPVMOP() {
         try {
@@ -184,12 +184,12 @@ class Ir77MPVMOP : public std::enable_shared_from_this<IIr77MPVMOP<T>> {
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> EnlistedUuid(std::shared_ptr<IIr77GUID const>& uid) {
+    std::shared_ptr<IIr77Return const> EnlistedUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         uid.reset(reinterpret_cast<IIr77GUID const*>(&m_enlisted_uuid), [](auto*) {});
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> EnlistedChrono(std::chrono::system_clock::time_point& t) {
+    std::shared_ptr<IIr77Return const> EnlistedChrono(std::chrono::system_clock::time_point& t) const {
         t = m_enlisted;
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -206,7 +206,7 @@ class Ir77MPVMOP : public std::enable_shared_from_this<IIr77MPVMOP<T>> {
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DelistedChrono(std::chrono::system_clock::time_point& t, std::shared_ptr<IIr77Return const>& condition) {
+    std::shared_ptr<IIr77Return const> DelistedChrono(std::chrono::system_clock::time_point& t, std::shared_ptr<IIr77Return const>& condition) const {
         t = m_delisted;
 
         condition = m_invalidation_condition;
@@ -246,7 +246,7 @@ class Ir77MPVMOP : public std::enable_shared_from_this<IIr77MPVMOP<T>> {
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<T::M_UUID()>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");

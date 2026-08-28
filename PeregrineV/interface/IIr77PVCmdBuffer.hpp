@@ -33,11 +33,23 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetPipeline(std::shared_ptr<IIr77PVPipeline> pipelines) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetIndex(std::uint32_t const& index) = 0;
+    virtual std::shared_ptr<IIr77Return const> DefineSyncObjects() = 0;
 
     virtual std::shared_ptr<IIr77Return const> DefineCommandPool() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> RecordCommands() = 0;
+    virtual std::shared_ptr<IIr77Return const> AllocateCommandBuffer() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> WaitForFence() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> ResetFence() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> AcquireNextImage(VkResult* acquire_next_result) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> RecordCommandBuffer() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SubmitFrame() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> PresentFrame(VkResult* queue_present_result) = 0;
 
     virtual ~IIr77PVCmdBuffer() = default;
 }* pIIr77PVCmdBuffer;

@@ -21,7 +21,7 @@ struct OIr77RUNGPU : OIr77RUNGPUT<OIr77RUNGPU> {
 
     IIr77BASE::IIr77RETURN DelistedChrono(uint64_t& time);
 
-    IIr77BASE::IIr77RETURN MemberOfUuid(winrt::guid& uid);
+    IIr77BASE::IIr77RETURN MemberUuid(winrt::guid& uid);
 
     IIr77BASE::IIr77RETURN CollectionUuid(winrt::guid& uid);
 

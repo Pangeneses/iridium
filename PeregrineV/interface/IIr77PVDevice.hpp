@@ -37,7 +37,7 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices() = 0;
+    virtual std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices(std::uint32_t const& device_index) = 0;
 
     virtual std::shared_ptr<IIr77Return const> DefineQueueFamilyProps(SDL_Window* window) = 0;
 
@@ -47,7 +47,7 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> DefineDeviceInfo() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> CreateDevice() = 0;
+    virtual std::shared_ptr<IIr77Return const> DefineDevice() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPhysicalDevice(VkPhysicalDevice* phys_device) = 0;
 

@@ -8,8 +8,6 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "IIr77PeregrineV.hpp"
-
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
@@ -25,7 +23,7 @@ typedef struct IIr77PVInstance : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> DefineCreateInstance() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> QueryDeviceCount(std::uint32_t const& count) = 0;
+    virtual std::shared_ptr<IIr77Return const> QueryDeviceCount(std::uint32_t& count) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetInstance(VkInstance* instance) = 0;
 

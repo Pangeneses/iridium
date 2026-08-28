@@ -105,7 +105,7 @@ class IDIr77MPVM : public IIr77Dictionary, public std::enable_shared_from_this<I
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) {
         seat_shared_uuid<&GUIDIr77MPVM>(uid);
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

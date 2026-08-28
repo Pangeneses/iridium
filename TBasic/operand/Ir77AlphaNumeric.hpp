@@ -7,6 +7,7 @@
 #include "../../Ir77RT/dictionary/IDOPIr77MPVM.hpp"
 
 #include "../dictionary/IDOPIr77TBASIC.hpp"
+#include "../dictionary/IDMIr77TBASIC.hpp"
 
 #include "../../Ir77RT/interface/IIr77GUID.hpp"
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -19,6 +20,7 @@
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
 #include "../../Ir77RT/operand/Ir77MPVMOP.hpp"
+
 #include "IDIIr77MPVM.hpp"
 
 using namespace NSIr77RT;
@@ -34,8 +36,6 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
         }
 
         m_enlisted = std::chrono::system_clock::now();
-
-        m_operand.resize(1);
     }
 
    public:
@@ -47,7 +47,7 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDOPIr77AlphaNumeric>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -80,7 +80,7 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetIndexed(std::uint32_t const& at, std::shared_ptr<IIr77Enlisted const>& obj) {
+    std::shared_ptr<IIr77Return const> SetIndexed(std::uint64_t const& at, std::shared_ptr<IIr77Enlisted const>& obj) {
         auto raw = QueryAs<IIr77MPVMOP<Ir77String>>(&GUIDOPIr77String, std::const_pointer_cast<IIr77Enlisted>(obj).get());
 
         if (!raw.get()) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid RHS Operand.");
@@ -99,7 +99,7 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
    public:
     static std::shared_ptr<IIr77Return const> Assign(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
         std::shared_ptr<IIr77Enlisted const> enlisted_rhs;
-        rhs->GetIndexed(0, enlisted_rhs);
+        rhs->GetIndexed(ID_VALUE, enlisted_rhs);
 
         auto rhs_mutable = std::const_pointer_cast<IIr77Operand>(rhs);
 
@@ -115,28 +115,28 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
 
         auto lhs_mutable = std::const_pointer_cast<IIr77Operand>(lhs);
 
-        lhs_mutable->SetIndexed(0, enlisted_rhs);
+        lhs_mutable->SetIndexed(ID_RETURN, enlisted_rhs);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     static std::shared_ptr<IIr77Return const> Get(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
         std::shared_ptr<IIr77Enlisted const> enlisted_lhs;
-        lhs->GetIndexed(0, enlisted_lhs);
+        lhs->GetIndexed(ID_VALUE, enlisted_lhs);
 
         auto rhs_mutable = std::const_pointer_cast<IIr77Operand>(rhs);
 
-        rhs_mutable->SetIndexed(0, enlisted_lhs);
+        rhs_mutable->SetIndexed(ID_RETURN, enlisted_lhs);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     static std::shared_ptr<IIr77Return const> Equal(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
         std::shared_ptr<IIr77Enlisted const> enlisted_lhs;
-        lhs->GetIndexed(0, enlisted_lhs);
+        lhs->GetIndexed(ID_VALUE, enlisted_lhs);
 
         std::shared_ptr<IIr77Enlisted const> enlisted_rhs;
-        rhs->GetIndexed(0, enlisted_rhs);
+        rhs->GetIndexed(ID_VALUE, enlisted_rhs);
 
         auto raw_lhs = QueryAs<IIr77MPVMOP<Ir77String>>(&GUIDOPIr77String, std::const_pointer_cast<IIr77Enlisted>(enlisted_lhs).get());
 
@@ -158,19 +158,29 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
             return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid RHS Operand.");
         }
 
+        auto lhs_mutable = std::const_pointer_cast<IIr77Operand>(lhs);
+
+        std::shared_ptr<Ir77MPVMOP<Ir77Boolean>> ret = std::make_shared<Ir77MPVMOP<Ir77Boolean>>();
+
         if (raw_lhs->Get() == raw_rhs->Get()) {
-            return Ir77RETURN<Ir77True>();
+            ret->Set(true);
         } else {
-            return Ir77RETURN<Ir77False>();
+            ret->Set(false);
         }
+
+        auto ret_immutable = std::reinterpret_pointer_cast<IIr77Enlisted const>(std::const_pointer_cast<IIr77Operand const>(ret));
+
+        lhs_mutable->SetIndexed(ID_RETURN, ret_immutable);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     static std::shared_ptr<IIr77Return const> Not(std::shared_ptr<IIr77Operand const> lhs, std::shared_ptr<IIr77Operand const> rhs) {
         std::shared_ptr<IIr77Enlisted const> enlisted_lhs;
-        lhs->GetIndexed(0, enlisted_lhs);
+        lhs->GetIndexed(ID_VALUE, enlisted_lhs);
 
         std::shared_ptr<IIr77Enlisted const> enlisted_rhs;
-        rhs->GetIndexed(0, enlisted_rhs);
+        rhs->GetIndexed(ID_VALUE, enlisted_rhs);
 
         auto raw_lhs = QueryAs<IIr77MPVMOP<Ir77String>>(&GUIDOPIr77String, std::const_pointer_cast<IIr77Enlisted>(enlisted_lhs).get());
 
@@ -192,11 +202,21 @@ class Ir77AlphaNumeric : public Ir77Enlisted, public Ir77Operand, public std::en
             return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid RHS Operand.");
         }
 
+        auto lhs_mutable = std::const_pointer_cast<IIr77Operand>(lhs);
+
+        std::shared_ptr<Ir77MPVMOP<Ir77Boolean>> ret = std::make_shared<Ir77MPVMOP<Ir77Boolean>>();
+
         if (raw_lhs->Get() != raw_rhs->Get()) {
-            return Ir77RETURN<Ir77True>();
+            ret->Set(true);
         } else {
-            return Ir77RETURN<Ir77False>();
+            ret->Set(false);
         }
+
+        auto ret_immutable = std::reinterpret_pointer_cast<IIr77Enlisted const>(std::const_pointer_cast<IIr77Operand const>(ret));
+
+        lhs_mutable->SetIndexed(ID_RETURN, ret_immutable);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     static void IsValidAlphaNumeric(std::string const& input) {

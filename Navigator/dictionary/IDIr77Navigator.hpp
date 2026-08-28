@@ -116,7 +116,7 @@ class IDIr77Navigator : public IIr77Dictionary, public std::enable_shared_from_t
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) {
         seat_shared_uuid<&GUIDIr77Navigator>(uid);
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

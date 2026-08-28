@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        iridium.InitCEF(argc, argv);
+        iridium.InitializePipeline(argc, argv);
     } catch (std::runtime_error& error) {
         std::string what{error.what()};
         if (what.starts_with("__cef_subprocess__:")) {
@@ -71,20 +71,6 @@ int main(int argc, char* argv[]) {
     }
 
     IridiumArgs args = ParseArgs(argc, argv);
-
-    try {
-        iridium.InitWindow();
-    } catch (std::runtime_error error) {
-        Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitWindow");
-        return 1;
-    }
-
-    try {
-        iridium.InitVulkan();
-    } catch (std::runtime_error error) {
-        Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitVulkan");
-        return 1;
-    }
 
     while (iridium.IsRunning()) {
         auto frame_start = std::chrono::steady_clock::now();

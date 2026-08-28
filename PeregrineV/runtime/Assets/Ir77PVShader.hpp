@@ -40,7 +40,15 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     }
 
    public:
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVShader>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -76,9 +84,8 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-
     std::shared_ptr<IIr77Return const> ReadShader(std::string const& filename) {
-        std::ifstream vert("/home/alpha/workspace/iridium/Shader/shader.vert", std::ios::ate | std::ios::binary);
+        std::ifstream vert("/home/alpha/workspace/iridium/Shader/vert.spv", std::ios::ate | std::ios::binary);
 
         if (!vert.is_open()) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Enlisted has been invalidated.");
@@ -98,8 +105,8 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         vert_info.stage = Ir77PVShaderStage::Vertex;
 
         AddShader(vert_info, ID_SHADER_VERT);
-        
-        std::ifstream frag("/home/alpha/workspace/iridium/Shader/shader.vert", std::ios::ate | std::ios::binary);
+
+        std::ifstream frag("/home/alpha/workspace/iridium/Shader/frag.spv", std::ios::ate | std::ios::binary);
 
         if (!frag.is_open()) {
             throw std::runtime_error("failed to open file!");
@@ -137,15 +144,16 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         }
 
         info.stage_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        info.stage_create_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        info.stage_create_info.stage = (info.stage == Ir77PVShaderStage::Vertex) ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT;
         info.stage_create_info.pName = "main";
-        
+
         m_shader_infos.emplace(id, info);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetPipelineShaderStageInfos(std::vector<VkPipelineShaderStageCreateInfo>& infos, std::vector<std::uint64_t> id_list) {
+    std::shared_ptr<IIr77Return const> GetPipelineShaderStageInfos(std::vector<VkPipelineShaderStageCreateInfo>& infos,
+                                                                   std::vector<std::uint64_t> const& id_list) {
         for (int i = 0; i < id_list.size(); i++) {
             infos.push_back(m_shader_infos.at(id_list[i]).stage_create_info);
         }

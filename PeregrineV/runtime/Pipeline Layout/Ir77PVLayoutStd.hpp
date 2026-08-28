@@ -36,11 +36,11 @@ class Ir77PVLayoutStd : public Ir77Enlisted, public IIr77PVLayout, public std::e
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVLayoutStd() { 
+    ~Ir77PVLayoutStd() {
         VkDevice device;
         m_device->GetDevice(&device);
-        
-        vkDestroyPipelineLayout(device, m_pipeline_layout, nullptr); 
+
+        vkDestroyPipelineLayout(device, m_pipeline_layout, nullptr);
     }
 
    public:
@@ -52,7 +52,7 @@ class Ir77PVLayoutStd : public Ir77Enlisted, public IIr77PVLayout, public std::e
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVLayoutStd>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -91,13 +91,13 @@ class Ir77PVLayoutStd : public Ir77Enlisted, public IIr77PVLayout, public std::e
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreatePipelineLayout() {
+    std::shared_ptr<IIr77Return const> DefinePipelineLayout() {
         VkDevice device;
         m_device->GetDevice(&device);
 
         m_pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        m_pipeline_layout_info.setLayoutCount = 0;                      // Optional
-        m_pipeline_layout_info.pSetLayouts = nullptr;                   // Optional
+        m_pipeline_layout_info.setLayoutCount = 0;             // Optional
+        m_pipeline_layout_info.pSetLayouts = nullptr;          // Optional
         m_pipeline_layout_info.pushConstantRangeCount = 0;     // Optional
         m_pipeline_layout_info.pPushConstantRanges = nullptr;  // Optional
 
@@ -109,6 +109,7 @@ class Ir77PVLayoutStd : public Ir77Enlisted, public IIr77PVLayout, public std::e
     }
 
     std::shared_ptr<IIr77Return const> GetPipelineLayout(VkPipelineLayout* pipeline_layout) {
+        *pipeline_layout = m_pipeline_layout;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -117,9 +118,10 @@ class Ir77PVLayoutStd : public Ir77Enlisted, public IIr77PVLayout, public std::e
     std::shared_ptr<IIr77PVDevice> m_device;
 
     std::uint64_t m_device_id{UINT64_MAX};
-    
+
     VkPipelineLayoutCreateInfo m_pipeline_layout_info{};
 
-    VkPipelineLayout m_pipeline_layout;
+    VkPipelineLayout m_pipeline_layout{VK_NULL_HANDLE};
+    ;
 };
 }  // namespace NSIr77PeregrineV

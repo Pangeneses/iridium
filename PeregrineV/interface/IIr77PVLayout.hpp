@@ -18,7 +18,7 @@ typedef struct IIr77PVLayout : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> CreatePipelineLayout() = 0;
+    virtual std::shared_ptr<IIr77Return const> DefinePipelineLayout() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipelineLayout(VkPipelineLayout* pipeline_layout) = 0;
 

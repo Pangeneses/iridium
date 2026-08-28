@@ -12,21 +12,18 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-typedef struct Ir77PVEdge {
-    std::uint64_t node_a_id;
-    std::shared_ptr<IIr77Enlisted> node_a;
-    std::uint64_t node_b_id;
-    std::shared_ptr<IIr77Enlisted> node_b;
-}* pIr77PVEdge;
+struct IIr77PVDevice;
 
 typedef struct IIr77PeregrineV : virtual public IIr77Enlisted {
     IIr77PeregrineV() = default;
 
+    virtual std::shared_ptr<IIr77Return const> SetCurrentDevice(std::uint64_t const& device_id) = 0;
+
     virtual std::shared_ptr<IIr77Return const> CreateInstance() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices() = 0;
+    virtual std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices(std::map<std::uint64_t, std::shared_ptr<IIr77PVDevice>>& devices) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> CreateSurfaces() = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateSurfaces(std::map<std::uint64_t, std::vector<SDL_Window*>> const& windows) = 0;
 
     virtual std::shared_ptr<IIr77Return const> EnumerateDeviceQueues() = 0;
 
@@ -39,10 +36,6 @@ typedef struct IIr77PeregrineV : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> CreateSwapchains() = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreatePipelineGFX() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> CreateCommandBuffers() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> CreateShaders() = 0;
 
     virtual ~IIr77PeregrineV() = default;
 }* pIIr77PeregrineV;

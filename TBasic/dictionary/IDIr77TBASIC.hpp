@@ -42,7 +42,7 @@ class IDIr7TBASIC : public Ir77Enlisted, public IIr77Dictionary, public std::ena
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) {
         seat_shared_uuid<&GUIDIr77TBASIC>(uid);
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

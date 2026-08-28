@@ -6,6 +6,7 @@
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan_core.h>
 
+#include <cstdint>
 #include <string>
 #include <set>
 #include <vector>
@@ -51,7 +52,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVDevice>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -92,7 +93,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices() {
+    std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices(std::uint32_t const& device_index) {
         VkInstance instance;
         m_instance->GetInstance(&instance);
 
@@ -108,7 +109,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
         vkEnumeratePhysicalDevices(instance, &physical_device_count, phys_devices.data());
 
-        m_phys_device = phys_devices.at(m_device_index);
+        m_phys_device = phys_devices.at(device_index);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -138,6 +139,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         for (uint32_t i = 0; i < queue_family_count; ++i) {
             m_queue_families[i].family_properties = fp.at(i);
 
+            // change to bit mask not enum
             if (fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) m_queue_families[i].type = Ir77PVQueueType::Graphics;
             if (fp[i].queueFlags & VK_QUEUE_COMPUTE_BIT) m_queue_families[i].type = Ir77PVQueueType::Compute;
             if (fp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) m_queue_families[i].type = Ir77PVQueueType::Transfer;
@@ -149,7 +151,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
             VkBool32 present_support = VK_FALSE;
             vkGetPhysicalDeviceSurfaceSupportKHR(m_phys_device, i, surface, &present_support);
 
-            if (m_queue_families[i].type == Ir77PVQueueType::Graphics && present_support == VK_TRUE) {
+            if ((fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present_support == VK_TRUE) {
                 m_queue_families[i].presentation = VK_TRUE;
             } else {
                 m_queue_families[i].presentation = VK_FALSE;
@@ -168,7 +170,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
             VkDeviceQueueCreateInfo queue_create_info{};
             queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queue_create_info.pNext = nullptr;
-            queue_create_info.flags = m_queue_families[i].family_properties.queueFlags;
+            queue_create_info.flags = 0;
             queue_create_info.queueFamilyIndex = i;
             queue_create_info.queueCount = 1;
             queue_create_info.pQueuePriorities = &priority;
@@ -202,12 +204,12 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_phys_device_features.multiDrawIndirect = VK_TRUE;
         m_phys_device_features.independentBlend = VK_TRUE;
 
-        std::vector<VkDeviceQueueCreateInfo> create_info;
-        for (int i = 0; i < m_queue_families.size(); i++) create_info.push_back(m_queue_families[i].create_info);
+        m_create_info.clear();
+        for (int i = 0; i < m_queue_families.size(); i++) m_create_info.push_back(m_queue_families[i].create_info);
 
         m_device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        m_device_create_info.queueCreateInfoCount = static_cast<uint32_t>(create_info.size());
-        m_device_create_info.pQueueCreateInfos = create_info.data();
+        m_device_create_info.queueCreateInfoCount = static_cast<uint32_t>(m_create_info.size());
+        m_device_create_info.pQueueCreateInfos = m_create_info.data();
         m_device_create_info.enabledExtensionCount = 1;
         m_device_create_info.ppEnabledExtensionNames = DEVICE_EXTENSIONS.data();
         m_device_create_info.pEnabledFeatures = &m_phys_device_features;
@@ -215,7 +217,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateDevice() {
+    std::shared_ptr<IIr77Return const> DefineDevice() {
         if (vkCreateDevice(m_phys_device, &m_device_create_info, nullptr, &m_device) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateDevice failed.");
         }
@@ -262,24 +264,23 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
    private:
     std::shared_ptr<IIr77PVInstance> m_instance;
 
-    std::uint32_t m_device_index;
+    VkPhysicalDevice m_phys_device{VK_NULL_HANDLE};
 
-    VkPhysicalDevice m_phys_device;
+    VkPhysicalDeviceProperties m_phys_device_properties{};
 
-    VkPhysicalDeviceProperties m_phys_device_properties;
+    VkPhysicalDeviceFeatures m_phys_device_features{};
 
-    VkPhysicalDeviceFeatures m_phys_device_features;
-
-    VkPhysicalDeviceLimits m_phys_device_limits;
+    VkPhysicalDeviceLimits m_phys_device_limits{};
 
     std::vector<Ir77PVQueueFamily> m_queue_families;
 
-    VkDevice m_device;
+    std::vector<VkDeviceQueueCreateInfo> m_create_info;
+
+    VkDevice m_device{VK_NULL_HANDLE};
+    ;
 
     std::vector<VkExtensionProperties> m_available_extensions;
 
-    VkDeviceCreateInfo m_device_create_info;
-
-    std::multimap<std::uint64_t, std::shared_ptr<IIr77Enlisted>> m_pipeline;
+    VkDeviceCreateInfo m_device_create_info{};
 };
 }  // namespace NSIr77PeregrineV

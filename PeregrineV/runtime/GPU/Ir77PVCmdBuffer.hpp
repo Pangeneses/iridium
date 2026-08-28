@@ -53,7 +53,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVCmdBuffer>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -116,8 +116,28 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetIndex(std::uint32_t const& index) {
-        m_index = index;
+    std::shared_ptr<IIr77Return const> DefineSyncObjects() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        m_semaphores_available.resize(MAX_FRAMES_IN_FLIGHT);
+        m_semaphores_finished.resize(MAX_FRAMES_IN_FLIGHT);
+        m_fences_in_flight.resize(MAX_FRAMES_IN_FLIGHT);
+
+        VkSemaphoreCreateInfo semaphore_info{};
+        semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkFenceCreateInfo fence_info{};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            if (vkCreateSemaphore(device, &semaphore_info, nullptr, &m_semaphores_available[i]) != VK_SUCCESS ||
+                vkCreateSemaphore(device, &semaphore_info, nullptr, &m_semaphores_finished[i]) != VK_SUCCESS ||
+                vkCreateFence(device, &fence_info, nullptr, &m_fences_in_flight[i]) != VK_SUCCESS) {
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: sync object creation failed.");
+            }
+        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -141,13 +161,68 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         }
 
         if (vkCreateCommandPool(device, &pool_info, nullptr, &m_cmd_pool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create command pool!");
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateCommandPool failed.");
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> RecordCommands() {
+    std::shared_ptr<IIr77Return const> AllocateCommandBuffer() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        m_cmd_buffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+        VkCommandBufferAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc_info.commandPool = m_cmd_pool;
+        alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc_info.commandBufferCount = 1;
+
+        if (vkAllocateCommandBuffers(device, &alloc_info, m_cmd_buffers.data()) != VK_SUCCESS) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkAllocateCommandBuffers failed.");
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> WaitForFence() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        if (vkWaitForFences(device, 1, &m_fences_in_flight[m_current_frame], VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkWaitForFences failed.");
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> AcquireNextImage(VkResult* acquire_next_result) {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        VkSwapchainKHR swapchain;
+        m_swapchain->GetSwapchain(&swapchain);
+
+        *acquire_next_result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, m_semaphores_available[m_current_frame], VK_NULL_HANDLE, &m_index);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> ValidateSwapchain(VkResult* acquire_next_result, VkResult* queue_present_result) {
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> ResetFence() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        vkResetFences(device, 1, &m_fences_in_flight[m_current_frame]);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> RecordCommandBuffer() {
         VkDevice device;
         m_device->GetDevice(&device);
 
@@ -156,6 +231,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         VkExtent2D swapchain_extent;
         m_swapchain->GetSwapchainExtents(swapchain_extent);
+
+        VkCommandBuffer cmd_buffer = m_cmd_buffers[m_current_frame];
 
         std::vector<VkFramebuffer> swapchain_framebuffers;
         m_swapchain->GetSwapchainFramebuffers(swapchain_framebuffers);
@@ -168,8 +245,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         begin_info.flags = 0;                   // Optional
         begin_info.pInheritanceInfo = nullptr;  // Optional
 
-        if (vkBeginCommandBuffer(m_cmd_buf, &begin_info) != VK_SUCCESS) {
-            throw std::runtime_error("failed to begin recording command buffer!");
+        if (vkBeginCommandBuffer(cmd_buffer, &begin_info) != VK_SUCCESS) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkBeginCommandBuffer failed.");
         }
 
         VkRenderPassBeginInfo render_pass_info{};
@@ -183,9 +260,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         render_pass_info.clearValueCount = 1;
         render_pass_info.pClearValues = &clear_color;
 
-        vkCmdBeginRenderPass(m_cmd_buf, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(cmd_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdBindPipeline(m_cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_gfx);
+        vkCmdBindPipeline(cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_gfx);
 
         VkViewport viewport{};
         viewport.x = 0.0f;
@@ -194,26 +271,93 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         viewport.height = static_cast<float>(swapchain_extent.height);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(m_cmd_buf, 0, 1, &viewport);
+        vkCmdSetViewport(cmd_buffer, 0, 1, &viewport);
 
         VkRect2D scissor{};
         scissor.offset = {0, 0};
         scissor.extent = swapchain_extent;
-        vkCmdSetScissor(m_cmd_buf, 0, 1, &scissor);
+        vkCmdSetScissor(cmd_buffer, 0, 1, &scissor);
 
-        vkCmdDraw(m_cmd_buf, 3, 1, 0, 0);
+        vkCmdDraw(cmd_buffer, 3, 1, 0, 0);
 
-        vkCmdEndRenderPass(m_cmd_buf);
+        vkCmdEndRenderPass(cmd_buffer);
 
-        if (vkEndCommandBuffer(m_cmd_buf) != VK_SUCCESS) {
-            throw std::runtime_error("failed to record command buffer!");
+        if (vkEndCommandBuffer(cmd_buffer) != VK_SUCCESS) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkEndCommandBuffer failed.");
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> SubmitFrame() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        std::vector<Ir77PVQueueFamily> queue_families;
+        m_device->GetQueueFamily(queue_families);
+
+        VkQueue graphics_queue;
+        for (int i = 0; i < queue_families.size(); i++) {
+            if (queue_families[i].presentation == true) graphics_queue = queue_families[i].queue;
+        }
+
+        VkSemaphore wait_semaphores[] = {m_semaphores_available[m_current_frame]};
+        VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        VkSemaphore signal_semaphores[] = {m_semaphores_finished[m_current_frame]};
+
+        VkSubmitInfo submit_info{};
+        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.waitSemaphoreCount = 1;
+        submit_info.pWaitSemaphores = wait_semaphores;
+        submit_info.pWaitDstStageMask = wait_stages;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &m_cmd_buffers[m_current_frame];
+        ;
+        submit_info.signalSemaphoreCount = 1;
+        submit_info.pSignalSemaphores = signal_semaphores;
+
+        if (vkQueueSubmit(graphics_queue, 1, &submit_info, m_fences_in_flight[m_current_frame]) != VK_SUCCESS) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkQueueSubmit failed.");
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> PresentFrame(VkResult* queue_present_result) {
+        VkSwapchainKHR swapchain;
+        m_swapchain->GetSwapchain(&swapchain);
+
+        std::vector<Ir77PVQueueFamily> queue_families;
+        m_device->GetQueueFamily(queue_families);
+
+        VkQueue graphics_queue;
+        for (int i = 0; i < queue_families.size(); i++) {
+            if (queue_families[i].presentation == true) graphics_queue = queue_families[i].queue;
+        }
+
+        VkSemaphore wait_semaphores[] = {m_semaphores_finished[m_current_frame]};
+
+        VkPresentInfoKHR present_info{};
+        present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        present_info.swapchainCount = 1;
+        present_info.pSwapchains = &swapchain;
+        present_info.pImageIndices = &m_index;
+        present_info.waitSemaphoreCount = 1;
+        present_info.pWaitSemaphores = wait_semaphores;
+
+        *queue_present_result = vkQueuePresentKHR(graphics_queue, &present_info);
+
+        m_current_frame = (m_current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
    private:
+    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+
     std::uint32_t m_index{0};
+
+    std::uint32_t m_current_frame{0};
 
     std::shared_ptr<IIr77PVInstance> m_instance;
 
@@ -225,8 +369,14 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     std::shared_ptr<IIr77PVPipeline> m_pipeline;
 
+    std::vector<VkSemaphore> m_semaphores_available;
+
+    std::vector<VkSemaphore> m_semaphores_finished;
+
+    std::vector<VkFence> m_fences_in_flight;
+
     VkCommandPool m_cmd_pool{VK_NULL_HANDLE};
 
-    VkCommandBuffer m_cmd_buf{VK_NULL_HANDLE};
+    std::vector<VkCommandBuffer> m_cmd_buffers;
 };
 }  // namespace NSIr77PeregrineV

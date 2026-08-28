@@ -206,8 +206,12 @@ std::shared_ptr<IIr77Return const> Ir77RETURN(IIr77Enlisted const* sender = g_nu
     std::shared_ptr<Ir77Return<T>> shared = std::make_shared<Ir77Return<T>>();
 
     if (sender) {
-        std::shared_ptr<IIr77Enlisted const> sender_ptr(sender, [](auto*) {});
-        shared->PublicSetSender(sender_ptr);
+        std::shared_ptr<void> obj;
+        Ir77GUID enlisted_id{(static_cast<unsigned __int128>(0xC052EA89334C43AE) << 64) | 0x9F976D7E354FC406};
+        const_cast<IIr77Enlisted*>(sender)->QueryInterface(&enlisted_id, obj);
+        if (obj) {
+            shared->PublicSetSender(std::static_pointer_cast<IIr77Enlisted const>(obj));
+        }
     }
 
     if (!message.empty()) Ir77RetLog::Write(message);
@@ -234,7 +238,7 @@ class Ir77Return : public IIr77Return, public std::enable_shared_from_this<Ir77R
     }
 
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
-        //seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
+        // seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
 
         uid = nullptr;
 
@@ -313,7 +317,7 @@ class Ir77Return : public IIr77Return, public std::enable_shared_from_this<Ir77R
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         uid.reset(T::MemberUUID(), [](auto*) {});
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");

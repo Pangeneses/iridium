@@ -54,7 +54,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVPipelineGFX>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -123,7 +123,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreatePipeline() {
+    std::shared_ptr<IIr77Return const> DefinePipeline() {
         DefineDynamicState();
 
         DefineVertexInputState();
@@ -141,6 +141,8 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         DefineColorBlendAttachment();
 
         DefineColorBlendState();
+
+        CreatePipeline();
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -254,7 +256,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DefinePipeline() {
+    std::shared_ptr<IIr77Return const> CreatePipeline() {
         VkDevice device;
         m_device->GetDevice(&device);
 

@@ -20,6 +20,8 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 inline Ir77GUID GUIDIr77PeregrineV{(static_cast<unsigned __int128>(0x3F9A72C4E1B85D06) << 64) | 0xA2C7F03951E84B1D};
+inline Ir77GUID GUIDIr77PVPaint{(static_cast<unsigned __int128>(0x77FB47B81DF7493A) << 64) | 0x8712AF66E15B484F};
+inline Ir77GUID GUIDIr77PVAsset{(static_cast<unsigned __int128>(0x559D9163200142C6) << 64) | 0xA76F0961028593E0};
 
 /**************** GPU Interface ****************/
 inline Ir77GUID GUIDIr77PVInstance{(static_cast<unsigned __int128>(0x7D4E91A3C6F28B05) << 64) | 0x1B9E50A472C3D8F6};
@@ -94,7 +96,7 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) {
         seat_shared_uuid<&GUIDIr77PeregrineV>(uid);
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

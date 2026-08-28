@@ -61,7 +61,7 @@ IIr77BASE::IIr77RETURN OIr77DELCONTEXT::DelistedChrono(uint64_t& moment) {
         return IIr77BASE::Ir77_OPERATION_SUCCEEDED{};
 }
 
-IIr77BASE::IIr77RETURN OIr77DELCONTEXT::MemberOfUuid(winrt::guid& uid) {
+IIr77BASE::IIr77RETURN OIr77DELCONTEXT::MemberUuid(winrt::guid& uid) {
     uid = IIr77PROJECT::IDOIr77GPU::HVIDOIr77DELCONTEXT();
 
     if (!IsValid)
@@ -116,7 +116,7 @@ IIr77BASE::IIr77RETURN OIr77DELCONTEXT::Result(IIr77BASE::IIr77BALE const& outco
 
     winrt::guid uid;
 
-    if (outcome.MemberOfUuid(uid).ID() == IIr77BASE::Ir77RETURN::HVID_Ir77_INVALIDATED()) {
+    if (outcome.MemberUuid(uid).ID() == IIr77BASE::Ir77RETURN::HVID_Ir77_INVALIDATED()) {
         return IIr77BASE::Ir77_INVALIDATED{*this, "Outcome is invalid."};
     }
 

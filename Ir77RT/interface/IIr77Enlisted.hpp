@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "IIr77GUID.hpp"
+
 #include "../runtime/Ir77GUID.hpp"
 
 namespace NSIr77RT {
@@ -31,7 +32,7 @@ typedef struct IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetSenderMsg(std::string& sender) const = 0;
 
-    virtual std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const = 0;
+    virtual std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const = 0;
 
     virtual std::shared_ptr<IIr77Return const> CollectionUuid(std::shared_ptr<IIr77GUID const>& uid) const = 0;
 

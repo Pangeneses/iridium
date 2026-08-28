@@ -47,7 +47,7 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVInstance>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -132,9 +132,11 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> QueryDeviceCount(std::uint32_t const& count) {
+    std::shared_ptr<IIr77Return const> QueryDeviceCount(std::uint32_t& count) {
         std::uint32_t physical_device_count = 0;
         vkEnumeratePhysicalDevices(m_instance, &physical_device_count, nullptr);
+
+        count = physical_device_count;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -147,9 +149,9 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
     }
 
    private:
-    VkApplicationInfo m_application_info;
+    VkApplicationInfo m_application_info{};
 
-    VkInstanceCreateInfo m_create_info;
+    VkInstanceCreateInfo m_create_info{};
 
     uint32_t m_sdl_ext_count;
 

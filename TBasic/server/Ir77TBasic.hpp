@@ -351,7 +351,7 @@ class Ir77Basic : public Ir77Enlisted, public IIr77Dispatch, public std::enable_
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77TBASIC>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -384,9 +384,7 @@ class Ir77Basic : public Ir77Enlisted, public IIr77Dispatch, public std::enable_
     }
 
    public:
-    std::shared_ptr<IIr77Return const> Dispatch(std::shared_ptr<IIr77Stack const>& stack) {
-        return m_patch->Forward(stack);
-    }
+    std::shared_ptr<IIr77Return const> Dispatch(std::shared_ptr<IIr77Stack const>& stack) { return m_patch->Forward(stack); }
 
     std::shared_ptr<IIr77Return const> Factory(std::shared_ptr<IIr77GUID const>& uid, std::shared_ptr<IIr77Enlisted>& obj, std::uint64_t& id) {
         if (id == CREATE_NEW) id = random_u64();

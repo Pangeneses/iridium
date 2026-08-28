@@ -20,7 +20,7 @@ struct DIr77MATERIAL : DIr77MATERIALT<DIr77MATERIAL> {
 
     IIr77BASE::IIr77RETURN DelistedChrono(uint64_t& moment);
 
-    IIr77BASE::IIr77RETURN MemberOfUuid(winrt::guid& uid);
+    IIr77BASE::IIr77RETURN MemberUuid(winrt::guid& uid);
 
     IIr77BASE::IIr77RETURN CollectionUuid(winrt::guid& uid);
 

@@ -53,7 +53,7 @@ IIr77BASE::IIr77RETURN DIr77GFXSLOT::DelistedChrono(uint64_t& moment) {
     return IIr77BASE::Ir77_OPERATION_SUCCEEDED{};
 }
 
-IIr77BASE::IIr77RETURN DIr77GFXSLOT::MemberOfUuid(winrt::guid& uid) {
+IIr77BASE::IIr77RETURN DIr77GFXSLOT::MemberUuid(winrt::guid& uid) {
     uid = IIr77GRAPHICS::IDDIr77GRAPHICS::HVIDDIr77GFXSLOT();
 
     if (!IsValid) return IIr77BASE::Ir77_INVALIDATED{*this, "Enlisted has been invalidated."};

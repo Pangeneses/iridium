@@ -52,7 +52,7 @@ class IDOPIr77TBASIC : public IIr77Dictionary, public std::enable_shared_from_th
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) {
         seat_shared_uuid<&GUIDOPIr77TBasic>(uid);
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -119,4 +119,4 @@ class IDOPIr77TBASIC : public IIr77Dictionary, public std::enable_shared_from_th
     };
 };
 
-}  // namespace NSIr77RT
+}  // namespace NSIr77TBasic

@@ -10,19 +10,24 @@
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include "../../Ir77RT/runtime/Ir77Return.hpp"
+
 #include "../Windows/runtime/CEFMessageLoop.hpp"
 #include "../Windows/runtime/CEFApp.hpp"
 #include "../Windows/runtime/CEFRTState.hpp"
 #include "../Windows/runtime/CEFClient.hpp"
 #include "../Windows/runtime/CEFMouseEvent.hpp"
 
-// #include "../REDOS/service/Ir77REDOS.hpp"
-#include "../PeregrineV/server/Ir77PVServer.hpp"
+#include "../PeregrineV/dictionary/IDIr77PVContext.hpp"
 
-#include "../../Ir77RT/runtime/Ir77Return.hpp"
+#include "../PeregrineV/server/Ir77PeregrineV.hpp"
+#include "../PeregrineV/server/Ir77PVPaint.hpp"
+#include "../PeregrineV/server/Ir77PVAsset.hpp"
+
+#include "../PeregrineV/interface/IIr77PVDevice.hpp"
 
 using namespace CEF;
-// using namespace NSIr77REDOS;
+using namespace NSIr77PeregrineV;
 
 namespace Ir77 {
 
@@ -34,12 +39,11 @@ class iridium {
     }
 
     // iridium.hpp — InitCEF 
-    void InitCEF(int argc, char* argv[]) {
-        m_rt_state->Initialize(argc, argv);
-        Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Succeeded: InitCEF");
-    }
+    void InitializePipeline(int argc, char* argv[]) {
+        //m_rt_state->Initialize(argc, argv);
+        
+        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
 
-    void InitWindow() {
         if (!SDL_Init(SDL_INIT_VIDEO)) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "SDL_Init failed: " + std::string{SDL_GetError()});
             throw std::runtime_error{"SDL_Init failed: " + std::string{SDL_GetError()}};
@@ -52,21 +56,51 @@ class iridium {
             throw std::runtime_error{"SDL_CreateWindow failed: " + std::string{SDL_GetError()}};
         }
 
-        Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Succeeded: SDL");
+        SDL_ShowWindow(m_window);
 
-        running = true;
-    }
-    
-    void InitVulkan() {
-        // m_adapter = std::make_shared<IIr77PVRenderer>();
+        std::vector<SDL_Window*> windows{m_window};
 
-        // m_adapter->SetWindow(m_window);
+        m_windows.emplace(ID_DEVICE_001, windows);
+
+        auto peregrinev = std::make_shared<Ir77PeregrineV>();
+
+        m_vulkan = peregrinev;
+
+        m_paint = std::make_shared<Ir77PVPaint>();
+
+        m_paint->SetPeregrineV(peregrinev);
+
+        m_asset = std::make_shared<Ir77PVAsset>();
+
+        m_asset->SetPeregrineV(peregrinev);
+
+        m_vulkan->CreateInstance();
+
+        m_vulkan->SetCurrentDevice(ID_DEVICE_001);
+
+        m_vulkan->EnumeratePhysicalDevices(m_devices);
+
+        m_vulkan->CreateSurfaces(m_windows);
+
+        m_vulkan->EnumerateDeviceQueues();
+
+        m_vulkan->CreateLogicalDevices();
+
+        m_vulkan->CreateLayout();
+
+        m_vulkan->CreateRenderPass();
+
+        m_vulkan->CreateSwapchains();
+
+        m_asset->CreateShaders();
+
+        m_vulkan->CreatePipelineGFX();
+
+        m_paint->CreateCommandBuffers();
 
         // m_rt_state->GetRenderHandler()->SetPaintCallback([this](const void* buffer, int w, int h) { m_adapter->Ir77VulkanUploadCEF(buffer, w, h); });
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
-
-        // m_adapter->Initialize();
     }
 
     bool IsRunning() { return running; }
@@ -91,7 +125,11 @@ class iridium {
 
     void VulkanStep() {}
 
-    void VulkanFrameStart() {}
+    void VulkanFrameStart() {
+        m_paint->Next();
+
+        m_paint->Draw();
+    }
 
     void HUD() {}
 
@@ -116,9 +154,19 @@ class iridium {
 
     std::shared_ptr<CEFRTState> m_rt_state;
 
-    SDL_Window* m_window = nullptr;
+    std::shared_ptr<IIr77PeregrineV> m_vulkan;
 
-    bool running = false;
+    std::shared_ptr<IIr77PVPaint> m_paint;
+
+    std::shared_ptr<IIr77PVAsset> m_asset;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVDevice>> m_devices;
+
+    SDL_Window* m_window;
+
+    std::map<std::uint64_t, std::vector<SDL_Window*>> m_windows;
+
+    bool running = true;
 };
 
 }  // namespace Ir77

@@ -53,7 +53,7 @@ IIr77BASE::IIr77RETURN Ir77LANDING::DelistedChrono(uint64_t& moment) {
     return IIr77BASE::Ir77_OPERATION_SUCCEEDED{};
 }
 
-IIr77BASE::IIr77RETURN Ir77LANDING::MemberOfUuid(winrt::guid& uid) {
+IIr77BASE::IIr77RETURN Ir77LANDING::MemberUuid(winrt::guid& uid) {
     uid = Landing::IDIr77LANDING::HVIDIr77LANDING();
 
     return IIr77BASE::Ir77_OPERATION_SUCCEEDED{};

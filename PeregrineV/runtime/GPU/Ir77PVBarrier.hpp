@@ -43,7 +43,7 @@ class Ir77PVBarrier : public Ir77Enlisted, public IIr77PVBarrier, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIr77PVBarrier>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
@@ -81,18 +81,18 @@ class Ir77PVBarrier : public Ir77Enlisted, public IIr77PVBarrier, public std::en
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-        
-       private:
-        std::shared_ptr<IIr77Enlisted> m_context;
 
-        VkImageMemoryBarrier m_barrier;
+   private:
+    std::shared_ptr<IIr77Enlisted> m_context;
 
-        VkBufferImageCopy m_buffer_copy;
+    VkImageMemoryBarrier m_barrier;
 
-        VkPipelineStageFlags2 m_stage_flags;
+    VkBufferImageCopy m_buffer_copy;
 
-        VkAccessFlags2 m_access_flags_2;
+    VkPipelineStageFlags2 m_stage_flags;
 
-        VkImageLayout m_layout;
-    };
+    VkAccessFlags2 m_access_flags_2;
+
+    VkImageLayout m_layout;
+};
 }  // namespace NSIr77PeregrineV

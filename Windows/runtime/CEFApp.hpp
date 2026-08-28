@@ -6,7 +6,7 @@ namespace CEF {
 
 class CEFApp : public CefApp {
    public:
-    CEFApp(){};
+    CEFApp() {};
 
    public:
     void OnBeforeCommandLineProcessing(const CefString& process_type, CefRefPtr<CefCommandLine> command_line) override {
@@ -14,6 +14,10 @@ class CEFApp : public CefApp {
         command_line->AppendSwitch("disable-gpu-compositing");
         command_line->AppendSwitch("disable-software-rasterizer");
         command_line->AppendSwitch("enable-begin-frame-scheduling");
+        command_line->AppendSwitch("no-zygote");              
+        command_line->AppendSwitch("disable-dev-shm-usage");  
+
+        command_line->AppendSwitchWithValue("ozone-platform", "headless");
     }
 
     void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {}

@@ -53,7 +53,7 @@ IIr77BASE::IIr77RETURN DIr77PIPELINE::DelistedChrono(uint64_t& moment) {
     return IIr77BASE::Ir77_OPERATION_SUCCEEDED{};
 }
 
-IIr77BASE::IIr77RETURN DIr77PIPELINE::MemberOfUuid(winrt::guid& uid) {
+IIr77BASE::IIr77RETURN DIr77PIPELINE::MemberUuid(winrt::guid& uid) {
     uid = IIr77PROJECT::IDDIr77GPU::HVIDDIr77PIPELINE();
 
     if (!IsValid) return IIr77BASE::Ir77_INVALIDATED{*this, "Enlisted has been invalidated."};

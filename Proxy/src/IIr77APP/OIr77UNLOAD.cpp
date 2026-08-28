@@ -61,7 +61,7 @@ IIr77BASE::IIr77RETURN OIr77UNLOAD::DelistedChrono(uint64_t& moment) {
         return IIr77BASE::Ir77_OPERATION_SUCCEEDED{};
 }
 
-IIr77BASE::IIr77RETURN OIr77UNLOAD::MemberOfUuid(winrt::guid& uid) {
+IIr77BASE::IIr77RETURN OIr77UNLOAD::MemberUuid(winrt::guid& uid) {
     uid = IIr77APP::IDOIr77APP::HVIDOIr77UNLOAD();
 
     if (!IsValid)
@@ -112,7 +112,7 @@ IIr77BASE::IIr77RETURN OIr77UNLOAD::Result(IIr77BASE::IIr77BALE const& outcome, 
 
     winrt::guid uid;
 
-    if (outcome.MemberOfUuid(uid).ID() == IIr77BASE::Ir77RETURN::HVID_Ir77_INVALIDATED()) {
+    if (outcome.MemberUuid(uid).ID() == IIr77BASE::Ir77RETURN::HVID_Ir77_INVALIDATED()) {
         return IIr77BASE::Ir77_INVALIDATED{*this, "Outcome is invalid."};
     }
 

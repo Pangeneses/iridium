@@ -22,7 +22,7 @@ struct OIr77DELSHADER : OIr77DELSHADERT<OIr77DELSHADER> {
 
     IIr77BASE::IIr77RETURN DelistedChrono(uint64_t& time);
 
-    IIr77BASE::IIr77RETURN MemberOfUuid(winrt::guid& uid);
+    IIr77BASE::IIr77RETURN MemberUuid(winrt::guid& uid);
 
     IIr77BASE::IIr77RETURN CollectionUuid(winrt::guid& uid);
 

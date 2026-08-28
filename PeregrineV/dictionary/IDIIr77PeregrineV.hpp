@@ -21,6 +21,8 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 inline Ir77GUID GUIDIIr77PeregrineV{(static_cast<unsigned __int128>(0xA67D31AC1DDF4A7E) << 64) | 0xB628CE2A9641A8A2};
+inline Ir77GUID GUIDIIr77PVPaint{(static_cast<unsigned __int128>(0x3B1F109C15C24A2D) << 64) | 0x8D13DF17E5848FD2};
+inline Ir77GUID GUIDIIr77PVAsset{(static_cast<unsigned __int128>(0x230418A411684215) << 64) | 0xA67EB2411A2FCA48};
 
 /**************** GPU Interface ****************/
 inline Ir77GUID GUIDIIr77PVInstance{(static_cast<unsigned __int128>(0xB1136C9B855A803E) << 64) | 0x7A5E662149F03242};
@@ -71,7 +73,7 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> MemberOfUuid(std::shared_ptr<IIr77GUID const>& uid) {
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) {
         seat_shared_uuid<&GUIDIIr77PeregrineV>(uid);
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -122,22 +124,12 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
     std::shared_ptr<IIr77Return const> m_invalidation_condition{nullptr};
 
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},
-        {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},
-        {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},
-        {"GUIDIIr77PVQueue", &GUIDIIr77PVQueue},
-        {"GUIDIIr77PVSwapchain", &GUIDIIr77PVSwapchain},
-        {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
-        {"GUIDIIr77PVBarrier", &GUIDIIr77PVBarrier},
-        {"GUIDIIr77PVSemaphore", &GUIDIIr77PVSemaphore},
-        {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},
-        {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},
-        {"GUIDIIr77PVRenderPass", &GUIDIIr77PVRenderPass},        
-        {"GUIDIIr77PVBuffer", &GUIDIIr77PVBuffer},
-        {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
-        {"GUIDIIr77PVShader", &GUIDIIr77PVShader},
-        {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},
-        {"GUIDIIr77PVMesh", &GUIDIIr77PVMesh},
+        {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},     {"GUIDIIr77PVPaint", &GUIDIIr77PVPaint},         {"GUIDIIr77PVAsset", &GUIDIIr77PVAsset},
+        {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},     {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},       {"GUIDIIr77PVQueue", &GUIDIIr77PVQueue},
+        {"GUIDIIr77PVSwapchain", &GUIDIIr77PVSwapchain},   {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer}, {"GUIDIIr77PVBarrier", &GUIDIIr77PVBarrier},
+        {"GUIDIIr77PVSemaphore", &GUIDIIr77PVSemaphore},   {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},   {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},
+        {"GUIDIIr77PVRenderPass", &GUIDIIr77PVRenderPass}, {"GUIDIIr77PVBuffer", &GUIDIIr77PVBuffer},       {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
+        {"GUIDIIr77PVShader", &GUIDIIr77PVShader},         {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},   {"GUIDIIr77PVMesh", &GUIDIIr77PVMesh},
     };
 };
 
