@@ -84,12 +84,6 @@ int main(int argc, char* argv[]) {
         iridium.HUD();
         iridium.Composition();
         iridium.VulkanFrameEnd();
-
-        auto frame_end = std::chrono::steady_clock::now();
-
-        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start).count();
-
-        if (elapsed < 5000) std::this_thread::sleep_for(std::chrono::microseconds(5000 - elapsed));
     }
 
     iridium.Shutdown();

@@ -1,9 +1,10 @@
 #pragma once
 #include <fstream>
 #include <string>
-#include "nlohmann/json.hpp"
 
 namespace NSIr77RT {
+/*
+#include "nlohmann/json.hpp"
 
 enum class Ir77ServerMode { Client, Server, SelfServe };
 
@@ -34,5 +35,5 @@ inline void LoadConfig(std::string const& path) {
 inline bool IsServer()    { return g_server_mode == Ir77ServerMode::Server; }
 inline bool IsClient()    { return g_server_mode == Ir77ServerMode::Client; }
 inline bool IsSelfServe() { return g_server_mode == Ir77ServerMode::SelfServe; }
-
+*/
 }  // namespace NSIr77RT

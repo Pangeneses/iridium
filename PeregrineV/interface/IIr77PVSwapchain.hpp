@@ -39,8 +39,6 @@ typedef struct IIr77PVSwapchain : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SurfaceCapabilities() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> InitSwapchainInfo() = 0;
-
     virtual std::shared_ptr<IIr77Return const> DefineSwapchain() = 0;
 
     virtual std::shared_ptr<IIr77Return const> InitSwapchainImages() = 0;

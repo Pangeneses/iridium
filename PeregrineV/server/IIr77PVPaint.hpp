@@ -3,7 +3,6 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-#include <map>
 #include <memory>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -22,11 +21,9 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> CreateCommandBuffers() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> Next() = 0;
+    virtual std::shared_ptr<IIr77Return const> Draw() = 0;
 
     virtual std::shared_ptr<IIr77Return const> ResetSwapchain(std::uint32_t const& index) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> Draw() = 0;
 
     virtual ~IIr77PVPaint() = default;
 }* pIIr77PVPaint;

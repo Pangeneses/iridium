@@ -1,0 +1,12 @@
+Buffer	Contents	Usage flags	Depends on
+Vertex buffer	Position, normal, UV, bone indices, bone weights — interleaved or as separate streams (SoA vs AoS is a real design choice — separate streams let you skip bone data for static meshes)	VERTEX_BUFFER_BIT | TRANSFER_DST_BIT	staging buffer
+Index buffer	All models' indices packed together, each model's indices offset into the shared vertex buffer	INDEX_BUFFER_BIT | TRANSFER_DST_BIT	staging buffer, vertex buffer layout (offsets must be known before packing)
+Draw metadata buffer (per-model)	firstIndex, indexCount, vertexOffset, firstInstance, instanceCount — one entry per model/mesh	STORAGE_BUFFER_BIT or feeds vkCmdDrawIndexedIndirect	index buffer, vertex buffer (offsets computed from packing)
+Instance/transform buffer	Per-instance model matrix (or per-draw, if 1 instance = 1 draw)	STORAGE_BUFFER_BIT, host-visible+coherent if updated per frame	none directly, but read by vertex shader — needs instance→model mapping
+Bone matrix buffer	Flattened skinning palettes, one region per skinned model	STORAGE_BUFFER_BIT	vertex buffer's bone-index data must reference into this correctly
+Material buffer	Per-material params: texture indices (into a bindless array), switch/shader-variant ID, PBR constants, etc.	STORAGE_BUFFER_BIT or UNIFORM_BUFFER_BIT if small/fixed-size entries	texture array (material entries reference texture indices)
+Switch-constant buffer	Whatever drives your shader-switching logic (variant flags, feature bits) — sounds like this indexes into the material buffer or a separate small lookup	STORAGE_BUFFER_BIT or push constants if small enough	material buffer
+Texture array (bindless)	All textures for this device, as a VkImage[]/descriptor array (VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER with DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT/variable count, or a fixed-size array)	SAMPLED_BIT | TRANSFER_DST_BIT per image	staging buffer(s), one per texture upload
+Camera/view-projection UBO	View, projection matrices, per-frame	UNIFORM_BUFFER_BIT, host-visible	none — top of the dependency chain
+Indirect draw command buffer	VkDrawIndexedIndirectCommand[] — one per model/instance, GPU-readable draw parameters (lets you draw everything with one vkCmdDrawIndexedIndirectCount call instead of thousands of individual vkCmdDrawIndexed calls)	INDIRECT_BUFFER_BIT, can be written by compute (GPU culling) or CPU	draw metadata buffer
+Staging buffer(s)	Transient, host-visible upload buffers for the above	TRANSFER_SRC_BIT, host-visible+coherent	none — the source everything else copies from

@@ -21,6 +21,10 @@
 
 #include "../../interface/IIr77PVCmdBuffer.hpp"
 
+#include "../../runtime/Buffer/Ir77PVBufferCEF.hpp"
+#include "../../runtime/Buffer/Ir77PVBufferUBO.hpp"
+#include "../../runtime/Buffer/Ir77PVBufferVertex.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
@@ -40,6 +44,14 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     ~Ir77PVCmdBuffer() {
         VkDevice device;
         m_device->GetDevice(&device);
+
+        vkDeviceWaitIdle(device);
+
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            vkDestroySemaphore(device, m_semaphores_available[i], nullptr);
+            vkDestroySemaphore(device, m_semaphores_finished[i], nullptr);
+            vkDestroyFence(device, m_fences_in_flight[i], nullptr);
+        }
 
         vkDestroyCommandPool(device, m_cmd_pool, nullptr);
     }
@@ -110,8 +122,44 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetPipeline(std::shared_ptr<IIr77PVPipeline> pipeline) {
-        m_pipeline = pipeline;
+    std::shared_ptr<IIr77Return const> SetPipelineGFX(std::shared_ptr<IIr77PVPipeline> pipeline_gfx) {
+        m_pipeline_gfx = pipeline_gfx;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetBufferVertex(std::shared_ptr<Ir77PVBufferVertex> buffer_vertex) {
+        m_buffer_vertex = buffer_vertex;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetLayoutUBO(std::shared_ptr<IIr77PVLayout> layout_ubo) {
+        m_layout_ubo = layout_ubo;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetBufferUBO(std::shared_ptr<Ir77PVBufferUBO> buffer_ubo) {
+        m_buffer_ubo = buffer_ubo;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetPipelineCEF(std::shared_ptr<IIr77PVPipeline> pipeline_cef) {
+        m_pipeline_cef = pipeline_cef;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetLayoutCEF(std::shared_ptr<IIr77PVLayout> layout_cef) {
+        m_layout_cef = layout_cef;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetBufferCEF(std::shared_ptr<Ir77PVBufferCEF> buffer_cef) {
+        m_buffer_cef = buffer_cef;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -147,11 +195,13 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_device->GetDevice(&device);
 
         std::vector<Ir77PVQueueFamily> queue_family;
-        m_device->GetQueueFamily(queue_family);
+        m_device->GetQueueFamilies(queue_family);
 
         VkCommandPoolCreateInfo pool_info{};
         pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+        pool_info.queueFamilyIndex = UINT32_MAX;
 
         for (int i = 0; i < queue_family.size(); i++) {
             if (queue_family[i].presentation == VK_TRUE) {
@@ -159,6 +209,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
                 break;
             }
         }
+
+        if (pool_info.queueFamilyIndex == UINT32_MAX) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: no presentation queue.");
 
         if (vkCreateCommandPool(device, &pool_info, nullptr, &m_cmd_pool) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateCommandPool failed.");
@@ -177,7 +229,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         alloc_info.commandPool = m_cmd_pool;
         alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc_info.commandBufferCount = 1;
+        alloc_info.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
 
         if (vkAllocateCommandBuffers(device, &alloc_info, m_cmd_buffers.data()) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkAllocateCommandBuffers failed.");
@@ -206,10 +258,10 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         *acquire_next_result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, m_semaphores_available[m_current_frame], VK_NULL_HANDLE, &m_index);
 
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
+        if (*acquire_next_result != VK_SUCCESS && *acquire_next_result != VK_SUBOPTIMAL_KHR && *acquire_next_result != VK_ERROR_OUT_OF_DATE_KHR) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkAcquireNextImageKHR failed unexpectedly.");
+        }
 
-    std::shared_ptr<IIr77Return const> ValidateSwapchain(VkResult* acquire_next_result, VkResult* queue_present_result) {
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
@@ -238,12 +290,42 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_swapchain->GetSwapchainFramebuffers(swapchain_framebuffers);
 
         VkPipeline pipeline_gfx;
-        m_pipeline->GetPipeline(&pipeline_gfx);
+        m_pipeline_gfx->GetPipeline(&pipeline_gfx);
+
+        VkBuffer vertex_buffer;
+        m_buffer_vertex->GetBuffer(&vertex_buffer);
+
+        VkBuffer index_buffer;
+        m_buffer_vertex->GetIndexBuffer(&index_buffer);
+
+        std::uint32_t index_count;
+        m_buffer_vertex->GetIndexCount(index_count);
+
+        VkIndexType index_type;
+        m_buffer_vertex->GetIndexType(index_type);
+
+        VkDescriptorSet ubo_descriptor_set;
+        m_buffer_ubo->GetDescriptorSet(m_current_frame, &ubo_descriptor_set);
+
+        VkPipelineLayout pipeline_layout_ubo;
+        m_layout_ubo->GetPipelineLayout(&pipeline_layout_ubo);
+
+        // new — CEF pipeline + its pipeline layout + this window's descriptor set
+        VkPipeline pipeline_cef = VK_NULL_HANDLE;
+        VkPipelineLayout pipeline_layout_cef = VK_NULL_HANDLE;
+        VkDescriptorSet descriptor_set_cef = VK_NULL_HANDLE;
+        bool has_cef = m_pipeline_cef && m_layout_cef && m_buffer_cef;
+
+        if (has_cef) {
+            m_pipeline_cef->GetPipeline(&pipeline_cef);
+            m_layout_cef->GetPipelineLayout(&pipeline_layout_cef);
+            m_buffer_cef->GetDescriptorSet(&descriptor_set_cef);
+        }
 
         VkCommandBufferBeginInfo begin_info{};
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin_info.flags = 0;                   // Optional
-        begin_info.pInheritanceInfo = nullptr;  // Optional
+        begin_info.flags = 0;
+        begin_info.pInheritanceInfo = nullptr;
 
         if (vkBeginCommandBuffer(cmd_buffer, &begin_info) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkBeginCommandBuffer failed.");
@@ -262,8 +344,6 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         vkCmdBeginRenderPass(cmd_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdBindPipeline(cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_gfx);
-
         VkViewport viewport{};
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -278,7 +358,29 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         scissor.extent = swapchain_extent;
         vkCmdSetScissor(cmd_buffer, 0, 1, &scissor);
 
-        vkCmdDraw(cmd_buffer, 3, 1, 0, 0);
+        vkCmdBindPipeline(cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_gfx);
+
+        VkBuffer vertex_buffers[] = {vertex_buffer};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd_buffer, 0, 1, vertex_buffers, offsets);
+
+        vkCmdBindIndexBuffer(cmd_buffer, index_buffer, 0, index_type);
+
+        vkCmdBindDescriptorSets(cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_ubo, 0, 1, &ubo_descriptor_set, 0, nullptr);
+
+        vkCmdDrawIndexed(cmd_buffer, index_count, 1, 0, 0, 0);
+
+        bool resizing = false;
+        bool ever_uploaded = false;
+        if (has_cef) {
+            m_buffer_cef->IsResizing(resizing);
+            m_buffer_cef->HasEverUploaded(ever_uploaded);
+        }
+        if (has_cef && !resizing && ever_uploaded) {
+            vkCmdBindPipeline(cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_cef);
+            vkCmdBindDescriptorSets(cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_cef, 0, 1, &descriptor_set_cef, 0, nullptr);
+            vkCmdDraw(cmd_buffer, 6, 1, 0, 0);
+        }
 
         vkCmdEndRenderPass(cmd_buffer);
 
@@ -294,29 +396,31 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_device->GetDevice(&device);
 
         std::vector<Ir77PVQueueFamily> queue_families;
-        m_device->GetQueueFamily(queue_families);
+        m_device->GetQueueFamilies(queue_families);
 
-        VkQueue graphics_queue;
+        VkQueue graphics_queue{VK_NULL_HANDLE};
         for (int i = 0; i < queue_families.size(); i++) {
             if (queue_families[i].presentation == true) graphics_queue = queue_families[i].queue;
         }
+        if (!graphics_queue) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77CmdBuffer: no presentation queue.");
 
-        VkSemaphore wait_semaphores[] = {m_semaphores_available[m_current_frame]};
-        VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        std::vector<VkSemaphore> wait_semaphores = {m_semaphores_available[m_current_frame]};
+        std::vector<VkPipelineStageFlags> wait_stages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
         VkSemaphore signal_semaphores[] = {m_semaphores_finished[m_current_frame]};
 
         VkSubmitInfo submit_info{};
         submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.waitSemaphoreCount = 1;
-        submit_info.pWaitSemaphores = wait_semaphores;
-        submit_info.pWaitDstStageMask = wait_stages;
+        submit_info.waitSemaphoreCount = static_cast<uint32_t>(wait_semaphores.size());
+        submit_info.pWaitSemaphores = wait_semaphores.data();
+        submit_info.pWaitDstStageMask = wait_stages.data();
         submit_info.commandBufferCount = 1;
         submit_info.pCommandBuffers = &m_cmd_buffers[m_current_frame];
-        ;
         submit_info.signalSemaphoreCount = 1;
         submit_info.pSignalSemaphores = signal_semaphores;
 
-        if (vkQueueSubmit(graphics_queue, 1, &submit_info, m_fences_in_flight[m_current_frame]) != VK_SUCCESS) {
+        VkResult result = vkQueueSubmit(graphics_queue, 1, &submit_info, m_fences_in_flight[m_current_frame]);
+        if (result != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkQueueSubmit failed.");
         }
 
@@ -328,12 +432,13 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_swapchain->GetSwapchain(&swapchain);
 
         std::vector<Ir77PVQueueFamily> queue_families;
-        m_device->GetQueueFamily(queue_families);
+        m_device->GetQueueFamilies(queue_families);
 
-        VkQueue graphics_queue;
+        VkQueue graphics_queue{VK_NULL_HANDLE};
         for (int i = 0; i < queue_families.size(); i++) {
             if (queue_families[i].presentation == true) graphics_queue = queue_families[i].queue;
         }
+        if (!graphics_queue) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77CmdBuffer: no presentation queue.");
 
         VkSemaphore wait_semaphores[] = {m_semaphores_finished[m_current_frame]};
 
@@ -353,7 +458,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     }
 
    private:
-    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
     std::uint32_t m_index{0};
 
@@ -367,7 +472,19 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     std::shared_ptr<IIr77PVRenderPass> m_render_pass;
 
-    std::shared_ptr<IIr77PVPipeline> m_pipeline;
+    std::shared_ptr<IIr77PVPipeline> m_pipeline_gfx;
+
+    std::shared_ptr<IIr77PVPipeline> m_pipeline_cef;
+
+    std::shared_ptr<Ir77PVBufferVertex> m_buffer_vertex;
+
+    std::shared_ptr<IIr77PVLayout> m_layout_ubo;
+
+    std::shared_ptr<Ir77PVBufferUBO> m_buffer_ubo;
+
+    std::shared_ptr<IIr77PVLayout> m_layout_cef;
+
+    std::shared_ptr<Ir77PVBufferCEF> m_buffer_cef;
 
     std::vector<VkSemaphore> m_semaphores_available;
 

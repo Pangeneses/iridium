@@ -13,23 +13,21 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-enum class Ir77PVQueueType : uint32_t {
-    Unknown = 0,
-    Graphics = 1,
-    Compute = 2,
-    Transfer = 3,
-    Sparse = 4,
-    Protected = 5,
-    Encode = 6,
-    Decode = 7,
-};
+static const std::uint8_t IR77_UNKNOWN__BIT = 0b00000000;
+static const std::uint8_t IR77_GRAPHICS_BIT = 0b00000001;
+static const std::uint8_t IR77_COMPUTE_BIT = 0b00000010;
+static const std::uint8_t IR77_TRANSFER_BIT = 0b00000100;
+static const std::uint8_t IR77_SPARSE_BIT = 0b00001000;
+static const std::uint8_t IR77_PROTECTED_BIT = 0b00010000;
+static const std::uint8_t IR77_ENCODE_BIT = 0b00100000;
+static const std::uint8_t IR77_DECODE_BIT = 0b01000000;
 
 typedef struct Ir77PVQueueFamily {
-    Ir77PVQueueType type{Ir77PVQueueType::Unknown};
+    std::uint8_t type{IR77_UNKNOWN__BIT};
     VkQueueFamilyProperties family_properties;
     VkDeviceQueueCreateInfo create_info;
-    VkBool32 presentation;
-    VkQueue queue;
+    VkBool32 presentation{UINT32_MAX};
+    VkQueue queue{VK_NULL_HANDLE};
 }* pIr77PVQueueFamily;
 
 typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
@@ -57,7 +55,7 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetQueueFamily(std::vector<Ir77PVQueueFamily>& queue_family) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVQueueFamily>& queue_family) = 0;
 
     virtual ~IIr77PVDevice() = default;
 }* pIIr77PVDevice;

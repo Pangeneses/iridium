@@ -38,7 +38,7 @@ typedef struct IIr77PVPipeline : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetShader(std::shared_ptr<IIr77PVShader> shader_stack) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> DefinePipeline() = 0;
+    virtual std::shared_ptr<IIr77Return const> CreatePipeline() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) = 0;
 

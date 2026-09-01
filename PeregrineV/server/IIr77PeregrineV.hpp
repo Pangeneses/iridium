@@ -19,6 +19,8 @@ typedef struct IIr77PeregrineV : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetCurrentDevice(std::uint64_t const& device_id) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> IsResizing(bool& resizing) = 0;
+
     virtual std::shared_ptr<IIr77Return const> CreateInstance() = 0;
 
     virtual std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices(std::map<std::uint64_t, std::shared_ptr<IIr77PVDevice>>& devices) = 0;
@@ -29,6 +31,8 @@ typedef struct IIr77PeregrineV : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> CreateLogicalDevices() = 0;
 
+    virtual std::shared_ptr<IIr77Return const> CreateAllocator() = 0;
+
     virtual std::shared_ptr<IIr77Return const> CreateLayout() = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreateRenderPass() = 0;
@@ -36,6 +40,8 @@ typedef struct IIr77PeregrineV : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> CreateSwapchains() = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreatePipelineGFX() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> CreatePipelineCEF() = 0;
 
     virtual ~IIr77PeregrineV() = default;
 }* pIIr77PeregrineV;

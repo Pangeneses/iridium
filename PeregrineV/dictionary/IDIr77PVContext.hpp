@@ -41,13 +41,7 @@ static const std::uint64_t ID_SWAPCHAIN_008 = 0xE875FE57BC5434AD;
 
 static const std::uint64_t ID_RENDER_PASS = 0xA1D7F3C8B4926E50;
 
-static const std::uint64_t ID_PIPELINE_LAYOUT = 0xF8C3A1D7B4926E50;
-
 static const std::uint64_t ID_COMMAND_BUFFER = 0xD8A4F1C2B7E39510;
-
-static const std::uint64_t ID_BARRIER = 0xF3C8A1D7E492B65F;
-
-static const std::uint64_t ID_SEMAPHORE = 0x8E72C4F1A3D9B650;
 
 // PIPELINES
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -55,17 +49,17 @@ static const std::uint64_t ID_PIPELINE_GFX = 0xB4E7C1A9D238F560;
 
 static const std::uint64_t ID_PIPELINE_COMPUTE = 0xD3A9F7C1E845B602;
 
+//  LAYOUT
+// -----------------------------------------------------------------------------------------------------------------------------------------
+static const std::uint64_t ID_LAYOUT_GFX = 0x68C8C3A0C53A4BDB;
+
+static const std::uint64_t ID_LAYOUT_CEF = 0x35E82CB561C951D2;
+
 // BUFFER
 // -----------------------------------------------------------------------------------------------------------------------------------------
-static const std::uint64_t ID_BUFFER = 0xE4C1A7D3F892B650;
+static const std::uint64_t ID_BUFFER_GFX = 0x4EE431E16D835355;
 
-static const std::uint64_t ID_BUFFER_STAGING = 0xB9F3C8A1D7426E50;
-
-static const std::uint64_t ID_BUFFER_VERTEX = 0xC8A1F3D7E492B650;
-
-static const std::uint64_t ID_BUFFER_INDEX = 0xD7B4C1A9F8236E50;
-
-static const std::uint64_t ID_BUFFER_UNIFORM = 0xF3C8A1D7B4926E50;
+static const std::uint64_t ID_BUFFER_CEF = 0xB9F3C8A1D7426E50;
 
 // COMPUTE
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -77,6 +71,10 @@ static const std::uint64_t ID_SHADER = 0xA9F3C8D7E412B650;
 static const std::uint64_t ID_SHADER_VERT = 0xC4A1D7F3B8926E50;
 
 static const std::uint64_t ID_SHADER_FRAG = 0xD8F3C1A7E492B650;
+
+static const std::uint64_t ID_SHADER_CEF_VERT = 0xC686B5A02D48E95F;
+
+static const std::uint64_t ID_SHADER_CEF_FRAG = 0xDF5D35C992EF1268;
 
 static const std::uint64_t ID_SHADER_COMPUTE = 0xE7C4A9F3D812B650;
 

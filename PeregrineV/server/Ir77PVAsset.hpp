@@ -1,8 +1,11 @@
 #pragma once
 
 #include <SDL3/SDL_video.h>
+
 #include <map>
 #include <memory>
+
+#include "../runtime/Ir77PVTypes.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -14,10 +17,14 @@
 
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
+#include "IDIr77PVContext.hpp"
 #include "IIr77PVAsset.hpp"
 
+#include "IIr77PVShader.hpp"
 #include "Ir77PeregrineV.hpp"
 
+#include "../runtime/Buffer/Ir77PVBufferVertex.hpp"
+#include "../runtime/Buffer/Ir77PVBufferUBO.hpp"
 #include "../runtime/Assets/Ir77PVShader.hpp"
 
 using namespace NSIr77RT;
@@ -83,13 +90,70 @@ class Ir77PVAsset : public Ir77Enlisted, public IIr77PVAsset, public std::enable
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
-    std::shared_ptr<IIr77Return const> CreateShaders() {    
+
+    std::shared_ptr<IIr77Return const> CreateBuffersVertex(const void* vertex_data, VkDeviceSize const& vertex_size_bytes, const void* index_data,
+                                                           VkDeviceSize indices_size_bytes, std::uint32_t index_count, VkIndexType index_type) {
+        std::vector<SDL_Window*> windows = m_context->m_windows.at(m_context->m_current_device);
+
+        if (windows.size() > 8) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: too many windows.");
+
+        std::vector<std::shared_ptr<Ir77PVBufferVertex>> vertex_buffers;
+        for (int i = 0; i < windows.size(); i++) {
+            auto vertex_buffer = std::make_shared<Ir77PVBufferVertex>();
+
+            vertex_buffer->SetDevice(m_context->m_devices.at(m_context->m_current_device));
+
+            vertex_buffer->SetAllocator(m_context->m_allocators.at(m_context->m_current_device));
+
+            vertex_buffer->UploadVertices(vertex_data, vertex_size_bytes);
+
+            vertex_buffer->UploadIndices(index_data, indices_size_bytes, index_count, index_type);
+
+            vertex_buffers.push_back(vertex_buffer);
+        }
+
+        m_context->m_buffer_vertex.emplace(m_context->m_current_device, vertex_buffers);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> CreateBuffersUBO() {
+        std::vector<SDL_Window*> windows = m_context->m_windows.at(m_context->m_current_device);
+
+        if (windows.size() > 8) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: too many windows.");
+
+        std::vector<std::shared_ptr<Ir77PVBufferUBO>> ubo_buffers;
+        for (int i = 0; i < windows.size(); i++) {
+            auto ubo_buffer = std::make_shared<Ir77PVBufferUBO>();
+
+            ubo_buffer->SetDevice(m_context->m_devices.at(m_context->m_current_device));
+
+            ubo_buffer->SetAllocator(m_context->m_allocators.at(m_context->m_current_device));
+
+            ubo_buffer->SetLayoutUBO(m_context->m_layouts_ubo.at(m_context->m_current_device));
+
+            ubo_buffer->CreateResources(sizeof(Ir77PVCameraUBO), 3);
+
+            ubo_buffers.push_back(ubo_buffer);
+        }
+
+        m_context->m_buffer_ubo.emplace(m_context->m_current_device, ubo_buffers);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> CreateShaders() {
         auto shader = std::static_pointer_cast<IIr77PVShader>(std::make_shared<Ir77PVShader>());
 
         shader->SetDevice(m_context->m_devices.at(m_context->m_current_device));
 
-        shader->ReadShader("");
+        shader->LoadShader("/home/alpha/workspace/iridium/Shader/vert.spv", ID_SHADER_VERT, Ir77PVShaderStage::Vertex);
+
+        shader->LoadShader("/home/alpha/workspace/iridium/Shader/frag.spv", ID_SHADER_FRAG, Ir77PVShaderStage::Fragment);
+
+        shader->LoadShader("/home/alpha/workspace/iridium/Shader/cef.vert.spv", ID_SHADER_CEF_VERT, Ir77PVShaderStage::Vertex);
+
+        shader->LoadShader("/home/alpha/workspace/iridium/Shader/cef.frag.spv", ID_SHADER_CEF_FRAG, Ir77PVShaderStage::Fragment);
 
         m_context->m_shaders.emplace(m_context->m_current_device, shader);
 

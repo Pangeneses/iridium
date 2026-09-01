@@ -23,15 +23,13 @@ namespace NSIr77PeregrineV {
 inline Ir77GUID GUIDIIr77PeregrineV{(static_cast<unsigned __int128>(0xA67D31AC1DDF4A7E) << 64) | 0xB628CE2A9641A8A2};
 inline Ir77GUID GUIDIIr77PVPaint{(static_cast<unsigned __int128>(0x3B1F109C15C24A2D) << 64) | 0x8D13DF17E5848FD2};
 inline Ir77GUID GUIDIIr77PVAsset{(static_cast<unsigned __int128>(0x230418A411684215) << 64) | 0xA67EB2411A2FCA48};
+inline Ir77GUID GUIDIIr77PVCEF{(static_cast<unsigned __int128>(0x50C4C87A4D8A41B5) << 64) | 0xA1481E8D50E5DA94};
 
 /**************** GPU Interface ****************/
 inline Ir77GUID GUIDIIr77PVInstance{(static_cast<unsigned __int128>(0xB1136C9B855A803E) << 64) | 0x7A5E662149F03242};
 inline Ir77GUID GUIDIIr77PVDevice{(static_cast<unsigned __int128>(0xE29226960D283AA0) << 64) | 0x55C041024DC6C909};
-inline Ir77GUID GUIDIIr77PVQueue{(static_cast<unsigned __int128>(0x9808C7422F216732) << 64) | 0xF160AB859A9538F8};
 inline Ir77GUID GUIDIIr77PVSwapchain{(static_cast<unsigned __int128>(0x798E5BB1B58EC0BE) << 64) | 0xA69DFA5475A9111A};
 inline Ir77GUID GUIDIIr77PVCmdBuffer{(static_cast<unsigned __int128>(0xF71D19D109D2114D) << 64) | 0x1186ADBD29983077};
-inline Ir77GUID GUIDIIr77PVBarrier{(static_cast<unsigned __int128>(0x82FAAAE6FCCB86EA) << 64) | 0xD84BC19280E07DB5};
-inline Ir77GUID GUIDIIr77PVSemaphore{(static_cast<unsigned __int128>(0x08D2B66138427009) << 64) | 0xD88C8BC038D1DE22};
 
 /**************** Pipeline ****************/
 inline Ir77GUID GUIDIIr77PVPipeline{(static_cast<unsigned __int128>(0xB10BE474EAC70D1A) << 64) | 0xFEFDBF8EA6C37F9D};
@@ -41,10 +39,6 @@ inline Ir77GUID GUIDIIr77PVLayout{(static_cast<unsigned __int128>(0x3748583BB9C8
 
 /**************** Render Pass ****************/
 inline Ir77GUID GUIDIIr77PVRenderPass{(static_cast<unsigned __int128>(0xE66F8BE0C5FC877E) << 64) | 0x880D9BEBB37CD1A7};
-
-/**************** Resource ****************/
-inline Ir77GUID GUIDIIr77PVBuffer{(static_cast<unsigned __int128>(0x4AE3F3A2F0EC509A) << 64) | 0xFF19E0E25672C88D};
-inline Ir77GUID GUIDIIr77PVCompute{(static_cast<unsigned __int128>(0x47856223A51ADF91) << 64) | 0x35D3E7A600D856EA};
 
 /**************** Asset ****************/
 inline Ir77GUID GUIDIIr77PVShader{(static_cast<unsigned __int128>(0xF4D60A74F19932D3) << 64) | 0xBEADFF0A12D9F258};
@@ -124,12 +118,20 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
     std::shared_ptr<IIr77Return const> m_invalidation_condition{nullptr};
 
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},     {"GUIDIIr77PVPaint", &GUIDIIr77PVPaint},         {"GUIDIIr77PVAsset", &GUIDIIr77PVAsset},
-        {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},     {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},       {"GUIDIIr77PVQueue", &GUIDIIr77PVQueue},
-        {"GUIDIIr77PVSwapchain", &GUIDIIr77PVSwapchain},   {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer}, {"GUIDIIr77PVBarrier", &GUIDIIr77PVBarrier},
-        {"GUIDIIr77PVSemaphore", &GUIDIIr77PVSemaphore},   {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},   {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},
-        {"GUIDIIr77PVRenderPass", &GUIDIIr77PVRenderPass}, {"GUIDIIr77PVBuffer", &GUIDIIr77PVBuffer},       {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
-        {"GUIDIIr77PVShader", &GUIDIIr77PVShader},         {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},   {"GUIDIIr77PVMesh", &GUIDIIr77PVMesh},
+        {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},
+        {"GUIDIIr77PVPaint", &GUIDIIr77PVPaint},
+        {"GUIDIIr77PVAsset", &GUIDIIr77PVAsset},
+        {"GUIDIIr77PVCEF", &GUIDIIr77PVCEF},
+        {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},
+        {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},
+        {"GUIDIIr77PVSwapchain", &GUIDIIr77PVSwapchain},
+        {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
+        {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},
+        {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},
+        {"GUIDIIr77PVRenderPass", &GUIDIIr77PVRenderPass},
+        {"GUIDIIr77PVShader", &GUIDIIr77PVShader},
+        {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},
+        {"GUIDIIr77PVMesh", &GUIDIIr77PVMesh},
     };
 };
 

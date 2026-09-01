@@ -7,6 +7,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -34,15 +35,28 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
             throw a;
         }
         m_enlisted = std::chrono::system_clock::now();
+
+        m_capabilities.currentExtent.width = UINT32_MAX;
+        m_capabilities.currentExtent.height = UINT32_MAX;
     }
 
     ~Ir77PVSwapchain() {
         VkDevice device;
         m_device->GetDevice(&device);
 
+        for (int i = 0; i < m_swapchain_framebuffers.size(); i++) {
+            vkDestroyFramebuffer(device, m_swapchain_framebuffers[i], nullptr);
+        }
+
         for (int i = 0; i < m_swapchain_views.size(); i++) {
             vkDestroyImageView(device, m_swapchain_views[i], nullptr);
         }
+
+        vkDestroySwapchainKHR(device, m_swapchain, nullptr);
+
+        VkInstance instance;
+        m_instance->GetInstance(&instance);
+        vkDestroySurfaceKHR(instance, m_surface, nullptr);
     }
 
    public:
@@ -131,7 +145,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
             vkDestroyImageView(device, image_view, nullptr);
         }
 
-        vkDestroySwapchainKHR(device, m_swapchain, nullptr);
+        vkDestroySwapchainKHR(device, m_old_swapchain, nullptr);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -140,22 +154,27 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         VkPhysicalDevice phys_device;
         m_device->GetPhysicalDevice(&phys_device);
 
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_device, m_surface, &m_capabilities);
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_device, m_surface, &m_capabilities) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkGetPhysicalDeviceSurfaceCapabilitiesKHR failed.");
 
         uint32_t format_count;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, m_surface, &format_count, nullptr);
+        if (vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, m_surface, &format_count, nullptr) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkGetPhysicalDeviceSurfaceFormatsKHR failed.");
 
         if (format_count != 0) {
             m_formats.resize(format_count);
-            vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, m_surface, &format_count, m_formats.data());
+            if (vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device, m_surface, &format_count, m_formats.data()) != VK_SUCCESS)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkGetPhysicalDeviceSurfaceFormatsKHR failed.");
         }
 
         uint32_t present_mode_count;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(phys_device, m_surface, &present_mode_count, nullptr);
+        if (vkGetPhysicalDeviceSurfacePresentModesKHR(phys_device, m_surface, &present_mode_count, nullptr) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkGetPhysicalDeviceSurfacePresentModesKHR failed.");
 
         if (present_mode_count != 0) {
             m_present_modes.resize(present_mode_count);
-            vkGetPhysicalDeviceSurfacePresentModesKHR(phys_device, m_surface, &present_mode_count, m_present_modes.data());
+            if (vkGetPhysicalDeviceSurfacePresentModesKHR(phys_device, m_surface, &present_mode_count, m_present_modes.data()) != VK_SUCCESS)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkGetPhysicalDeviceSurfacePresentModesKHR failed.");
         }
 
         if (m_formats.empty() || m_present_modes.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: Swap Chain not supported.");
@@ -206,7 +225,12 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> InitSwapchainInfo() {
+    std::shared_ptr<IIr77Return const> DefineSwapchain() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        m_old_swapchain = m_swapchain;
+
         m_swapchain_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         m_swapchain_info.surface = m_surface;
         m_swapchain_info.minImageCount = m_image_count;
@@ -219,17 +243,14 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         m_swapchain_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         m_swapchain_info.presentMode = m_present_mode;
         m_swapchain_info.clipped = VK_TRUE;
-        m_swapchain_info.oldSwapchain = VK_NULL_HANDLE;
+        if (m_swapchain == VK_NULL_HANDLE) {
+            m_swapchain_info.oldSwapchain = VK_NULL_HANDLE;
+        } else {
+            m_swapchain_info.oldSwapchain = m_swapchain;
+        }
 
         // add VK_SHARING_MODE_CONCURRENT when necessary
         m_swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> DefineSwapchain() {
-        VkDevice device;
-        m_device->GetDevice(&device);
 
         if (vkCreateSwapchainKHR(device, &m_swapchain_info, nullptr, &m_swapchain) != VK_SUCCESS)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkCreateSwapchainKHR failed.");
@@ -242,10 +263,12 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         m_device->GetDevice(&device);
 
         std::uint32_t swapchain_image_count = 0;
-        vkGetSwapchainImagesKHR(device, m_swapchain, &swapchain_image_count, nullptr);
+        if (vkGetSwapchainImagesKHR(device, m_swapchain, &swapchain_image_count, nullptr) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkGetSwapchainImagesKHR failed.");
 
         m_swapchain_images.resize(swapchain_image_count);
-        vkGetSwapchainImagesKHR(device, m_swapchain, &swapchain_image_count, m_swapchain_images.data());
+        if (vkGetSwapchainImagesKHR(device, m_swapchain, &swapchain_image_count, m_swapchain_images.data()) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkGetSwapchainImagesKHR failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -338,8 +361,6 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
     std::shared_ptr<IIr77PVRenderPass> m_render_pass;
 
-    std::uint32_t m_device_index{UINT32_MAX};
-
     SDL_Window* m_window{nullptr};
 
     VkSurfaceKHR m_surface{VK_NULL_HANDLE};
@@ -362,6 +383,8 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
     VkSwapchainKHR m_swapchain{VK_NULL_HANDLE};
 
+    VkSwapchainKHR m_old_swapchain{VK_NULL_HANDLE};
+
     VkImageViewCreateInfo m_image_view_create_info{};
 
     std::uint32_t m_image_count{0};
@@ -371,8 +394,6 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     std::vector<VkImage> m_swapchain_images;
 
     std::vector<VkFramebuffer> m_swapchain_framebuffers;
-
-    std::vector<std::shared_ptr<IIr77Enlisted>> m_pipelines;
 };
 
 }  // namespace NSIr77PeregrineV

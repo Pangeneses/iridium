@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL3/SDL_video.h>
+
 #include <map>
 #include <memory>
 
@@ -101,7 +102,19 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
 
             cmd_buffer->SetRenderPass(m_context->m_render_pass.at(m_context->m_current_device));
 
-            cmd_buffer->SetPipeline(m_context->m_pipelines.at(m_context->m_current_device).at(i));
+            cmd_buffer->SetPipelineGFX(m_context->m_pipelines_gfx.at(m_context->m_current_device).at(i));
+           
+            cmd_buffer->SetBufferVertex(m_context->m_buffer_vertex.at(m_context->m_current_device).at(i));
+
+            cmd_buffer->SetLayoutUBO(m_context->m_layouts_ubo.at(m_context->m_current_device));
+
+            cmd_buffer->SetBufferUBO(m_context->m_buffer_ubo.at(m_context->m_current_device).at(i));
+
+            cmd_buffer->SetPipelineCEF(m_context->m_pipelines_cef.at(m_context->m_current_device).at(i));
+
+            cmd_buffer->SetLayoutCEF(m_context->m_layouts_cef.at(m_context->m_current_device));
+
+            cmd_buffer->SetBufferCEF(m_context->m_buffer_cef.at(m_context->m_current_device).at(i));
 
             cmd_buffer->DefineSyncObjects();
 
@@ -117,71 +130,84 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Command Buffers.");
     }
 
-    std::shared_ptr<IIr77Return const> Next() {
+    std::shared_ptr<IIr77Return const> Draw() {
+        if (m_context->m_resize_in_progress) return Ir77RETURN<Ir77OperationSucceeded>();
+
         std::vector<std::shared_ptr<IIr77PVCmdBuffer>> cmd_buffers = m_context->m_command_buffers.at(m_context->m_current_device);
         for (int i = 0; i < cmd_buffers.size(); i++) {
             cmd_buffers[i]->WaitForFence();
 
-            VkResult vk_result;
-            cmd_buffers[i]->AcquireNextImage(&vk_result);
+            VkResult acquire_result;
+            cmd_buffers[i]->AcquireNextImage(&acquire_result);
 
-            if (vk_result == VK_ERROR_OUT_OF_DATE_KHR || vk_result == VK_SUBOPTIMAL_KHR) {
+            if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
                 ResetSwapchain(i);
-            } else if (vk_result != VK_SUCCESS) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: pipeline corupted.");
+                continue;
+            } else if (acquire_result != VK_SUCCESS) {
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: pipeline corrupted.");
             }
-        }
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Next.");
-    }
-
-    std::shared_ptr<IIr77Return const> ResetSwapchain(std::uint32_t const& index) {
-        std::vector<std::shared_ptr<IIr77PVSwapchain>> swapchains = m_context->m_swapchains.at(m_context->m_current_device);
-
-        swapchains.at(index)->CleanupSwapchain();
-
-        swapchains.at(index)->QuerySwapchainSupport();
-
-        swapchains.at(index)->SwapSurfaceFormat();
-
-        swapchains.at(index)->PresentMode();
-
-        swapchains.at(index)->SurfaceCapabilities();
-
-        swapchains.at(index)->InitSwapchainInfo();
-
-        swapchains.at(index)->DefineSwapchain();
-
-        swapchains.at(index)->InitSwapchainImages();
-
-        swapchains.at(index)->DefineImageView();
-
-        swapchains.at(index)->DefineFramebuffers();
-
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: ValidateSwapchain.");
-    }
-
-    std::shared_ptr<IIr77Return const> Draw() {
-        std::vector<std::shared_ptr<IIr77PVCmdBuffer>> cmd_buffers = m_context->m_command_buffers.at(m_context->m_current_device);
-        for (int i = 0; i < cmd_buffers.size(); i++) {
             cmd_buffers[i]->ResetFence();
-
             cmd_buffers[i]->RecordCommandBuffer();
-
             cmd_buffers[i]->SubmitFrame();
 
-            VkResult vk_result;
-            cmd_buffers[i]->PresentFrame(&vk_result);
+            VkResult present_result;
+            cmd_buffers[i]->PresentFrame(&present_result);
 
-            if (vk_result == VK_ERROR_OUT_OF_DATE_KHR || vk_result == VK_SUBOPTIMAL_KHR) {
+            if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
                 ResetSwapchain(i);
-            } else if (vk_result != VK_SUCCESS) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: pipeline corupted.");
+            } else if (present_result != VK_SUCCESS) {
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: pipeline corrupted.");
             }
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Draw.");
     }
+
+std::shared_ptr<IIr77Return const> ResetSwapchain(std::uint32_t const& index) {
+    m_context->m_resize_in_progress = true;
+
+    m_context->m_buffer_cef.at(m_context->m_current_device).at(index)->SetResizing(true);
+
+    VkDevice device;
+    m_context->m_devices.at(m_context->m_current_device)->GetDevice(&device);
+    vkDeviceWaitIdle(device);
+
+    std::vector<std::shared_ptr<IIr77PVSwapchain>> swapchains = m_context->m_swapchains.at(m_context->m_current_device);
+
+    if (swapchains.at(index)->QuerySwapchainSupport()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: QuerySwapchainSupport failed.");
+
+    if (swapchains.at(index)->SwapSurfaceFormat()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SwapSurfaceFormat failed.");
+
+    if (swapchains.at(index)->PresentMode()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: PresentMode failed.");
+
+    if (swapchains.at(index)->SurfaceCapabilities()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SurfaceCapabilities failed.");
+
+    if (swapchains.at(index)->DefineSwapchain()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineSwapchain failed.");
+
+    if (swapchains.at(index)->CleanupSwapchain()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: CleanupSwapchain failed.");
+
+    if (swapchains.at(index)->InitSwapchainImages()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: InitSwapchainImages failed.");
+
+    if (swapchains.at(index)->DefineImageView()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineImageView failed.");
+
+    if (swapchains.at(index)->DefineFramebuffers()->ID() != &GUIDIr77OperationSucceeded)
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineFramebuffers failed.");
+
+    m_context->m_buffer_cef.at(m_context->m_current_device).at(index)->SetResizing(false);
+
+    m_context->m_resize_in_progress = false;
+
+    return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: ValidateSwapchain.");
+}
 
    private:
     std::shared_ptr<Ir77PeregrineV> m_context{nullptr};

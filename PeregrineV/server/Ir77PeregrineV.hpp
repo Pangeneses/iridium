@@ -1,6 +1,8 @@
 #pragma once
 
+#include <vk_mem_alloc.h>
 #include <SDL3/SDL_video.h>
+
 #include <map>
 #include <memory>
 
@@ -27,9 +29,15 @@
 #include "../runtime/GPU/Ir77PVInstance.hpp"
 #include "../runtime/GPU/Ir77PVDevice.hpp"
 #include "../runtime/GPU/Ir77PVSwapchain.hpp"
-#include "../runtime/Pipeline Layout/Ir77PVLayoutStd.hpp"
+#include "../runtime/Buffer/Ir77PVBufferVertex.hpp"
+#include "../runtime/Pipeline Layout/Ir77PVLayoutUBO.hpp"
+#include "../runtime/Buffer/Ir77PVBufferUBO.hpp"
 #include "../runtime/GPU/Ir77PVRenderPass.hpp"
 #include "../runtime/Pipeline/Ir77PVPipelineGFX.hpp"
+
+#include "../runtime/Pipeline Layout/Ir77PVLayoutCEF.hpp"
+#include "../runtime/Buffer/Ir77PVBufferCEF.hpp"
+#include "../runtime/Pipeline/Ir77PVPipelineCEF.hpp"
 
 using namespace NSIr77RT;
 
@@ -45,6 +53,18 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
         }
 
         m_enlisted = std::chrono::system_clock::now();
+    }
+
+    ~Ir77PeregrineV() {
+        for (auto& [device_id, buffers] : m_buffer_cef) {
+            for (auto& buf : buffers) {
+                std::cerr << "[DEBUG] Ir77PVBufferCEF use_count=" << buf.use_count() << std::endl;
+            }
+        }
+
+        for (auto& [device_id, allocator] : m_allocators) {
+            vmaDestroyAllocator(allocator);
+        }
     }
 
    public:
@@ -91,6 +111,12 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
    public:
     std::shared_ptr<IIr77Return const> SetCurrentDevice(std::uint64_t const& device_id) {
         m_current_device = device_id;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> IsResizing(bool& resizing) {
+        resizing = m_resize_in_progress;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -176,14 +202,44 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Logical Devices.");
     }
 
-    std::shared_ptr<IIr77Return const> CreateLayout() {
-        auto layout = std::static_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayoutStd>());
+    std::shared_ptr<IIr77Return const> CreateAllocator() {
+        VkInstance instance;
+        m_instance->GetInstance(&instance);
 
-        m_pipeline_layouts.emplace(m_current_device, layout);
+        VkPhysicalDevice phys_device;
+        m_devices.at(m_current_device)->GetPhysicalDevice(&phys_device);
+
+        VkDevice device;
+        m_devices.at(m_current_device)->GetDevice(&device);
+
+        VmaAllocatorCreateInfo allocator_info{};
+        allocator_info.instance = instance;
+        allocator_info.physicalDevice = phys_device;
+        allocator_info.device = device;
+        allocator_info.vulkanApiVersion = VK_API_VERSION_1_3;
+
+        VmaAllocator allocator;
+        if (vmaCreateAllocator(&allocator_info, &allocator) != VK_SUCCESS) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vmaCreateAllocator failed.");
+        }
+
+        m_allocators.emplace(m_current_device, allocator);
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Allocator.");
+    }
+
+    std::shared_ptr<IIr77Return const> CreateLayout() {
+        auto layout = std::static_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayoutUBO>());
 
         layout->SetDevice(m_devices.at(m_current_device));
 
+        layout->DefineDescriptorSetLayout();
+
+        layout->DefineDescriptorPool(3);
+
         layout->DefinePipelineLayout();
+
+        m_layouts_ubo.emplace(m_current_device, layout);
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Layout.");
     }
@@ -220,8 +276,6 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
 
             m_swapchains.at(m_current_device).at(i)->SurfaceCapabilities();
 
-            m_swapchains.at(m_current_device).at(i)->InitSwapchainInfo();
-
             m_swapchains.at(m_current_device).at(i)->DefineSwapchain();
 
             m_swapchains.at(m_current_device).at(i)->InitSwapchainImages();
@@ -251,23 +305,55 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
 
             pipeline->SetRenderPass(m_render_pass.at(m_current_device));
 
-            pipeline->SetLayout(m_pipeline_layouts.at(m_current_device));
+            pipeline->SetLayout(m_layouts_ubo.at(m_current_device));
 
             pipeline->SetShader(m_shaders.at(m_current_device));
 
-            pipeline->DefinePipeline();
+            pipeline->CreatePipeline();
 
             pipelines.push_back(pipeline);
         }
 
-        m_pipelines.emplace(m_current_device, pipelines);
+        m_pipelines_gfx.emplace(m_current_device, pipelines);
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create GFX Pipeline.");
+    }
+
+    std::shared_ptr<IIr77Return const> CreatePipelineCEF() {
+        std::vector<SDL_Window*> windows = m_windows.at(m_current_device);
+
+        if (windows.size() > 8) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: too many windows.");
+
+        std::vector<std::shared_ptr<IIr77PVPipeline>> pipelines;
+        for (int i = 0; i < windows.size(); i++) {
+            auto pipeline = std::static_pointer_cast<IIr77PVPipeline>(std::make_shared<Ir77PVPipelineCEF>());
+
+            pipeline->SetInstance(m_instance);
+
+            pipeline->SetDevice(m_devices.at(m_current_device));
+
+            pipeline->SetSwapchain(m_swapchains.at(m_current_device).at(i));
+
+            pipeline->SetRenderPass(m_render_pass.at(m_current_device));
+
+            pipeline->SetLayout(m_layouts_cef.at(m_current_device));
+
+            pipeline->SetShader(m_shaders.at(m_current_device));
+
+            pipeline->CreatePipeline();
+
+            pipelines.push_back(pipeline);
+        }
+
+        m_pipelines_cef.emplace(m_current_device, pipelines);
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create CEF Pipeline.");
     }
 
    private:
     friend class Ir77PVPaint;
     friend class Ir77PVAsset;
+    friend class Ir77PVCEF;
 
     std::uint32_t m_device_count;
 
@@ -279,18 +365,36 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
 
     std::map<std::uint64_t, std::vector<SDL_Window*>> m_windows;
 
-    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVSwapchain>>> m_swapchains;
-
-    std::map<std::uint64_t, std::shared_ptr<IIr77PVLayout>> m_pipeline_layouts;
-
-    std::map<std::uint64_t, std::shared_ptr<IIr77PVRenderPass>> m_render_pass;
-
-    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVPipeline>>> m_pipelines;
+    std::map<std::uint64_t, VmaAllocator> m_allocators;
 
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVCmdBuffer>>> m_command_buffers;
 
     std::map<std::uint64_t, std::shared_ptr<IIr77PVShader>> m_shaders;
 
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77Enlisted>>> m_compute;
+
+    bool m_resize_in_progress{false};
+
+    /*************************** GFX ***********************************/
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVPipeline>>> m_pipelines_gfx;
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<Ir77PVBufferVertex>>> m_buffer_vertex;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVLayout>> m_layouts_ubo;
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<Ir77PVBufferUBO>>> m_buffer_ubo;
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVSwapchain>>> m_swapchains;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVRenderPass>> m_render_pass;
+
+    /*************************** CEF ***********************************/
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVPipeline>>> m_pipelines_cef;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVLayout>> m_layouts_cef;
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<Ir77PVBufferCEF>>> m_buffer_cef;
+
+    /**********************************************************************/
 };
 }  // namespace NSIr77PeregrineV

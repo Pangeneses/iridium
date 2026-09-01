@@ -20,6 +20,11 @@ typedef struct IIr77PVAsset : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetPeregrineV(std::shared_ptr<Ir77PeregrineV>& context) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> CreateBuffersVertex(const void* vertex_data, VkDeviceSize const& vertex_size_bytes, const void* index_data,
+                                                           VkDeviceSize indices_size_bytes, std::uint32_t index_count, VkIndexType index_type) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> CreateBuffersUBO() = 0;
+
     virtual std::shared_ptr<IIr77Return const> CreateShaders() = 0;
 
     virtual ~IIr77PVAsset() = default;

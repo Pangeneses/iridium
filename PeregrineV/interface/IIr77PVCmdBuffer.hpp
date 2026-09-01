@@ -15,10 +15,9 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-enum class Ir77PVCmdBufferLevel : uint32_t {
-    Primary = 0,    // submitted directly to queue
-    Secondary = 1,  // executed from primary via vkCmdExecuteCommands
-};
+struct Ir77PVBufferVertex;
+struct Ir77PVBufferUBO;
+struct Ir77PVBufferCEF;
 
 typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     IIr77PVCmdBuffer() = default;
@@ -31,7 +30,19 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetPipeline(std::shared_ptr<IIr77PVPipeline> pipelines) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetPipelineGFX(std::shared_ptr<IIr77PVPipeline> pipeline_gfx) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetBufferVertex(std::shared_ptr<Ir77PVBufferVertex> buffer_vertex) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetLayoutUBO(std::shared_ptr<IIr77PVLayout> layout_ubo) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetBufferUBO(std::shared_ptr<Ir77PVBufferUBO> buffer_ubo) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetPipelineCEF(std::shared_ptr<IIr77PVPipeline> pipeline_cef) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetLayoutCEF(std::shared_ptr<IIr77PVLayout> layout_cef) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetBufferCEF(std::shared_ptr<Ir77PVBufferCEF> buffer_cef) = 0;
 
     virtual std::shared_ptr<IIr77Return const> DefineSyncObjects() = 0;
 

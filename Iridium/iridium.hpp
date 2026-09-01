@@ -21,6 +21,7 @@
 #include "../PeregrineV/dictionary/IDIr77PVContext.hpp"
 
 #include "../PeregrineV/server/Ir77PeregrineV.hpp"
+#include "../PeregrineV/server/Ir77PVCEF.hpp"
 #include "../PeregrineV/server/Ir77PVPaint.hpp"
 #include "../PeregrineV/server/Ir77PVAsset.hpp"
 
@@ -38,10 +39,17 @@ class iridium {
         m_rt_state = std::make_shared<CEFRTState>();
     }
 
-    // iridium.hpp — InitCEF 
+    bool IsResizing() {
+        bool resizing;
+        m_vulkan->IsResizing(resizing);
+
+        return resizing;
+    }
+
+    // iridium.hpp — InitCEF
     void InitializePipeline(int argc, char* argv[]) {
         //m_rt_state->Initialize(argc, argv);
-        
+
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
 
         if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -66,6 +74,10 @@ class iridium {
 
         m_vulkan = peregrinev;
 
+        m_cef = std::make_shared<Ir77PVCEF>();
+
+        m_cef->SetPeregrineV(peregrinev);
+
         m_paint = std::make_shared<Ir77PVPaint>();
 
         m_paint->SetPeregrineV(peregrinev);
@@ -86,19 +98,32 @@ class iridium {
 
         m_vulkan->CreateLogicalDevices();
 
+        m_vulkan->CreateAllocator();
+
         m_vulkan->CreateLayout();
 
         m_vulkan->CreateRenderPass();
 
         m_vulkan->CreateSwapchains();
 
+        m_cef->CreateLayoutCEF();
+
+        m_cef->CreateBufferCEF();
+
+        m_cef->CreateBufferCEF();
+
+        std::shared_ptr<Ir77PVBufferCEF> cef_buffer;
+        m_cef->GetBufferCEF(0, cef_buffer);
+
+        //m_rt_state->GetRenderHandler()->SetPaintCallback([cef_buffer](const void* buffer, int w, int h) { cef_buffer->UploadFrame(buffer, w, h); });
+
         m_asset->CreateShaders();
 
         m_vulkan->CreatePipelineGFX();
 
-        m_paint->CreateCommandBuffers();
+        m_vulkan->CreatePipelineCEF();
 
-        // m_rt_state->GetRenderHandler()->SetPaintCallback([this](const void* buffer, int w, int h) { m_adapter->Ir77VulkanUploadCEF(buffer, w, h); });
+        m_paint->CreateCommandBuffers();
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
     }
@@ -111,6 +136,12 @@ class iridium {
             switch (event.type) {
                 case SDL_EVENT_QUIT:
                     running = false;
+                    break;
+                case SDL_EVENT_WINDOW_RESIZED:
+                    m_pending_width = event.window.data1;
+                    m_pending_height = event.window.data2;
+                    m_resize_pending = true;
+                    m_last_resize_event = std::chrono::steady_clock::now();
                     break;
                 default:
                     CEFInputEvent(&event, m_rt_state->GetBrowser());
@@ -125,18 +156,14 @@ class iridium {
 
     void VulkanStep() {}
 
-    void VulkanFrameStart() {
-        m_paint->Next();
-
-        m_paint->Draw();
-    }
+    void VulkanFrameStart() { m_paint->Draw(); }
 
     void HUD() {}
 
     void Composition() {}
 
-    void VulkanFrameEnd() { //m_adapter->Ir77VulkanFrame(); 
-        }
+    void VulkanFrameEnd() {  // m_adapter->Ir77VulkanFrame();
+    }
 
     void Shutdown() {
         m_rt_state->DestroyRTState();
@@ -156,6 +183,8 @@ class iridium {
 
     std::shared_ptr<IIr77PeregrineV> m_vulkan;
 
+    std::shared_ptr<IIr77PVCEF> m_cef;
+
     std::shared_ptr<IIr77PVPaint> m_paint;
 
     std::shared_ptr<IIr77PVAsset> m_asset;
@@ -167,6 +196,16 @@ class iridium {
     std::map<std::uint64_t, std::vector<SDL_Window*>> m_windows;
 
     bool running = true;
+
+    bool m_resize_pending{false};
+
+    int m_pending_width{0};
+
+    int m_pending_height{0};
+
+    std::chrono::steady_clock::time_point m_last_resize_event;
+
+    static constexpr int RESIZE_SETTLE_MS = 100;
 };
 
 }  // namespace Ir77

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <functional>
+#include <iostream>
+#include <thread>
+#include <execinfo.h>
 
 #include "include/cef_render_handler.h"
 
@@ -25,7 +28,6 @@ class CEFRenderHandler : public CefRenderHandler {
         if (m_callback) {
             m_callback(buffer, width, height);
         }
-        Ir77RETURN<Ir77OperationSucceeded>(nullptr, "CEF: OnPaint " + std::to_string(width) + "x" + std::to_string(height));
     }
 
     CefRefPtr<CefAccessibilityHandler> GetAccessibilityHandler() override { return nullptr; }

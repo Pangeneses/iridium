@@ -7,8 +7,6 @@
 
 #include <memory>
 
-#include "../runtime/Ir77PVTypes.hpp"
-
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
 #include "../../dictionary/IDIr77PVContext.hpp"
@@ -23,14 +21,15 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
 #include "../../interface/IIr77PVPipeline.hpp"
+#include "IDIr77RET.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public std::enable_shared_from_this<Ir77PVPipelineGFX> {
+class Ir77PVPipelineCEF : public Ir77Enlisted, public IIr77PVPipeline, public std::enable_shared_from_this<Ir77PVPipelineCEF> {
    public:
-    Ir77PVPipelineGFX() {
+    Ir77PVPipelineCEF() {
         try {
             m_enlisted_uuid.Generate();
         } catch (std::invalid_argument a) {
@@ -40,7 +39,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVPipelineGFX() {
+    ~Ir77PVPipelineCEF() {
         VkDevice device;
         m_device->GetDevice(&device);
 
@@ -57,7 +56,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
     }
 
     std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIr77PVPipelineGFX>(uid);
+        seat_shared_uuid<&GUIDIr77PVPipelineCEF>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -79,8 +78,8 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         else if (iid == &GUIDIIr77PVPipeline)
             obj = std::shared_ptr<IIr77PVPipeline>(shared_from_this(), static_cast<IIr77PVPipeline*>(this));
 
-        else if (iid == &GUIDIr77PVPipelineGFX)
-            obj = std::shared_ptr<Ir77PVPipelineGFX>(shared_from_this(), static_cast<Ir77PVPipelineGFX*>(this));
+        else if (iid == &GUIDIr77PVPipelineCEF)
+            obj = std::shared_ptr<Ir77PVPipelineCEF>(shared_from_this(), static_cast<Ir77PVPipelineCEF*>(this));
 
         else
             return &GUIDQueryFailed;
@@ -144,7 +143,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
 
         DefineColorBlendState();
 
-        if (DefinePipeline()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineGFX: DefinePipeline failed.");
+        if(DefinePipeline()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCEF: DefinePipeline failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -167,32 +166,11 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
     }
 
     std::shared_ptr<IIr77Return const> DefineVertexInputState() {
-        m_binding_description.binding = 0;
-        m_binding_description.stride = sizeof(Ir77PVVertex);
-        m_binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        m_attribute_descriptions.resize(3);
-
-        m_attribute_descriptions[0].binding = 0;
-        m_attribute_descriptions[0].location = 0;
-        m_attribute_descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        m_attribute_descriptions[0].offset = offsetof(Ir77PVVertex, position);
-
-        m_attribute_descriptions[1].binding = 0;
-        m_attribute_descriptions[1].location = 1;
-        m_attribute_descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        m_attribute_descriptions[1].offset = offsetof(Ir77PVVertex, normal);
-
-        m_attribute_descriptions[2].binding = 0;
-        m_attribute_descriptions[2].location = 2;
-        m_attribute_descriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-        m_attribute_descriptions[2].offset = offsetof(Ir77PVVertex, uv);
-
         m_vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        m_vertex_input_info.vertexBindingDescriptionCount = 1;
-        m_vertex_input_info.pVertexBindingDescriptions = &m_binding_description;
-        m_vertex_input_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(m_attribute_descriptions.size());
-        m_vertex_input_info.pVertexAttributeDescriptions = m_attribute_descriptions.data();
+        m_vertex_input_info.vertexBindingDescriptionCount = 0;
+        m_vertex_input_info.pVertexBindingDescriptions = nullptr;
+        m_vertex_input_info.vertexAttributeDescriptionCount = 0;
+        m_vertex_input_info.pVertexAttributeDescriptions = nullptr;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -297,7 +275,7 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
         m_render_pass->GetRenderPass(&render_pass);
 
         std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
-        m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_VERT, ID_SHADER_FRAG});
+        m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_CEF_VERT, ID_SHADER_CEF_FRAG});
 
         m_pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         m_pipeline_info.stageCount = shader_stages.size();
@@ -337,10 +315,6 @@ class Ir77PVPipelineGFX : public Ir77Enlisted, public IIr77PVPipeline, public st
     std::shared_ptr<IIr77PVShader> m_shader_stack;
 
     std::vector<VkDynamicState> m_dynamic_states{};
-
-    VkVertexInputBindingDescription m_binding_description{}; 
-    
-    std::vector<VkVertexInputAttributeDescription> m_attribute_descriptions;
 
     VkPipelineDynamicStateCreateInfo m_dynamic_state_info{};
 

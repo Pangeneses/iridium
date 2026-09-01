@@ -18,10 +18,20 @@ typedef struct IIr77PVLayout : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> DefineDescriptorSetLayout() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> DefineDescriptorPool(std::uint32_t const& max_count) = 0;
+
     virtual std::shared_ptr<IIr77Return const> DefinePipelineLayout() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> AllocateSet(VkDescriptorSet* set) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetDescriptorSetLayout(VkDescriptorSetLayout* layout) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetDescriptorPool(VkDescriptorPool* pool) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipelineLayout(VkPipelineLayout* pipeline_layout) = 0;
 
     virtual ~IIr77PVLayout() = default;
-}* pIIr77PVDescriptorSet;
+}* pIIr77PVLayout;
 }  // namespace NSIr77PeregrineV

@@ -39,6 +39,15 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         m_enlisted = std::chrono::system_clock::now();
     }
 
+    ~Ir77PVShader() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+        vkDeviceWaitIdle(device);
+        for (auto& [id, info] : m_shader_infos) {
+            vkDestroyShaderModule(device, info.stage_create_info.module, nullptr);
+        }
+    }
+
    public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
@@ -84,53 +93,33 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> ReadShader(std::string const& filename) {
-        std::ifstream vert("/home/alpha/workspace/iridium/Shader/vert.spv", std::ios::ate | std::ios::binary);
+    std::shared_ptr<IIr77Return const> LoadShader(std::string const& filename, std::uint64_t const& shader_id, Ir77PVShaderStage shader_stage) {
+        std::ifstream shader_file(filename, std::ios::ate | std::ios::binary);
 
-        if (!vert.is_open()) {
+        if (!shader_file.is_open()) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Enlisted has been invalidated.");
         }
 
-        size_t vert_file_size = (size_t)vert.tellg();
-        std::vector<char> vert_buffer(vert_file_size);
+        size_t shader_file_size = (size_t)shader_file.tellg();
+        std::vector<char> shader_buffer(shader_file_size);
 
-        vert.seekg(0);
-        vert.read(vert_buffer.data(), vert_file_size);
+        shader_file.seekg(0);
+        shader_file.read(shader_buffer.data(), shader_file_size);
 
-        vert.close();
+        shader_file.close();
 
-        Ir77PVShaderInfo vert_info;
-        vert_info.size = vert_file_size;
-        vert_info.byte_code = vert_buffer;
-        vert_info.stage = Ir77PVShaderStage::Vertex;
+        Ir77PVShaderInfo shader_info;
+        shader_info.size = shader_file_size;
+        shader_info.byte_code = shader_buffer;
+        shader_info.stage = shader_stage;
 
-        AddShader(vert_info, ID_SHADER_VERT);
-
-        std::ifstream frag("/home/alpha/workspace/iridium/Shader/frag.spv", std::ios::ate | std::ios::binary);
-
-        if (!frag.is_open()) {
-            throw std::runtime_error("failed to open file!");
-        }
-
-        size_t frag_file_size = (size_t)frag.tellg();
-        std::vector<char> frag_buffer(frag_file_size);
-
-        frag.seekg(0);
-        frag.read(frag_buffer.data(), frag_file_size);
-
-        frag.close();
-
-        Ir77PVShaderInfo frag_info;
-        frag_info.size = frag_file_size;
-        frag_info.byte_code = frag_buffer;
-        frag_info.stage = Ir77PVShaderStage::Fragment;
-
-        AddShader(frag_info, ID_SHADER_FRAG);
+        AddShader(shader_info, shader_id, shader_stage);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> AddShader(Ir77PVShaderInfo& info, std::uint64_t const& id) {
+   private:
+    std::shared_ptr<IIr77Return const> AddShader(Ir77PVShaderInfo& info, std::uint64_t const& shader_id, Ir77PVShaderStage shader_stage) {
         VkDevice device;
         m_device->GetDevice(&device);
 
@@ -144,10 +133,52 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         }
 
         info.stage_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        info.stage_create_info.stage = (info.stage == Ir77PVShaderStage::Vertex) ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        switch (info.stage) {
+            case Ir77PVShaderStage::Vertex:
+                info.stage_create_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+                break;
+            case Ir77PVShaderStage::Fragment:
+                info.stage_create_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+                break;
+            case Ir77PVShaderStage::Compute:
+                info.stage_create_info.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+                break;
+            case Ir77PVShaderStage::Geometry:
+                info.stage_create_info.stage = VK_SHADER_STAGE_GEOMETRY_BIT;
+                break;
+            case Ir77PVShaderStage::TessellationControl:
+                info.stage_create_info.stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+                break;
+            case Ir77PVShaderStage::TessellationEvaluation:
+                info.stage_create_info.stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+                break;
+            case Ir77PVShaderStage::Mesh:
+                info.stage_create_info.stage = VK_SHADER_STAGE_MESH_BIT_EXT;
+                break;
+            case Ir77PVShaderStage::Task:
+                info.stage_create_info.stage = VK_SHADER_STAGE_TASK_BIT_EXT;
+                break;
+            case Ir77PVShaderStage::RayGeneration:
+                info.stage_create_info.stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+                break;
+            case Ir77PVShaderStage::RayMiss:
+                info.stage_create_info.stage = VK_SHADER_STAGE_MISS_BIT_KHR;
+                break;
+            case Ir77PVShaderStage::RayClosestHit:
+                info.stage_create_info.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+                break;
+            case Ir77PVShaderStage::RayAnyHit:
+                info.stage_create_info.stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+                break;
+            case Ir77PVShaderStage::RayIntersection:
+                info.stage_create_info.stage = VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+                break;
+        }
+
         info.stage_create_info.pName = "main";
 
-        m_shader_infos.emplace(id, info);
+        m_shader_infos.emplace(shader_id, info);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

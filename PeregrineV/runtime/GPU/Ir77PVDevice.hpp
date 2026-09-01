@@ -139,19 +139,18 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         for (uint32_t i = 0; i < queue_family_count; ++i) {
             m_queue_families[i].family_properties = fp.at(i);
 
-            // change to bit mask not enum
-            if (fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) m_queue_families[i].type = Ir77PVQueueType::Graphics;
-            if (fp[i].queueFlags & VK_QUEUE_COMPUTE_BIT) m_queue_families[i].type = Ir77PVQueueType::Compute;
-            if (fp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) m_queue_families[i].type = Ir77PVQueueType::Transfer;
-            if (fp[i].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) m_queue_families[i].type = Ir77PVQueueType::Sparse;
-            if (fp[i].queueFlags & VK_QUEUE_PROTECTED_BIT) m_queue_families[i].type = Ir77PVQueueType::Protected;
-            if (fp[i].queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) m_queue_families[i].type = Ir77PVQueueType::Decode;
-            if (fp[i].queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) m_queue_families[i].type = Ir77PVQueueType::Encode;
+            if (fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) m_queue_families[i].type = IR77_GRAPHICS_BIT | m_queue_families[i].type;
+            if (fp[i].queueFlags & VK_QUEUE_COMPUTE_BIT) m_queue_families[i].type = IR77_COMPUTE_BIT | m_queue_families[i].type;
+            if (fp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) m_queue_families[i].type = IR77_TRANSFER_BIT | m_queue_families[i].type;
+            if (fp[i].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) m_queue_families[i].type = IR77_SPARSE_BIT | m_queue_families[i].type;
+            if (fp[i].queueFlags & VK_QUEUE_PROTECTED_BIT) m_queue_families[i].type = IR77_PROTECTED_BIT | m_queue_families[i].type;
+            if (fp[i].queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) m_queue_families[i].type = IR77_DECODE_BIT | m_queue_families[i].type;
+            if (fp[i].queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) m_queue_families[i].type = IR77_ENCODE_BIT | m_queue_families[i].type;
 
             VkBool32 present_support = VK_FALSE;
             vkGetPhysicalDeviceSurfaceSupportKHR(m_phys_device, i, surface, &present_support);
 
-            if ((fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present_support == VK_TRUE) {
+            if (((m_queue_families[i].type & IR77_GRAPHICS_BIT) == IR77_GRAPHICS_BIT) && present_support == VK_TRUE) {
                 m_queue_families[i].presentation = VK_TRUE;
             } else {
                 m_queue_families[i].presentation = VK_FALSE;
@@ -255,7 +254,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetQueueFamily(std::vector<Ir77PVQueueFamily>& queue_family) {
+    std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVQueueFamily>& queue_family) {
         queue_family = m_queue_families;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -277,7 +276,6 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     std::vector<VkDeviceQueueCreateInfo> m_create_info;
 
     VkDevice m_device{VK_NULL_HANDLE};
-    ;
 
     std::vector<VkExtensionProperties> m_available_extensions;
 
