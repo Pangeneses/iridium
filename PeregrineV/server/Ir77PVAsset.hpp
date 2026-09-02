@@ -91,8 +91,7 @@ class Ir77PVAsset : public Ir77Enlisted, public IIr77PVAsset, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateBuffersVertex(const void* vertex_data, VkDeviceSize const& vertex_size_bytes, const void* index_data,
-                                                           VkDeviceSize indices_size_bytes, std::uint32_t index_count, VkIndexType index_type) {
+    std::shared_ptr<IIr77Return const> UploadVertexBuffer(std::vector<Ir77PVInputBuffer> buffers) {
         std::vector<SDL_Window*> windows = m_context->m_windows.at(m_context->m_current_device);
 
         if (windows.size() > 8) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: too many windows.");
@@ -105,14 +104,25 @@ class Ir77PVAsset : public Ir77Enlisted, public IIr77PVAsset, public std::enable
 
             vertex_buffer->SetAllocator(m_context->m_allocators.at(m_context->m_current_device));
 
-            vertex_buffer->UploadVertices(vertex_data, vertex_size_bytes);
+            vertex_buffer->UploadVertices(buffers.at(i).vertex_data.data(), static_cast<VkDeviceSize>(buffers.at(i).vertex_data.size() * sizeof(Ir77PVVertex)));
 
-            vertex_buffer->UploadIndices(index_data, indices_size_bytes, index_count, index_type);
+            vertex_buffer->UploadIndices(buffers.at(i).index_data.data(), static_cast<VkDeviceSize>(buffers.at(i).index_data.size() * sizeof(std::uint32_t)),
+                                         buffers.at(i).index_data.size(), VK_INDEX_TYPE_UINT32);
 
             vertex_buffers.push_back(vertex_buffer);
         }
 
         m_context->m_buffer_vertex.emplace(m_context->m_current_device, vertex_buffers);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> UpdateBuffersUBO(std::vector<void*> data, std::vector<VkDeviceSize> size) {
+        for (int i = 0; i < m_context->m_buffer_ubo.at(m_context->m_current_device).size(); i++) {
+            uint32_t frame_index = m_context->m_current_frames.at(m_context->m_current_device).at(i);
+
+            m_context->m_buffer_ubo.at(m_context->m_current_device).at(i)->UpdateUBO(frame_index, data.at(i), size.at(i));
+        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -132,7 +142,7 @@ class Ir77PVAsset : public Ir77Enlisted, public IIr77PVAsset, public std::enable
 
             ubo_buffer->SetLayoutUBO(m_context->m_layouts_ubo.at(m_context->m_current_device));
 
-            ubo_buffer->CreateResources(sizeof(Ir77PVCameraUBO), 3);
+            ubo_buffer->CreateResources(sizeof(Ir77PVCameraUBO), MAX_FRAMES_IN_FLIGHT);
 
             ubo_buffers.push_back(ubo_buffer);
         }

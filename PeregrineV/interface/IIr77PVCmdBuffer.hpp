@@ -22,6 +22,8 @@ struct Ir77PVBufferCEF;
 typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     IIr77PVCmdBuffer() = default;
 
+    virtual std::shared_ptr<IIr77Return const> SetCurrentFrame(std::uint32_t const& current_frame) = 0;
+
     virtual std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;

@@ -33,7 +33,7 @@ typedef struct IIr77PeregrineV : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> CreateAllocator() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> CreateLayout() = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateLayoutUBO() = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreateRenderPass() = 0;
 

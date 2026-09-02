@@ -7,6 +7,8 @@
 
 #include <vector>
 
+#include "../Ir77PVTypes.hpp"
+
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
 #include "../../dictionary/IDIIr77PeregrineV.hpp"
@@ -98,6 +100,12 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     }
 
    public:
+   std::shared_ptr<IIr77Return const> SetCurrentFrame(std::uint32_t const& current_frame) {
+        m_current_frame = current_frame;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+   }
+
     std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) {
         m_instance = instance;
 
@@ -452,14 +460,10 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         *queue_present_result = vkQueuePresentKHR(graphics_queue, &present_info);
 
-        m_current_frame = (m_current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
-
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
-    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
-
     std::uint32_t m_index{0};
 
     std::uint32_t m_current_frame{0};

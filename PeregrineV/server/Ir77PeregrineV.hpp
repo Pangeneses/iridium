@@ -38,6 +38,7 @@
 #include "../runtime/Pipeline Layout/Ir77PVLayoutCEF.hpp"
 #include "../runtime/Buffer/Ir77PVBufferCEF.hpp"
 #include "../runtime/Pipeline/Ir77PVPipelineCEF.hpp"
+#include "Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
@@ -228,14 +229,14 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Allocator.");
     }
 
-    std::shared_ptr<IIr77Return const> CreateLayout() {
+    std::shared_ptr<IIr77Return const> CreateLayoutUBO() {
         auto layout = std::static_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayoutUBO>());
 
         layout->SetDevice(m_devices.at(m_current_device));
 
         layout->DefineDescriptorSetLayout();
 
-        layout->DefineDescriptorPool(3);
+        layout->DefineDescriptorPool(MAX_FRAMES_IN_FLIGHT);
 
         layout->DefinePipelineLayout();
 
@@ -265,7 +266,12 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
     }
 
     std::shared_ptr<IIr77Return const> CreateSwapchains() {
+        std::vector<std::uint32_t> frames;
+        frames.resize(m_swapchains.at(m_current_device).size());
+
         for (int i = 0; i < m_swapchains.at(m_current_device).size(); i++) {
+            frames.at(i) = 0;
+
             m_swapchains.at(m_current_device).at(i)->SetRenderPass(m_render_pass.at(m_current_device));
 
             m_swapchains.at(m_current_device).at(i)->QuerySwapchainSupport();
@@ -284,6 +290,8 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
 
             m_swapchains.at(m_current_device).at(i)->DefineFramebuffers();
         }
+
+        m_current_frames.emplace(m_current_device, frames);
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Swapchains.");
     }
@@ -355,9 +363,11 @@ class Ir77PeregrineV : public Ir77Enlisted, public IIr77PeregrineV, public std::
     friend class Ir77PVAsset;
     friend class Ir77PVCEF;
 
-    std::uint32_t m_device_count;
+    std::uint32_t m_device_count{0};
 
-    std::uint64_t m_current_device;
+    std::uint64_t m_current_device{0};
+
+    std::map<std::uint64_t, std::vector<std::uint32_t>> m_current_frames;
 
     std::shared_ptr<IIr77PVInstance> m_instance;
 

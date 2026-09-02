@@ -26,6 +26,7 @@
 #include "../PeregrineV/server/Ir77PVAsset.hpp"
 
 #include "../PeregrineV/interface/IIr77PVDevice.hpp"
+#include "Ir77PVTypes.hpp"
 
 using namespace CEF;
 using namespace NSIr77PeregrineV;
@@ -46,9 +47,41 @@ class iridium {
         return resizing;
     }
 
+    Ir77PVInputBuffer BuildTestTriangle() {
+        Ir77PVInputBuffer buffer{};
+
+        buffer.vertex_data = {
+            {{0.0f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 0.0f}},
+            {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+            {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        };
+
+        static std::vector<std::uint32_t> indices = {2, 1, 0};
+
+        return buffer;
+    }
+
+    Ir77PVCameraUBO BuildTestCamera(std::uint32_t width, std::uint32_t height) {
+        Ir77PVCameraUBO camera{};
+
+        float aspect = static_cast<float>(width) / static_cast<float>(height);
+
+        camera.projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        camera.projection[1][1] *= -1.0f; 
+
+        camera.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f),
+                                  glm::vec3(0.0f, 0.0f, 0.0f),
+                                  glm::vec3(0.0f, 1.0f, 0.0f)
+        );
+
+        camera.model = glm::mat4(1.0f);  // identity — no transform for this single test object
+
+        return camera;
+    }
+
     // iridium.hpp — InitCEF
     void InitializePipeline(int argc, char* argv[]) {
-        //m_rt_state->Initialize(argc, argv);
+        // m_rt_state->Initialize(argc, argv);
 
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
 
@@ -100,7 +133,13 @@ class iridium {
 
         m_vulkan->CreateAllocator();
 
-        m_vulkan->CreateLayout();
+        std::vector<Ir77PVInputBuffer> buffers{BuildTestTriangle()};
+
+        m_asset->UploadVertexBuffer(buffers);
+
+        m_vulkan->CreateLayoutUBO();
+
+        m_asset->CreateBuffersUBO();
 
         m_vulkan->CreateRenderPass();
 
@@ -110,12 +149,10 @@ class iridium {
 
         m_cef->CreateBufferCEF();
 
-        m_cef->CreateBufferCEF();
-
         std::shared_ptr<Ir77PVBufferCEF> cef_buffer;
         m_cef->GetBufferCEF(0, cef_buffer);
 
-        //m_rt_state->GetRenderHandler()->SetPaintCallback([cef_buffer](const void* buffer, int w, int h) { cef_buffer->UploadFrame(buffer, w, h); });
+        // m_rt_state->GetRenderHandler()->SetPaintCallback([cef_buffer](const void* buffer, int w, int h) { cef_buffer->UploadFrame(buffer, w, h); });
 
         m_asset->CreateShaders();
 
@@ -140,8 +177,6 @@ class iridium {
                 case SDL_EVENT_WINDOW_RESIZED:
                     m_pending_width = event.window.data1;
                     m_pending_height = event.window.data2;
-                    m_resize_pending = true;
-                    m_last_resize_event = std::chrono::steady_clock::now();
                     break;
                 default:
                     CEFInputEvent(&event, m_rt_state->GetBrowser());
@@ -156,7 +191,12 @@ class iridium {
 
     void VulkanStep() {}
 
-    void VulkanFrameStart() { m_paint->Draw(); }
+    void VulkanFrameStart() {
+        auto camera_data = BuildTestCamera(m_pending_width, m_pending_height);
+        m_asset->UpdateBuffersUBO({&camera_data}, {sizeof(camera_data)});
+
+        m_paint->Draw();
+    }
 
     void HUD() {}
 
@@ -197,11 +237,9 @@ class iridium {
 
     bool running = true;
 
-    bool m_resize_pending{false};
+    int m_pending_width{1280};
 
-    int m_pending_width{0};
-
-    int m_pending_height{0};
+    int m_pending_height{720};
 
     std::chrono::steady_clock::time_point m_last_resize_event;
 
