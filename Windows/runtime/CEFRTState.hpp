@@ -53,6 +53,8 @@ class CEFRTState {
 
         m_app = new CEFApp();
 
+        std::filesystem::remove_all("/tmp/iridium_cef_cache");
+
         {
             int fd = ::open("/tmp/Ir77RetLog.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
             const char* msg = "[raw] main started\n";
@@ -86,7 +88,9 @@ class CEFRTState {
         CefBrowserSettings browser_settings{};
         browser_settings.windowless_frame_rate = 60;
 
-        m_browser = CefBrowserHost::CreateBrowserSync(window_info, new CEFClient(m_render_handler), "https://google.com", browser_settings, nullptr, nullptr);
+        //"https://google.com", 
+        // 
+        m_browser = CefBrowserHost::CreateBrowserSync(window_info, new CEFClient(m_render_handler), "http://localhost:50003/landing",browser_settings, nullptr, nullptr);
 
         if (!m_browser) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CreateBrowserSync failed");

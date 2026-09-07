@@ -56,23 +56,20 @@ class iridium {
             {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
         };
 
-        static std::vector<std::uint32_t> indices = {2, 1, 0};
+        buffer.index_data = {2, 1, 0};
 
         return buffer;
     }
 
-    Ir77PVCameraUBO BuildTestCamera(std::uint32_t width, std::uint32_t height) {
-        Ir77PVCameraUBO camera{};
+    Ir77PVCamera BuildTestCamera(std::uint32_t width, std::uint32_t height) {
+        Ir77PVCamera camera{};
 
         float aspect = static_cast<float>(width) / static_cast<float>(height);
 
         camera.projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-        camera.projection[1][1] *= -1.0f; 
+        camera.projection[1][1] *= -1.0f;
 
-        camera.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f),
-                                  glm::vec3(0.0f, 0.0f, 0.0f),
-                                  glm::vec3(0.0f, 1.0f, 0.0f)
-        );
+        camera.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
         camera.model = glm::mat4(1.0f);  // identity — no transform for this single test object
 
@@ -81,7 +78,7 @@ class iridium {
 
     // iridium.hpp — InitCEF
     void InitializePipeline(int argc, char* argv[]) {
-        // m_rt_state->Initialize(argc, argv);
+        m_rt_state->Initialize(argc, argv);
 
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
 
@@ -152,7 +149,7 @@ class iridium {
         std::shared_ptr<Ir77PVBufferCEF> cef_buffer;
         m_cef->GetBufferCEF(0, cef_buffer);
 
-        // m_rt_state->GetRenderHandler()->SetPaintCallback([cef_buffer](const void* buffer, int w, int h) { cef_buffer->UploadFrame(buffer, w, h); });
+        m_rt_state->GetRenderHandler()->SetPaintCallback([cef_buffer](const void* buffer, int w, int h) { cef_buffer->UploadFrame(buffer, w, h); });
 
         m_asset->CreateShaders();
 

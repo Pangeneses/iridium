@@ -6,8 +6,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 file(GLOB_RECURSE Ir77_SOURCES
     "*.cpp"
-    "Vulkan/*.cpp"
-    "CEF/*.cpp"
 )
 
 add_executable(Ir77 ${Ir77_SOURCES})
@@ -25,11 +23,8 @@ target_compile_options(Ir77 PRIVATE
 
 target_include_directories(Ir77 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/CEF
-    ${CMAKE_SOURCE_DIR}/PeregrineV
 )
 
-# Vulkan — explicit find_package ensures system Vulkan, not CEF's
 find_package(Vulkan REQUIRED)
 target_link_libraries(Ir77 PRIVATE Vulkan::Vulkan)
 
@@ -67,4 +62,6 @@ target_link_libraries(Ir77 PRIVATE
     Ir77RT
     -Wl,--no-whole-archive
     PeregrineV
+    -Wl,--no-whole-archive
+    Windows
 )

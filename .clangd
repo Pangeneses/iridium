@@ -1,4 +1,26 @@
 CompileFlags:
   Add:
-    - "-std=c++20"
-    - "-fmodules"
+    - -std=c++20
+    - -fmodules
+---
+If:
+  PathMatch: "Windows/.*\\.(hpp|h)"
+CompileFlags:
+  Add:
+    - -I/home/alpha/workspace/cef
+    - -I/home/alpha/workspace/cef/include
+---
+If:
+  PathMatch: ".*PeregrineV/.*\\.(hpp|h)"
+CompileFlags:
+  Add:
+    - -I/home/alpha/workspace/iridium/build/_deps/vma-src/include
+    - -I/home/alpha/workspace/iridium/build/_deps/glm-src
+---
+If:
+  PathMatch: ".*Scene/.*\\.(hpp|h)"
+CompileFlags:
+  Add:
+    - -I/home/alpha/workspace/iridium/build/_deps/vma-src/include
+    - -I/home/alpha/workspace/iridium/build/_deps/glm-src
+    - -I/home/alpha/workspace/iridium/build/_deps/fastgltf-src/include

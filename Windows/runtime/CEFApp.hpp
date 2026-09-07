@@ -20,6 +20,7 @@ class CEFApp : public CefApp {
         // command_line->AppendSwitch("disable-dev-shm-usage");
         // command_line->AppendSwitchWithValue("disable-features", "Vulkan");
         command_line->AppendSwitchWithValue("ozone-platform", "headless");
+        command_line->AppendSwitch("disable-crash-reporter");
     }
 
     void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {}

@@ -5,16 +5,19 @@ project(Ir77RT LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_library(Ir77RT STATIC
-    service/Ir77RTService.cpp
+file(GLOB_RECURSE Ir77RT_SOURCES
+    "*.cpp"
 )
+
+add_library(Ir77RT STATIC ${Ir77RT_SOURCES})
 
 target_include_directories(Ir77RT
     PUBLIC
-        dictionary
-        interface
-        runtime
-        service
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/dictionary
+    ${CMAKE_CURRENT_SOURCE_DIR}/interface
+    ${CMAKE_CURRENT_SOURCE_DIR}/runtime
+    ${CMAKE_CURRENT_SOURCE_DIR}/server
 )
 
 target_compile_features(Ir77RT PRIVATE cxx_std_20)

@@ -23,7 +23,7 @@ target_include_directories(Windows PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/interface
     ${CMAKE_CURRENT_SOURCE_DIR}/operation
     ${CMAKE_CURRENT_SOURCE_DIR}/runtime
-    ${CMAKE_CURRENT_SOURCE_DIR}/service
+    ${CMAKE_CURRENT_SOURCE_DIR}/server
 )
 
 # SDL3
@@ -44,6 +44,6 @@ target_include_directories(Windows PUBLIC
     ${CMAKE_SOURCE_DIR}/Ir77RT/interface
     ${CMAKE_SOURCE_DIR}/Ir77RT/runtime
     ${CMAKE_SOURCE_DIR}/Ir77RT/dictionary
-    ${CMAKE_SOURCE_DIR}/Ir77RT/service
+    ${CMAKE_SOURCE_DIR}/Ir77RT/server
 )
 target_link_libraries(Windows PUBLIC Ir77RT)

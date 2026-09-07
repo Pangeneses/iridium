@@ -13,19 +13,32 @@ namespace NSIr77PeregrineV {
 static constexpr std::uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
 struct Ir77PVVertex {
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec2 uv;
+    glm::vec3 position{};
+    glm::vec3 normal{};
+    glm::vec2 uv{};
 };
 
-struct Ir77PVCameraUBO {
-    alignas(16) glm::mat4 projection;
-    alignas(16) glm::mat4 view;
-    alignas(16) glm::mat4 model;
+struct Ir77PVCamera {
+    alignas(16) glm::mat4 projection{};
+    alignas(16) glm::mat4 view{};
+    alignas(16) glm::mat4 model{};
+};
+
+struct Ir77PVLight {
+    glm::vec3 position{};
+    float _pad0{};
+    glm::vec3 direction{};
+    float _pad1{};
+    glm::vec3 color{};
+    float intensity{};
+    float range{};
+    float innerConeAngle{};
+    float outerConeAngle{};
+    int type{};
 };
 
 typedef struct Ir77PVInputBuffer {
-    std::vector<Ir77PVVertex> vertex_data; 
+    std::vector<Ir77PVVertex> vertex_data;
     std::vector<std::uint32_t> index_data;
 }* pIr77PVInputBuffer;
 

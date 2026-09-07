@@ -13,6 +13,21 @@
 
 #include "../Ir77RT/runtime/Ir77Return.hpp"
 
+/******************************************************************************/
+#include <execinfo.h>
+#include <csignal>
+#include <cstdlib>
+#include <unistd.h>
+
+void crash_handler(int sig) {
+    void* array[32];
+    int size = backtrace(array, 32);
+    backtrace_symbols_fd(array, size, STDERR_FILENO);
+    exit(1);
+}
+/**********************************************************************************/
+
+
 struct IridiumArgs {
     std::string url{};
     std::string config{};
@@ -40,6 +55,8 @@ static IridiumArgs ParseArgs(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
+    signal(SIGSEGV, crash_handler);
+    
     Ir77::iridium iridium{};
 
     Ir77RetLog::Clear();

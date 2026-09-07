@@ -1,0 +1,25 @@
+#pragma once
+#include <vulkan/vulkan.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <fastgltf/core.hpp>
+
+#include "../../Ir77RT/interface/IIr77Enlisted.hpp"
+#include "../../Ir77RT/interface/IIr77Return.hpp"
+
+using namespace NSIr77RT;
+
+namespace NSIr77Scene {
+
+typedef struct IIr77Animation : virtual public IIr77Enlisted {
+    IIr77Animation() = default;
+
+    virtual std::shared_ptr<IIr77Return const> LoadAnimationsFromAsset(fastgltf::Asset const& animations) = 0;
+
+    virtual ~IIr77Animation() = default;
+}* pIIr77Animation;
+}  // namespace NSIr77Scene

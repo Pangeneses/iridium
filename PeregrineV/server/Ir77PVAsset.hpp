@@ -142,7 +142,7 @@ class Ir77PVAsset : public Ir77Enlisted, public IIr77PVAsset, public std::enable
 
             ubo_buffer->SetLayoutUBO(m_context->m_layouts_ubo.at(m_context->m_current_device));
 
-            ubo_buffer->CreateResources(sizeof(Ir77PVCameraUBO), MAX_FRAMES_IN_FLIGHT);
+            ubo_buffer->CreateResources(sizeof(Ir77PVCamera), MAX_FRAMES_IN_FLIGHT);
 
             ubo_buffers.push_back(ubo_buffer);
         }
