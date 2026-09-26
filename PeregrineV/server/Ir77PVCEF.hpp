@@ -1,8 +1,11 @@
 #pragma once
 
 #include <SDL3/SDL_video.h>
+
+#include <cstdint>
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -14,18 +17,16 @@
 
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "IIr77PVCEF.hpp"
-
 #include "Ir77PeregrineV.hpp"
 
-#include "../runtime/Buffer/Ir77PVBufferCEF.hpp"
-#include "../runtime/Pipeline Layout/Ir77PVLayoutCEF.hpp"
+#include "../interface/IIr77PVOverlay.hpp"
+#include "../runtime/Ir77PVOverlay.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-class Ir77PVCEF : public Ir77Enlisted, public IIr77PVCEF, public std::enable_shared_from_this<Ir77PVCEF> {
+class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77PVCEF> {
    public:
     Ir77PVCEF() {
         try {
@@ -66,9 +67,6 @@ class Ir77PVCEF : public Ir77Enlisted, public IIr77PVCEF, public std::enable_sha
         if (iid == &GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77PVCEF)
-            obj = std::shared_ptr<IIr77PVCEF>(shared_from_this(), static_cast<IIr77PVCEF*>(this));
-
         else if (iid == &GUIDIr77PVCEF)
             obj = std::shared_ptr<Ir77PVCEF>(shared_from_this(), static_cast<Ir77PVCEF*>(this));
 
@@ -85,51 +83,48 @@ class Ir77PVCEF : public Ir77Enlisted, public IIr77PVCEF, public std::enable_sha
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> CreateLayoutCEF() {
-        auto layout_cef = std::static_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayoutCEF>());
+    // One overlay per window. Requires the context's CreateLayouts and CreateSwapchains;
+    // call before Ir77PVPaint::CreateCommandBuffers so Paint can wire the overlays in.
+    std::shared_ptr<IIr77Return const> CreateOverlays() {
+        std::uint64_t const device_id = m_context->m_current_device;
+        std::size_t const windows = m_context->m_windows.at(device_id).size();
 
-        layout_cef->SetDevice(m_context->m_devices.at(m_context->m_current_device));
+        if (windows > Ir77PeregrineV::MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: too many windows.");
 
-        layout_cef->DefineDescriptorSetLayout();
+        std::shared_ptr<IIr77PVLayout> layout_cef{};
+        if (m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() != &GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: CEF layout not created -- call CreateLayouts first.");
 
-        layout_cef->DefineDescriptorPool(8);
+        std::vector<std::shared_ptr<IIr77PVOverlay>> overlays{};
 
-        layout_cef->DefinePipelineLayout();
+        for (std::size_t w = 0; w < windows; w++) {
+            auto overlay = std::static_pointer_cast<IIr77PVOverlay>(std::make_shared<Ir77PVOverlay>());
 
-        m_context->m_layouts_cef.emplace(m_context->m_current_device, layout_cef);
+            overlay->SetDevice(m_context->m_devices.at(device_id));
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Layout CEF.");
-    }
+            overlay->SetAllocator(m_context->m_allocators.at(device_id));
 
-    std::shared_ptr<IIr77Return const> CreateBufferCEF() {
-        std::vector<SDL_Window*> windows = m_context->m_windows.at(m_context->m_current_device);
+            overlay->SetSwapchain(m_context->m_swapchains.at(device_id).at(w));
 
-        if (windows.size() > 8) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: too many windows.");
+            overlay->SetLayoutCEF(layout_cef);
 
-        std::vector<std::shared_ptr<Ir77PVBufferCEF>> cef_buffers;
-        for (int i = 0; i < windows.size(); i++) {
-            auto cef_buffer = std::make_shared<Ir77PVBufferCEF>();
+            if (overlay->CreateResources()->ID() != &GUIDIr77OperationSucceeded)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: overlay creation failed.");
 
-            cef_buffer->SetDevice(m_context->m_devices.at(m_context->m_current_device));
-
-            cef_buffer->SetAllocator(m_context->m_allocators.at(m_context->m_current_device));
-
-            cef_buffer->SetSwapchain(m_context->m_swapchains.at(m_context->m_current_device).at(i));
-
-            cef_buffer->SetLayoutCEF(m_context->m_layouts_cef.at(m_context->m_current_device));
-
-            cef_buffer->CreateResources();
-
-            cef_buffers.push_back(cef_buffer);
+            overlays.push_back(overlay);
         }
 
-        m_context->m_buffer_cef.emplace(m_context->m_current_device, cef_buffers);
+        m_context->m_overlays[device_id] = overlays;
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Buffer CEF.");
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Overlays.");
     }
 
-    std::shared_ptr<IIr77Return const> GetBufferCEF(std::uint32_t window_index, std::shared_ptr<Ir77PVBufferCEF>& buffer) {
-        buffer = m_context->m_buffer_cef.at(m_context->m_current_device).at(window_index);
+    std::shared_ptr<IIr77Return const> GetOverlay(std::uint32_t const& window_index, std::shared_ptr<IIr77PVOverlay>& overlay) {
+        auto const found = m_context->m_overlays.find(m_context->m_current_device);
+        if (found == m_context->m_overlays.end() || window_index >= found->second.size())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: no overlay for window.");
+
+        overlay = found->second[window_index];
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

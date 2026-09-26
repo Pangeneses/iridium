@@ -27,7 +27,6 @@ void crash_handler(int sig) {
 }
 /**********************************************************************************/
 
-
 struct IridiumArgs {
     std::string url{};
     std::string config{};
@@ -38,7 +37,7 @@ struct IridiumArgs {
 
 static IridiumArgs ParseArgs(int argc, char* argv[]) {
     IridiumArgs args{};
-    for (int i = 1; i < argc; ++i) {
+    for (std::size_t i = 1; i < argc; ++i) {
         std::string arg{argv[i]};
         if (arg.starts_with("--url="))
             args.url = arg.substr(6);
@@ -56,7 +55,7 @@ static IridiumArgs ParseArgs(int argc, char* argv[]) {
 
 int main(int argc, char* argv[]) {
     signal(SIGSEGV, crash_handler);
-    
+
     Ir77::iridium iridium{};
 
     Ir77RetLog::Clear();

@@ -45,16 +45,18 @@ typedef struct IIr77PVSwapchain : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> DefineImageView() = 0;
 
-     virtual std::shared_ptr<IIr77Return const> DefineFramebuffers() = 0;
+    virtual std::shared_ptr<IIr77Return const> DefineFramebuffers() = 0;
 
-     virtual std::shared_ptr<IIr77Return const> GetSwapchain(VkSwapchainKHR* swapchain) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetSwapchain(VkSwapchainKHR* swapchain) = 0;
 
-     virtual std::shared_ptr<IIr77Return const> GetSwapchainExtents(VkExtent2D& swapchain_extent) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetSwapchainExtents(VkExtent2D& swapchain_extent) = 0;
 
-     virtual std::shared_ptr<IIr77Return const> GetSwapchainViews(std::vector<VkImageView>& swapchain_views) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetSwapchainViews(std::vector<VkImageView>& swapchain_views) = 0;
 
-     virtual std::shared_ptr<IIr77Return const> GetSwapchainFramebuffers(std::vector<VkFramebuffer>& swapchain_framebuffers) = 0;
-    
+    virtual std::shared_ptr<IIr77Return const> GetSwapchainFramebuffers(std::vector<VkFramebuffer>& swapchain_framebuffers) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetSurfaceFormat(VkSurfaceFormatKHR& surface_format) = 0;
+
     virtual ~IIr77PVSwapchain() = default;
 }* pIIr77PVSwapchain;
 

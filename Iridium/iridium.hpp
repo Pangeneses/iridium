@@ -146,7 +146,7 @@ class iridium {
 
         m_cef->CreateBufferCEF();
 
-        std::shared_ptr<Ir77PVBufferCEF> cef_buffer;
+        std::shared_ptr<Ir77PVOverlay> cef_buffer;
         m_cef->GetBufferCEF(0, cef_buffer);
 
         m_rt_state->GetRenderHandler()->SetPaintCallback([cef_buffer](const void* buffer, int w, int h) { cef_buffer->UploadFrame(buffer, w, h); });

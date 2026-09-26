@@ -14,8 +14,8 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../../dictionary/IDIIr77PeregrineV.hpp"
-#include "../../dictionary/IDIr77PeregrineV.hpp"
+#include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -23,7 +23,7 @@
 #include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "../../interface/IIr77PVDevice.hpp"
+#include "../interface/IIr77PVDevice.hpp"
 
 using namespace NSIr77RT;
 
@@ -165,7 +165,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     std::shared_ptr<IIr77Return const> DefineQueueCreateInfos() {
         float priority = 1.0f;
 
-        for (int i = 0; i < m_queue_families.size(); i++) {
+        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
             VkDeviceQueueCreateInfo queue_create_info{};
             queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queue_create_info.pNext = nullptr;
@@ -204,7 +204,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_phys_device_features.independentBlend = VK_TRUE;
 
         m_create_info.clear();
-        for (int i = 0; i < m_queue_families.size(); i++) m_create_info.push_back(m_queue_families[i].create_info);
+        for (std::size_t i = 0; i < m_queue_families.size(); i++) m_create_info.push_back(m_queue_families[i].create_info);
 
         m_device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         m_device_create_info.queueCreateInfoCount = static_cast<uint32_t>(m_create_info.size());
@@ -221,7 +221,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: vkCreateDevice failed.");
         }
 
-        for (int i = 0; i < m_queue_families.size(); i++) {
+        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
             vkGetDeviceQueue(m_device, m_queue_families[i].create_info.queueFamilyIndex, 0, &m_queue_families[i].queue);
         }
 

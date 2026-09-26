@@ -13,14 +13,14 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../../dictionary/IDIIr77PeregrineV.hpp"
-#include "../../dictionary/IDIr77PeregrineV.hpp"
+#include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "../../interface/IIr77PVSwapchain.hpp"
+#include "../interface/IIr77PVSwapchain.hpp"
 
 using namespace NSIr77RT;
 
@@ -44,11 +44,11 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         VkDevice device;
         m_device->GetDevice(&device);
 
-        for (int i = 0; i < m_swapchain_framebuffers.size(); i++) {
+        for (std::size_t i = 0; i < m_swapchain_framebuffers.size(); i++) {
             vkDestroyFramebuffer(device, m_swapchain_framebuffers[i], nullptr);
         }
 
-        for (int i = 0; i < m_swapchain_views.size(); i++) {
+        for (std::size_t i = 0; i < m_swapchain_views.size(); i++) {
             vkDestroyImageView(device, m_swapchain_views[i], nullptr);
         }
 
@@ -183,10 +183,15 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     }
 
     std::shared_ptr<IIr77Return const> SwapSurfaceFormat() {
-        for (const auto& format : m_formats) {
+        if (m_formats.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: no surface formats -- call QuerySwapchainSupport first.");
+
+        m_format = m_formats[0].format;
+        m_color_space = m_formats[0].colorSpace;
+
+        for (auto const& format : m_formats) {
             if (format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-                m_format = VK_FORMAT_B8G8R8A8_SRGB;
-                m_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+                m_format = format.format;
+                m_color_space = format.colorSpace;
                 break;
             }
         }
@@ -350,6 +355,13 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
     std::shared_ptr<IIr77Return const> GetSwapchainFramebuffers(std::vector<VkFramebuffer>& swapchain_framebuffers) {
         swapchain_framebuffers = m_swapchain_framebuffers;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetSurfaceFormat(VkSurfaceFormatKHR& surface_format) {
+        surface_format.format = m_format;
+        surface_format.colorSpace = m_color_space;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

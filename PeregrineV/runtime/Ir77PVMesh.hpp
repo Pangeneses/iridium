@@ -10,8 +10,8 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../../dictionary/IDIIr77PeregrineV.hpp"
-#include "../../dictionary/IDIr77PeregrineV.hpp"
+#include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -19,15 +19,15 @@
 #include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "../../interface/IIr77PVMaterial.hpp"
+#include "../interface/IIr77PVMesh.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::enable_shared_from_this<Ir77PVMaterial> {
+class Ir77PVMesh : public Ir77Enlisted, public IIr77PVMesh, public std::enable_shared_from_this<Ir77PVMesh> {
    public:
-    Ir77PVMaterial() {
+    Ir77PVMesh() {
         try {
             m_enlisted_uuid.Generate();
         } catch (std::invalid_argument a) {
@@ -39,7 +39,7 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
 
    public:
     std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIr77PVMaterial>(uid);
+        seat_shared_uuid<&GUIDIr77PVMesh>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -58,8 +58,8 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
         if (iid == &GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIr77PVMaterial)
-            obj = std::shared_ptr<Ir77PVMaterial>(shared_from_this(), static_cast<Ir77PVMaterial*>(this));
+        else if (iid == &GUIDIr77PVMesh)
+            obj = std::shared_ptr<Ir77PVMesh>(shared_from_this(), static_cast<Ir77PVMesh*>(this));
 
         else
             return &GUIDQueryFailed;

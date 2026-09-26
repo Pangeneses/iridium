@@ -2,8 +2,11 @@
 
 #include <SDL3/SDL_video.h>
 
+#include <cstdint>
+#include <cstring>
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "../runtime/Ir77PVTypes.hpp"
 
@@ -17,17 +20,15 @@
 
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "IIr77PVPaint.hpp"
-
 #include "Ir77PeregrineV.hpp"
 
-#include "../runtime/GPU/Ir77PVCmdBuffer.hpp"
+#include "../runtime/Ir77PVCmdBuffer.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable_shared_from_this<Ir77PVPaint> {
+class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir77PVPaint> {
    public:
     Ir77PVPaint() {
         try {
@@ -68,9 +69,6 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         if (iid == &GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77PVPaint)
-            obj = std::shared_ptr<IIr77PVPaint>(shared_from_this(), static_cast<IIr77PVPaint*>(this));
-
         else if (iid == &GUIDIr77PVPaint)
             obj = std::shared_ptr<Ir77PVPaint>(shared_from_this(), static_cast<Ir77PVPaint*>(this));
 
@@ -87,84 +85,156 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // setup -- after CreateDescriptorSets and CreatePipelines. Overlays are optional (wired if Ir77PVCEF created them).
+    // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreateCommandBuffers() {
-        std::vector<SDL_Window*> windows = m_context->m_windows.at(m_context->m_current_device);
+        std::uint64_t const device_id = m_context->m_current_device;
+        std::size_t const windows = m_context->m_windows.at(device_id).size();
 
-        if (windows.size() > 8) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: too many windows.");
+        if (windows > Ir77PeregrineV::MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: too many windows.");
 
-        std::vector<std::shared_ptr<IIr77PVCmdBuffer>> cmd_buffers;
-        for (int i = 0; i < windows.size(); i++) {
+        auto const overlays = m_context->m_overlays.find(device_id);
+        bool const has_overlays = overlays != m_context->m_overlays.end() && overlays->second.size() == windows;
+
+        std::vector<std::shared_ptr<IIr77PVCmdBuffer>> cmd_buffers{};
+
+        for (std::size_t w = 0; w < windows; w++) {
             auto cmd_buffer = std::static_pointer_cast<IIr77PVCmdBuffer>(std::make_shared<Ir77PVCmdBuffer>());
 
             cmd_buffer->SetInstance(m_context->m_instance);
 
-            cmd_buffer->SetDevice(m_context->m_devices.at(m_context->m_current_device));
+            cmd_buffer->SetDevice(m_context->m_devices.at(device_id));
 
-            cmd_buffer->SetSwapchain(m_context->m_swapchains.at(m_context->m_current_device).at(i));
+            cmd_buffer->SetSwapchain(m_context->m_swapchains.at(device_id).at(w));
 
-            cmd_buffer->SetRenderPass(m_context->m_render_pass.at(m_context->m_current_device));
+            cmd_buffer->SetRenderPass(m_context->m_render_pass.at(device_id));
 
-            cmd_buffer->SetPipelineGFX(m_context->m_pipelines_gfx.at(m_context->m_current_device).at(i));
+            cmd_buffer->SetGlobalSet(m_context->m_descriptor_sets_global.at(device_id).at(w));
 
-            cmd_buffer->SetBufferVertex(m_context->m_buffer_vertex.at(m_context->m_current_device).at(i));
+            cmd_buffer->SetPassSet(m_context->m_descriptor_sets_pass.at(device_id).at(w));
 
-            cmd_buffer->SetLayoutUBO(m_context->m_layouts_ubo.at(m_context->m_current_device));
+            if (has_overlays) {
+                std::shared_ptr<IIr77PVPipeline> pipeline_cef{};
+                std::shared_ptr<IIr77PVLayout> layout_cef{};
 
-            cmd_buffer->SetBufferUBO(m_context->m_buffer_ubo.at(m_context->m_current_device).at(i));
+                if (m_context->GetPipeline(w, Ir77PVPipelineKind::CEF, pipeline_cef)->ID() == &GUIDIr77OperationSucceeded &&
+                    m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() == &GUIDIr77OperationSucceeded) {
+                    cmd_buffer->SetOverlay(overlays->second.at(w), pipeline_cef, layout_cef);
+                }
+            }
 
-            cmd_buffer->SetPipelineCEF(m_context->m_pipelines_cef.at(m_context->m_current_device).at(i));
-
-            cmd_buffer->SetLayoutCEF(m_context->m_layouts_cef.at(m_context->m_current_device));
-
-            cmd_buffer->SetBufferCEF(m_context->m_buffer_cef.at(m_context->m_current_device).at(i));
-
-            cmd_buffer->DefineSyncObjects();
-
-            cmd_buffer->DefineCommandPool();
-
-            cmd_buffer->AllocateCommandBuffer();
+            if (cmd_buffer->DefineSyncObjects()->ID() != &GUIDIr77OperationSucceeded ||
+                cmd_buffer->DefineCommandPool()->ID() != &GUIDIr77OperationSucceeded ||
+                cmd_buffer->AllocateCommandBuffer()->ID() != &GUIDIr77OperationSucceeded) {
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: command buffer setup failed.");
+            }
 
             cmd_buffers.push_back(cmd_buffer);
         }
 
-        m_context->m_command_buffers.emplace(m_context->m_current_device, cmd_buffers);
+        m_context->m_command_buffers[device_id] = cmd_buffers;
+
+        m_frame_data[device_id].assign(windows, {});
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Command Buffers.");
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // per-frame input -- safe to call any time; applied inside Draw once the frame's fence has signalled
+    // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // Latest contents for a frame-level buffer (camera, lights, instances ...). Re-applied every frame so every
+    // frame-in-flight copy stays current; call again only when the data changes.
+    std::shared_ptr<IIr77Return const> SetFrameData(std::size_t const& window, Ir77PVBufferSlot const& slot, void const* data, VkDeviceSize const& size,
+                                                    VkDeviceSize const& offset = 0) {
+        auto& windows = m_frame_data[m_context->m_current_device];
+        if (window >= windows.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
+        if (data == nullptr || size == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: empty frame data.");
+
+        Ir77PVFrameWrite write{};
+        write.offset = offset;
+        write.bytes.resize(static_cast<std::size_t>(size));
+        std::memcpy(write.bytes.data(), data, static_cast<std::size_t>(size));
+
+        windows[window][slot] = std::move(write);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Replaces one pass's draw list for a window. Persists until replaced.
+    std::shared_ptr<IIr77Return const> SetDraws(std::size_t const& window, Ir77PVPass const& pass, std::vector<Ir77PVDrawItem> const& draws) {
+        auto const found = m_context->m_command_buffers.find(m_context->m_current_device);
+        if (found == m_context->m_command_buffers.end() || window >= found->second.size())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
+
+        return found->second[window]->SetDraws(pass, draws);
+    }
+
+    std::shared_ptr<IIr77Return const> ClearDraws(std::size_t const& window) {
+        auto const found = m_context->m_command_buffers.find(m_context->m_current_device);
+        if (found == m_context->m_command_buffers.end() || window >= found->second.size())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
+
+        return found->second[window]->ClearDraws();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // frame loop
+    // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> Draw() {
         if (m_context->m_resize_in_progress) return Ir77RETURN<Ir77OperationSucceeded>();
 
-        std::vector<std::shared_ptr<IIr77PVCmdBuffer>> cmd_buffers = m_context->m_command_buffers.at(m_context->m_current_device);
-        for (int i = 0; i < cmd_buffers.size(); i++) {
-            cmd_buffers[i]->SetCurrentFrame(m_context->m_current_frames.at(m_context->m_current_device).at(i));
+        std::uint64_t const device_id = m_context->m_current_device;
 
-            cmd_buffers[i]->WaitForFence();
+        auto const& cmd_buffers = m_context->m_command_buffers.at(device_id);
+        auto& frames = m_context->m_current_frames.at(device_id);
+        auto const& windows = m_context->m_windows.at(device_id);
 
-            VkResult acquire_result;
-            cmd_buffers[i]->AcquireNextImage(&acquire_result);
+        for (std::size_t i = 0; i < cmd_buffers.size(); i++) {
+            // a minimized window has a 0x0 surface -- no swapchain can be built, so skip it
+            if (SDL_GetWindowFlags(windows.at(i)) & SDL_WINDOW_MINIMIZED) continue;
 
-            if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
-                ResetSwapchain(i);
+            auto const& cmd_buffer = cmd_buffers[i];
+
+            cmd_buffer->SetCurrentFrame(frames.at(i));
+
+            if (cmd_buffer->WaitForFence()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: fence wait failed.");
+
+            // this frame's buffer copies are no longer in use by the GPU
+            ApplyFrameData(i, frames.at(i));
+
+            VkResult acquire_result{VK_SUCCESS};
+            cmd_buffer->AcquireNextImage(&acquire_result);
+
+            // OUT_OF_DATE: nothing was acquired -- rebuild and try next frame.
+            // SUBOPTIMAL: the image *was* acquired and its semaphore will signal, so it must still be
+            // drawn and presented; recreating here would leave that semaphore signalled and break the next acquire.
+            if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
+                ResetSwapchain(static_cast<std::uint32_t>(i));
                 continue;
-            } else if (acquire_result != VK_SUCCESS) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: pipeline corrupted.");
             }
 
-            cmd_buffers[i]->ResetFence();
-            cmd_buffers[i]->RecordCommandBuffer();
-            cmd_buffers[i]->SubmitFrame();
+            if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: acquire failed.");
 
-            VkResult present_result;
-            cmd_buffers[i]->PresentFrame(&present_result);
+            cmd_buffer->ResetFence();
 
-            m_context->m_current_frames.at(m_context->m_current_device).at(i) =
-                (m_context->m_current_frames.at(m_context->m_current_device).at(i) + 1) % MAX_FRAMES_IN_FLIGHT;
+            if (cmd_buffer->RecordCommandBuffer()->ID() != &GUIDIr77OperationSucceeded)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: record failed.");
 
-            if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
-                ResetSwapchain(i);
+            if (cmd_buffer->SubmitFrame()->ID() != &GUIDIr77OperationSucceeded)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: submit failed.");
+
+            VkResult present_result{VK_SUCCESS};
+            cmd_buffer->PresentFrame(&present_result);
+
+            frames.at(i) = (frames.at(i) + 1) % MAX_FRAMES_IN_FLIGHT;
+
+            if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
+                ResetSwapchain(static_cast<std::uint32_t>(i));
             } else if (present_result != VK_SUCCESS) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: pipeline corrupted.");
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: present failed.");
             }
         }
 
@@ -172,51 +242,85 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
     }
 
     std::shared_ptr<IIr77Return const> ResetSwapchain(std::uint32_t const& index) {
+        std::uint64_t const device_id = m_context->m_current_device;
+
+        // flags are cleared on every exit path -- a failed step used to leave Draw disabled forever
+        std::shared_ptr<IIr77PVOverlay> overlay{};
+        auto const overlays = m_context->m_overlays.find(device_id);
+        if (overlays != m_context->m_overlays.end() && index < overlays->second.size()) overlay = overlays->second[index];
+
         m_context->m_resize_in_progress = true;
+        if (overlay) overlay->SetResizing(true);
 
-        m_context->m_buffer_cef.at(m_context->m_current_device).at(index)->SetResizing(true);
+        auto const result = RebuildSwapchain(index);
 
+        if (overlay) overlay->SetResizing(false);
+        m_context->m_resize_in_progress = false;
+
+        return result;
+    }
+
+   private:
+    // Pending write for one frame-level buffer slot
+    struct Ir77PVFrameWrite {
+        std::vector<std::uint8_t> bytes{};
+
+        VkDeviceSize offset{0};
+    };
+
+    void ApplyFrameData(std::size_t const& window, std::uint32_t const& frame) {
+        auto const device = m_frame_data.find(m_context->m_current_device);
+        if (device == m_frame_data.end() || window >= device->second.size()) return;
+
+        for (auto const& [slot, write] : device->second[window]) {
+            std::shared_ptr<IIr77PVBuffer> buffer{};
+            if (m_context->GetFrameBuffer(window, slot, buffer)->ID() != &GUIDIr77OperationSucceeded || !buffer) continue;
+
+            buffer->Update(frame, write.bytes.data(), static_cast<VkDeviceSize>(write.bytes.size()), write.offset);
+        }
+    }
+
+    std::shared_ptr<IIr77Return const> RebuildSwapchain(std::uint32_t const& index) {
         VkDevice device;
         m_context->m_devices.at(m_context->m_current_device)->GetDevice(&device);
         vkDeviceWaitIdle(device);
 
-        std::vector<std::shared_ptr<IIr77PVSwapchain>> swapchains = m_context->m_swapchains.at(m_context->m_current_device);
+        auto const& swapchain = m_context->m_swapchains.at(m_context->m_current_device).at(index);
 
-        if (swapchains.at(index)->QuerySwapchainSupport()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->QuerySwapchainSupport()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: QuerySwapchainSupport failed.");
 
-        if (swapchains.at(index)->SwapSurfaceFormat()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->SwapSurfaceFormat()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SwapSurfaceFormat failed.");
 
-        if (swapchains.at(index)->PresentMode()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->PresentMode()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: PresentMode failed.");
 
-        if (swapchains.at(index)->SurfaceCapabilities()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->SurfaceCapabilities()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SurfaceCapabilities failed.");
 
-        if (swapchains.at(index)->DefineSwapchain()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->DefineSwapchain()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineSwapchain failed.");
 
-        if (swapchains.at(index)->CleanupSwapchain()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->CleanupSwapchain()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: CleanupSwapchain failed.");
 
-        if (swapchains.at(index)->InitSwapchainImages()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->InitSwapchainImages()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: InitSwapchainImages failed.");
 
-        if (swapchains.at(index)->DefineImageView()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->DefineImageView()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineImageView failed.");
 
-        if (swapchains.at(index)->DefineFramebuffers()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->DefineFramebuffers()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineFramebuffers failed.");
 
-        m_context->m_buffer_cef.at(m_context->m_current_device).at(index)->SetResizing(false);
-
-        m_context->m_resize_in_progress = false;
-
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: ValidateSwapchain.");
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Reset Swapchain.");
     }
 
    private:
     std::shared_ptr<Ir77PeregrineV> m_context{nullptr};
+
+    // [device][window][slot]
+    std::map<std::uint64_t, std::vector<std::map<Ir77PVBufferSlot, Ir77PVFrameWrite>>> m_frame_data{};
 };
 }  // namespace NSIr77PeregrineV

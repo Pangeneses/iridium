@@ -20,10 +20,7 @@
 
 #include "../interface/IIr77Camera.hpp"
 
-#include "../PeregrineV/runtime/Ir77PVTypes.hpp"
-
 using namespace NSIr77RT;
-using namespace NSIr77PeregrineV;
 
 namespace NSIr77Scene {
 
@@ -84,14 +81,32 @@ class Ir77Camera : public Ir77Enlisted, public IIr77Camera, public std::enable_s
 
    public:
     std::shared_ptr<IIr77Return const> AddCamera(fastgltf::Camera const& camera, glm::mat4 const& world_transform) {
+        Ir77PVCamera cam{};
 
+        if (auto* persp = std::get_if<fastgltf::Camera::Perspective>(&camera.camera)) {
+            float aspect = persp->aspectRatio.value_or(16.0f / 9.0f); 
+            float zfar = persp->zfar.value_or(1000.0f);               
+
+            cam.projection = glm::perspective(persp->yfov, aspect, persp->znear, zfar);
+        } else if (auto* ortho = std::get_if<fastgltf::Camera::Orthographic>(&camera.camera)) {
+            cam.projection = glm::ortho(-ortho->xmag, ortho->xmag, -ortho->ymag, ortho->ymag, ortho->znear, ortho->zfar);
+        }
+
+        cam.view = glm::inverse(world_transform);
+        cam.model = world_transform;
+
+        m_cameras.push_back(cam);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> GetCamerasBuffer(std::vector<Ir77PVCamera>& cameras) {
+        cameras = m_cameras;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
 
    private:
     std::vector<Ir77PVCamera> m_cameras;
-   
 };
 }  // namespace NSIr77Scene

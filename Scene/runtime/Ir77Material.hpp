@@ -86,6 +86,6 @@ class Ir77Material : public Ir77Enlisted, public IIr77Material, public std::enab
     std::shared_ptr<IIr77Return const> LoadMaterialsFromAsset(fastgltf::Asset const& materials) { return Ir77RETURN<Ir77OperationSucceeded>(); }
 
    private:
-    std::vector<Ir77PVLight> m_lights;
+   
 };
 }  // namespace NSIr77Scene

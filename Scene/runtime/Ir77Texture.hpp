@@ -86,6 +86,6 @@ class Ir77Texture : public Ir77Enlisted, public IIr77Texture, public std::enable
     std::shared_ptr<IIr77Return const> LoadTexturesFromAsset(fastgltf::Asset const& textures) { return Ir77RETURN<Ir77OperationSucceeded>(); }
 
    private:
-    std::vector<Ir77PVLight> m_lights;
+   
 };
 }  // namespace NSIr77Scene

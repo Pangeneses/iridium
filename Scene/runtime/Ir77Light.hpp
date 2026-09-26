@@ -20,10 +20,7 @@
 
 #include "../interface/IIr77Light.hpp"
 
-#include "../PeregrineV/runtime/Ir77PVTypes.hpp"
-
 using namespace NSIr77RT;
-using namespace NSIr77PeregrineV;
 
 namespace NSIr77Scene {
 
@@ -84,14 +81,42 @@ class Ir77Light : public Ir77Enlisted, public IIr77Light, public std::enable_sha
 
    public:
     std::shared_ptr<IIr77Return const> AddLight(fastgltf::Light const& light, glm::mat4 const& world_transform) {
+        Ir77PVLight pv_light{};
 
+        pv_light.position = glm::vec3(world_transform[3]);
+        pv_light.direction = glm::normalize(glm::vec3(world_transform * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+
+        pv_light.color = glm::vec3(light.color.x(), light.color.y(), light.color.z());
+        pv_light.intensity = light.intensity;
+
+        pv_light.range = light.range.value_or(0.0f); 
+        pv_light.innerConeAngle = light.innerConeAngle.value_or(0.0f);
+        pv_light.outerConeAngle = light.outerConeAngle.value_or(0.0f);
+
+        switch (light.type) {
+            case fastgltf::LightType::Directional:
+                pv_light.type = 0;
+                break;
+            case fastgltf::LightType::Point:
+                pv_light.type = 1;
+                break;
+            case fastgltf::LightType::Spot:
+                pv_light.type = 2;
+                break;
+        }
+
+        m_lights.push_back(pv_light);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+    
+    std::shared_ptr<IIr77Return const> GetLightsBuffer(std::vector<Ir77PVLight>& lights) {
+        lights = m_lights;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-
    private:
     std::vector<Ir77PVLight> m_lights;
-   
 };
 }  // namespace NSIr77Scene

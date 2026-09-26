@@ -86,6 +86,6 @@ class Ir77Animation : public Ir77Enlisted, public IIr77Animation, public std::en
     std::shared_ptr<IIr77Return const> LoadAnimationsFromAsset(fastgltf::Asset const& animations) { return Ir77RETURN<Ir77OperationSucceeded>(); }
 
    private:
-    std::vector<Ir77PVLight> m_lights;
+   
 };
 }  // namespace NSIr77Scene

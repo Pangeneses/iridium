@@ -11,8 +11,8 @@
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../../dictionary/IDIr77PeregrineV.hpp"
-#include "../../dictionary/IDIr77PVContext.hpp"
+#include "../dictionary/IDIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PVContext.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -21,7 +21,7 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
-#include "../../interface/IIr77PVShader.hpp"
+#include "../interface/IIr77PVShader.hpp"
 
 using namespace NSIr77RT;
 
@@ -185,7 +185,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
 
     std::shared_ptr<IIr77Return const> GetPipelineShaderStageInfos(std::vector<VkPipelineShaderStageCreateInfo>& infos,
                                                                    std::vector<std::uint64_t> const& id_list) {
-        for (int i = 0; i < id_list.size(); i++) {
+        for (std::size_t i = 0; i < id_list.size(); i++) {
             infos.push_back(m_shader_infos.at(id_list[i]).stage_create_info);
         }
 

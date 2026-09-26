@@ -72,6 +72,12 @@ static const std::uint64_t ID_SHADER_VERT = 0xC4A1D7F3B8926E50;
 
 static const std::uint64_t ID_SHADER_FRAG = 0xD8F3C1A7E492B650;
 
+static const std::uint64_t ID_SHADER_SKINNED_VERT = 0x9DC2F4A87BB42FF3;
+
+static const std::uint64_t ID_SHADER_SHADOW_VERT = 0xE4D133D548401E27;
+
+static const std::uint64_t ID_SHADER_SHADOW_SKINNED_VERT = 0xC52B86544729B6D5;
+
 static const std::uint64_t ID_SHADER_CEF_VERT = 0xC686B5A02D48E95F;
 
 static const std::uint64_t ID_SHADER_CEF_FRAG = 0xDF5D35C992EF1268;

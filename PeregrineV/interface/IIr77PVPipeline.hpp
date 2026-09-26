@@ -2,26 +2,33 @@
 #include <vulkan/vulkan.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <vulkan/vulkan_core.h>
+
+#include <cstdint>
+#include <memory>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "IIr77PVDevice.hpp"
 #include "IIr77PVInstance.hpp"
-#include "IIr77PVLayout.hpp"
-#include "IIr77PVRenderPass.hpp"
-#include "IIr77PVShader.hpp"
+#include "IIr77PVDevice.hpp"
 #include "IIr77PVSwapchain.hpp"
+#include "IIr77PVRenderPass.hpp"
+#include "IIr77PVLayout.hpp"
+#include "IIr77PVShader.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-enum class Ir77PVPipelineType : uint32_t {
-    Graphics = 0,
-    Compute = 1,
-    RayTrace = 2,
-};
+// Pipeline kind -> layout kind
+//   Static        -> Ir77PVLayoutKind::Static
+//   Skinned       -> Ir77PVLayoutKind::Skinned
+//   Shadow        -> Ir77PVLayoutKind::Shadow         (depth-only render pass)
+//   ShadowSkinned -> Ir77PVLayoutKind::ShadowSkinned  (depth-only render pass)
+//   Transparent   -> Ir77PVLayoutKind::Static
+//   CEF           -> Ir77PVLayoutKind::CEF
+enum class Ir77PVPipelineKind : std::uint8_t { Static, Skinned, Shadow, ShadowSkinned, Transparent, CEF };
 
 typedef struct IIr77PVPipeline : virtual public IIr77Enlisted {
     IIr77PVPipeline() = default;
@@ -38,9 +45,13 @@ typedef struct IIr77PVPipeline : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetShader(std::shared_ptr<IIr77PVShader> shader_stack) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVPipelineKind const& kind) = 0;
+
     virtual std::shared_ptr<IIr77Return const> CreatePipeline() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetKind(Ir77PVPipelineKind* kind) = 0;
 
     virtual ~IIr77PVPipeline() = default;
 }* pIIr77PVPipeline;

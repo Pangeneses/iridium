@@ -1,17 +1,19 @@
-// runtime/GPU/Ir77PVBufferCEF.hpp
+// runtime/GPU/Ir77PVOverlay.hpp
 #pragma once
 
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
+#include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <memory>
+#include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
-#include "../../dictionary/IDIr77PeregrineV.hpp"
+#include "../dictionary/IDIIr77PeregrineV.hpp"
+#include "../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -19,18 +21,18 @@
 #include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "../../interface/IIr77PVDevice.hpp"
-#include "../../interface/IIr77PVSwapchain.hpp"
-#include "../../interface/IIr77PVLayout.hpp"
-#include "IDIr77RET.hpp"
+#include "../interface/IIr77PVDevice.hpp"
+#include "../interface/IIr77PVSwapchain.hpp"
+#include "../interface/IIr77PVLayout.hpp"
+#include "../interface/IIr77PVOverlay.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77PVBufferCEF> {
+class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::enable_shared_from_this<Ir77PVOverlay> {
    public:
-    Ir77PVBufferCEF() {
+    Ir77PVOverlay() {
         try {
             m_enlisted_uuid.Generate();
         } catch (std::invalid_argument a) {
@@ -40,13 +42,18 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVBufferCEF() {
+    ~Ir77PVOverlay() {
+        if (!m_device) return;
+
         VkDevice device;
         m_device->GetDevice(&device);
 
         vkDeviceWaitIdle(device);
 
         DestroyResources(device);
+
+        // extent-independent -- destroyed only here, never on resize
+        if (m_sampler != VK_NULL_HANDLE) vkDestroySampler(device, m_sampler, nullptr);
 
         vkDestroyFence(device, m_upload_fence, nullptr);
         vkDestroyCommandPool(device, m_upload_cmd_pool, nullptr);
@@ -62,7 +69,7 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
     }
 
     std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIr77PVBufferCEF>(uid);
+        seat_shared_uuid<&GUIDIr77PVOverlay>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -80,8 +87,12 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
     IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
         if (iid == &GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
-        else if (iid == &GUIDIr77PVBufferCEF)
-            obj = std::shared_ptr<Ir77PVBufferCEF>(shared_from_this(), static_cast<Ir77PVBufferCEF*>(this));
+
+        else if (iid == &GUIDIIr77PVOverlay)
+            obj = std::shared_ptr<IIr77PVOverlay>(shared_from_this(), static_cast<IIr77PVOverlay*>(this));
+
+        else if (iid == &GUIDIr77PVOverlay)
+            obj = std::shared_ptr<Ir77PVOverlay>(shared_from_this(), static_cast<Ir77PVOverlay*>(this));
 
         else
             return &GUIDQueryFailed;
@@ -121,39 +132,38 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
     }
 
     std::shared_ptr<IIr77Return const> CreateResources() {
+        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: device not set.");
+        if (!m_swapchain) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: swapchain not set.");
+        if (!m_layout_cef) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: CEF layout not set.");
+        if (m_allocator == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: allocator not set.");
+
         VkDevice device;
         m_device->GetDevice(&device);
 
         m_swapchain->GetSwapchainExtents(m_swapchain_extent);
 
-        auto staging = CreateStagingBuffer();
-        if (!staging) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF staging buffer failed.");
+        if (!CreateStagingBuffer()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: staging buffer failed.");
 
-        auto image = CreateImage();
-        if (!image) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF image failed.");
+        if (!CreateImage()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: image failed.");
 
-        auto view = DefineImageView(device);
-        if (!view) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF image view failed.");
+        if (!DefineImageView(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: image view failed.");
 
-        auto sampler = DefineSampler(device);
-        if (!sampler) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF sampler failed.");
+        if (!DefineSampler(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: sampler failed.");
 
-        auto pool = DefineUploadCommandPool(device);
-        if (!pool) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF upload command pool failed.");
+        if (!DefineUploadCommandPool(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: upload command pool failed.");
 
-        auto cmd_buf = AllocateUploadCommandBuffer(device);
-        if (!cmd_buf) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF upload command buffer failed.");
+        if (!AllocateUploadCommandBuffer(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: upload command buffer failed.");
 
-        auto fence = DefineUploadFence(device);
-        if (!fence) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF upload fence failed.");
+        if (!DefineUploadFence(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: upload fence failed.");
 
-        if (m_layout_cef->AllocateSet(&m_descriptor_set)->ID() != &GUIDIr77OperationSucceeded) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF Allocate Set failed.");
+        // CEF layout has a single set at index 0
+        if (m_layout_cef->AllocateSet(0, &m_descriptor_set)->ID() != &GUIDIr77OperationSucceeded) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: descriptor set allocation failed.");
         }
 
         UpdateDescriptorSet(device);
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: CEF buffer resources Defined.");
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Overlay resources created.");
     }
 
     std::shared_ptr<IIr77Return const> Resize() {
@@ -168,54 +178,46 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
 
         m_swapchain->GetSwapchainExtents(m_swapchain_extent);
 
-        auto staging = CreateStagingBuffer();
-        if (!staging) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF staging buffer resize failed.");
-
-        auto image = CreateImage();
-        if (!image) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF image resize failed.");
-
-        auto view = DefineImageView(device);
-        if (!view) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF image view resize failed.");
-
-        UpdateDescriptorSet(device);
+        auto const result = RebuildExtentResources(device);
 
         m_resizing = false;
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: CEF buffer resized.");
+        return result;
     }
 
     std::shared_ptr<IIr77Return const> UploadFrame(const void* buffer, int cef_width, int cef_height) {
         if (m_resizing) return Ir77RETURN<Ir77OperationSucceeded>();
+        if (buffer == nullptr || cef_width <= 0 || cef_height <= 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: invalid frame.");
 
         VkDevice device;
         m_device->GetDevice(&device);
 
         vkDeviceWaitIdle(device);
 
-        if (static_cast<uint32_t>(cef_width) != m_swapchain_extent.width || static_cast<uint32_t>(cef_height) != m_swapchain_extent.height) {
-            m_swapchain_extent.width = static_cast<uint32_t>(cef_width);
-            m_swapchain_extent.height = static_cast<uint32_t>(cef_height);
-            Resize();
-        }
+        // CEF size drives the texture size here, not the swapchain -- rebuild at the painted size
+        if (static_cast<std::uint32_t>(cef_width) != m_swapchain_extent.width || static_cast<std::uint32_t>(cef_height) != m_swapchain_extent.height) {
+            m_resizing = true;
 
-        std::vector<Ir77PVQueueFamily> queue_families;
-        m_device->GetQueueFamilies(queue_families);
+            DestroyResources(device);
+
+            m_swapchain_extent.width = static_cast<std::uint32_t>(cef_width);
+            m_swapchain_extent.height = static_cast<std::uint32_t>(cef_height);
+
+            auto const result = RebuildExtentResources(device);
+
+            m_resizing = false;
+
+            if (result->ID() != &GUIDIr77OperationSucceeded) return result;
+        }
 
         VkQueue queue{VK_NULL_HANDLE};
-        bool found_queue = false;
-        for (int i = 0; i < queue_families.size(); i++) {
-            if (queue_families[i].presentation == VK_TRUE) {
-                queue = queue_families[i].queue;
-                found_queue = true;
-                break;
-            }
-        }
-        if (!found_queue) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF upload — no presentation-capable queue found.");
+        if (!FindPresentQueue(&queue, nullptr)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: no presentation-capable queue found.");
 
         vkWaitForFences(device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX);
         vkResetFences(device, 1, &m_upload_fence);
 
-        std::memcpy(m_staging_mapped, buffer, static_cast<size_t>(cef_width) * cef_height * 4);
+        std::memcpy(m_staging_mapped, buffer, static_cast<std::size_t>(cef_width) * static_cast<std::size_t>(cef_height) * 4);
+        vmaFlushAllocation(m_allocator, m_staging_allocation, 0, VK_WHOLE_SIZE);
 
         vkResetCommandBuffer(m_upload_cmd_buf, 0);
 
@@ -224,7 +226,7 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
         begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
         if (vkBeginCommandBuffer(m_upload_cmd_buf, &begin_info) != VK_SUCCESS) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF upload vkBeginCommandBuffer failed.");
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: vkBeginCommandBuffer failed.");
         }
 
         VkImageMemoryBarrier to_transfer{};
@@ -238,7 +240,7 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
         to_transfer.srcAccessMask = (m_image_layout == VK_IMAGE_LAYOUT_UNDEFINED) ? 0 : VK_ACCESS_SHADER_READ_BIT;
         to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
-        VkPipelineStageFlags src_stage =
+        VkPipelineStageFlags const src_stage =
             (m_image_layout == VK_IMAGE_LAYOUT_UNDEFINED) ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 
         vkCmdPipelineBarrier(m_upload_cmd_buf, src_stage, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer);
@@ -270,7 +272,7 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
         m_image_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         if (vkEndCommandBuffer(m_upload_cmd_buf) != VK_SUCCESS) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF upload vkEndCommandBuffer failed.");
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: vkEndCommandBuffer failed.");
         }
 
         VkSubmitInfo submit_info{};
@@ -279,12 +281,10 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
         submit_info.pCommandBuffers = &m_upload_cmd_buf;
 
         if (vkQueueSubmit(queue, 1, &submit_info, m_upload_fence) != VK_SUCCESS) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Vulkan: CEF upload vkQueueSubmit failed.");
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: vkQueueSubmit failed.");
         }
 
         vkQueueWaitIdle(queue);
-
-        static int upload_count = 0;
 
         m_ever_uploaded = true;
 
@@ -328,8 +328,36 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
     }
 
    private:
+    // staging + image + view at the current extent, then repoint the descriptor at the new view
+    std::shared_ptr<IIr77Return const> RebuildExtentResources(VkDevice device) {
+        if (!CreateStagingBuffer()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: staging buffer resize failed.");
+
+        if (!CreateImage()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: image resize failed.");
+
+        if (!DefineImageView(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: image view resize failed.");
+
+        UpdateDescriptorSet(device);
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Overlay resized.");
+    }
+
+    bool FindPresentQueue(VkQueue* queue, std::uint32_t* family_index) {
+        std::vector<Ir77PVQueueFamily> queue_families{};
+        m_device->GetQueueFamilies(queue_families);
+
+        for (std::size_t i = 0; i < queue_families.size(); i++) {
+            if (queue_families[i].presentation == VK_TRUE) {
+                if (queue) *queue = queue_families[i].queue;
+                if (family_index) *family_index = static_cast<std::uint32_t>(i);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool CreateStagingBuffer() {
-        VkDeviceSize size = static_cast<VkDeviceSize>(m_swapchain_extent.width) * m_swapchain_extent.height * 4;
+        VkDeviceSize const size = static_cast<VkDeviceSize>(m_swapchain_extent.width) * m_swapchain_extent.height * 4;
 
         VkBufferCreateInfo buffer_info{};
         buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -389,7 +417,7 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
     }
 
     bool DefineSampler(VkDevice device) {
-        if (m_sampler != VK_NULL_HANDLE) return true;  // extent-independent — only create once
+        if (m_sampler != VK_NULL_HANDLE) return true;  // extent-independent -- only create once
 
         VkSamplerCreateInfo sampler_info{};
         sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -410,23 +438,13 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
     bool DefineUploadCommandPool(VkDevice device) {
         if (m_upload_cmd_pool != VK_NULL_HANDLE) return true;
 
-        std::vector<Ir77PVQueueFamily> queue_families;
-        m_device->GetQueueFamilies(queue_families);
+        std::uint32_t family_index{0};
+        if (!FindPresentQueue(nullptr, &family_index)) return false;
 
         VkCommandPoolCreateInfo pool_info{};
         pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-
-        bool found = false;
-        for (int i = 0; i < queue_families.size(); i++) {
-            if (queue_families[i].presentation == VK_TRUE) {
-                pool_info.queueFamilyIndex = i;
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) return false;
+        pool_info.queueFamilyIndex = family_index;
 
         return vkCreateCommandPool(device, &pool_info, nullptr, &m_upload_cmd_pool) == VK_SUCCESS;
     }
@@ -453,8 +471,8 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
         return vkCreateFence(device, &fence_info, nullptr, &m_upload_fence) == VK_SUCCESS;
     }
 
+    // extent-dependent resources only -- sampler, pool, command buffer, fence and descriptor set survive a resize
     void DestroyResources(VkDevice device) {
-        if (m_sampler != VK_NULL_HANDLE) vkDestroySampler(device, m_sampler, nullptr);
         if (m_image_view != VK_NULL_HANDLE) vkDestroyImageView(device, m_image_view, nullptr);
         if (m_image != VK_NULL_HANDLE) vmaDestroyImage(m_allocator, m_image, m_image_allocation);
         if (m_staging_buffer != VK_NULL_HANDLE) vmaDestroyBuffer(m_allocator, m_staging_buffer, m_staging_allocation);
@@ -462,6 +480,7 @@ class Ir77PVBufferCEF : public Ir77Enlisted, public std::enable_shared_from_this
         m_image_view = VK_NULL_HANDLE;
         m_image = VK_NULL_HANDLE;
         m_image_allocation = VK_NULL_HANDLE;
+        m_image_layout = VK_IMAGE_LAYOUT_UNDEFINED;
         m_staging_buffer = VK_NULL_HANDLE;
         m_staging_allocation = VK_NULL_HANDLE;
         m_staging_mapped = nullptr;

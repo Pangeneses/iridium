@@ -24,32 +24,19 @@ inline Ir77GUID GUIDIr77PVPaint{(static_cast<unsigned __int128>(0x77FB47B81DF749
 inline Ir77GUID GUIDIr77PVAsset{(static_cast<unsigned __int128>(0x559D9163200142C6) << 64) | 0xA76F0961028593E0};
 inline Ir77GUID GUIDIr77PVCEF{(static_cast<unsigned __int128>(0x001A7E1589804075) << 64) | 0xB2175618901D9C92};
 
-/**************** GPU Interface ****************/
+/*************************************************************************************************************************************************************/
 inline Ir77GUID GUIDIr77PVInstance{(static_cast<unsigned __int128>(0x7D4E91A3C6F28B05) << 64) | 0x1B9E50A472C3D8F6};
 inline Ir77GUID GUIDIr77PVDevice{(static_cast<unsigned __int128>(0xC2B74F8E3A916D05) << 64) | 0x5F3A10E274B9C806};
 inline Ir77GUID GUIDIr77PVSwapchain{(static_cast<unsigned __int128>(0x4A9C15E7F3806D2B) << 64) | 0x8C3E72B1054FA96D};
-inline Ir77GUID GUIDIr77PVCmdBuffer{(static_cast<unsigned __int128>(0x83E6A0D2F1794C5B) << 64) | 0xC1A4E7930F2D85B6};
-
-/**************** Pipeline ****************/
-inline Ir77GUID GUIDIr77PVPipelineGFX{(static_cast<unsigned __int128>(0x7B3F90D2C5A418E6) << 64) | 0x4A8E610F93B2D75C};
-inline Ir77GUID GUIDIr77PVPipelineCEF{(static_cast<unsigned __int128>(0x65640AB8FC5F4225) << 64) | 0xAD20EF26AD743A9D};
-
-/**************** Pipeline Layout ****************/
-inline Ir77GUID GUIDIr77PVLayoutUBO{(static_cast<unsigned __int128>(0xF9C41B8E3A706D25) << 64) | 0x53BD70F1248A9CE6};
-inline Ir77GUID GUIDIr77PVLayoutCEF{(static_cast<unsigned __int128>(0x79062E2E5CCD4B10) << 64) | 0x845C9562FB178E22};
-
-/**************** Buffer ****************/
-inline Ir77GUID GUIDIr77PVBufferVertex{(static_cast<unsigned __int128>(0xA8E21D0018AA4998) << 64) | 0xADDDE66142752D4C};
-inline Ir77GUID GUIDIr77PVBufferUBO{(static_cast<unsigned __int128>(0xD1A93F6E4C807B25) << 64) | 0x064BCE8317F95A2D};
-inline Ir77GUID GUIDIr77PVBufferCEF{(static_cast<unsigned __int128>(0x5755F1BBCF6F4E4D) << 64) | 0xB88960386284D17C};
-
-/**************** Render Pass ****************/
-inline Ir77GUID GUIDIr77PVRenderPassColor{(static_cast<unsigned __int128>(0x5F2A91D8E4703C6B) << 64) | 0x0B8E53C1F96A4D72};
-
-/**************** Compute ****************/
+inline Ir77GUID GUIDIr77PVRenderPass{(static_cast<unsigned __int128>(0x5F2A91D8E4703C6B) << 64) | 0x0B8E53C1F96A4D72};
+inline Ir77GUID GUIDIr77PVOverlay{(static_cast<unsigned __int128>(0x5755F1BBCF6F4E4D) << 64) | 0xB88960386284D17C};
+inline Ir77GUID GUIDIr77PVBuffer{(static_cast<unsigned __int128>(0xD1A93F6E4C807B25) << 64) | 0x064BCE8317F95A2D};
 inline Ir77GUID GUIDIr77PVCompute{(static_cast<unsigned __int128>(0x6F520D9B3E71A8C4) << 64) | 0xA8D4731F50C2E96B};
-
-/**************** Asset ****************/
+inline Ir77GUID GUIDIr77PVDescriptorSet{(static_cast<unsigned __int128>(0xA8E21D0018AA4998) << 64) | 0xADDDE66142752D4C};
+inline Ir77GUID GUIDIr77PVLayout{(static_cast<unsigned __int128>(0xF9C41B8E3A706D25) << 64) | 0x53BD70F1248A9CE6};
+inline Ir77GUID GUIDIr77PVPipeline{(static_cast<unsigned __int128>(0x7B3F90D2C5A418E6) << 64) | 0x4A8E610F93B2D75C};
+inline Ir77GUID GUIDIr77PVCmdBuffer{(static_cast<unsigned __int128>(0x83E6A0D2F1794C5B) << 64) | 0xC1A4E7930F2D85B6};
+inline Ir77GUID GUIDIr77PVTexture{(static_cast<unsigned __int128>(0x6092FBAA42AB407D) << 64) | 0x86EC49B4247721D3};
 inline Ir77GUID GUIDIr77PVShader{(static_cast<unsigned __int128>(0xC6E4819A3F720B5D) << 64) | 0x1D30A7F852C9E4B6};
 inline Ir77GUID GUIDIr77PVMaterial{(static_cast<unsigned __int128>(0x3A5D72F1E9C840B6) << 64) | 0x8F2BC4A1057E93D6};
 inline Ir77GUID GUIDIr77PVMesh{(static_cast<unsigned __int128>(0x6E8C30A1D4F97B25) << 64) | 0x2B7D4F9A61E30C85};
@@ -116,15 +103,14 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
         {"GUIDIr77PVInstance", &GUIDIr77PVInstance},
         {"GUIDIr77PVDevice", &GUIDIr77PVDevice},
         {"GUIDIr77PVSwapchain", &GUIDIr77PVSwapchain},
-        {"GUIDIr77PVCmdBuffer", &GUIDIr77PVCmdBuffer},
-        {"GUIDIr77PVPipelineGFX", &GUIDIr77PVPipelineGFX},
-        {"GUIDIr77PVLayoutUBO", &GUIDIr77PVLayoutUBO},
-        {"GUIDIr77PVLayoutCEF", &GUIDIr77PVLayoutCEF},
-        {"GUIDIr77PVBufferVertex", &GUIDIr77PVBufferVertex},
-        {"GUIDIr77PVBufferUBO", &GUIDIr77PVBufferUBO},
-        {"GUIDIr77PVBufferCEF", &GUIDIr77PVBufferCEF},
-        {"GUIDIr77PVRenderPassColor", &GUIDIr77PVRenderPassColor},
+        {"GUIDIr77PVRenderPass", &GUIDIr77PVRenderPass},
+        {"GUIDIr77PVOverlay", &GUIDIr77PVOverlay},
+        {"GUIDIr77PVBuffer", &GUIDIr77PVBuffer},
         {"GUIDIr77PVCompute", &GUIDIr77PVCompute},
+        {"GUIDIr77PVLayout", &GUIDIr77PVLayout},
+        {"GUIDIr77PVDescriptorSet", &GUIDIr77PVDescriptorSet},
+        {"GUIDIr77PVCmdBuffer", &GUIDIr77PVCmdBuffer},
+        {"GUIDIr77PVTexture", &GUIDIr77PVTexture},
         {"GUIDIr77PVShader", &GUIDIr77PVShader},
         {"GUIDIr77PVMaterial", &GUIDIr77PVMaterial},
         {"GUIDIr77PVMesh", &GUIDIr77PVMesh},
