@@ -18,6 +18,7 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 // Attachment 0 is always color when a pass has color; depth is the last attachment.
+
 //   Main      -- swapchain color + depth, ends PRESENT_SRC               (scene + CEF, today)
 //   Shadow    -- depth only, ends DEPTH_STENCIL_READ_ONLY (sampled later) (shadow maps)
 //   Offscreen -- color + depth, color ends SHADER_READ_ONLY              (HDR scene target, later)

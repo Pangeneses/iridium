@@ -42,8 +42,6 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    // Sets are returned to the pool when the layout's pool is destroyed.
-    // m_layout is held so the pool outlives these sets.
     ~Ir77PVDescriptorSet() = default;
 
    public:
@@ -94,7 +92,6 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // layout + which of its sets this object represents (0 global, 1 pass, 2 material, 3 bones ...)
     std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout, std::uint32_t const& set_index) {
         m_layout = layout;
         m_set_index = set_index;
