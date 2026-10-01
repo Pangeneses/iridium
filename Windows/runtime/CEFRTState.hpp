@@ -74,7 +74,7 @@ class CEFRTState {
             ::close(fd);
         }
         m_render_handler = new CEFRenderHandler();
-        m_render_handler->SetSize(1280, 720);
+        m_render_handler->SetViewSize(1280, 720);
 
         if (!m_render_handler) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CEFRenderHandler alloc failed");
@@ -88,8 +88,8 @@ class CEFRTState {
         CefBrowserSettings browser_settings{};
         browser_settings.windowless_frame_rate = 60;
 
-        //"https://google.com", 
-        // 
+        //  
+        // "https://google.com"
         m_browser = CefBrowserHost::CreateBrowserSync(window_info, new CEFClient(m_render_handler), "http://localhost:50003/landing",browser_settings, nullptr, nullptr);
 
         if (!m_browser) {

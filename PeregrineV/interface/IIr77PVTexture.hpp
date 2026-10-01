@@ -13,25 +13,11 @@
 
 #include "IIr77PVDevice.hpp"
 
+#include "../runtime/Ir77PVTypes.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-
-// Color -- albedo / emissive: sRGB, mipmapped, sampled
-// Data  -- normal / ORM / AO / masks: UNORM (no gamma), mipmapped, sampled
-// Cube  -- env / IBL: 6 layers, sRGB by default (SetFormat for HDR), mipmapped, sampled
-// Depth -- shadow map: D32, depth attachment + sampled, no mips, no upload
-enum class Ir77PVTextureKind : std::uint8_t { Color, Data, Cube, Depth };
-
-struct Ir77PVSamplerDesc {
-    VkFilter filter{VK_FILTER_LINEAR};
-
-    VkSamplerAddressMode address{VK_SAMPLER_ADDRESS_MODE_REPEAT};
-
-    float anisotropy{0.0f};  // 0 = off; >0 requires samplerAnisotropy enabled on the device
-
-    bool compare{false};  // depth compare (sampler2DShadow / PCF); Depth kind only
-};
 
 typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
     IIr77PVTexture() = default;

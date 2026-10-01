@@ -106,7 +106,7 @@ class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77P
 
             overlay->SetSwapchain(m_context->m_swapchains.at(device_id).at(w));
 
-            overlay->SetLayoutCEF(layout_cef);
+            overlay->SetLayout(layout_cef);
 
             if (overlay->CreateResources()->ID() != &GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: overlay creation failed.");

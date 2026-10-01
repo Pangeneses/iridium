@@ -6,10 +6,16 @@
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan_core.h>
 
+#include <vk_mem_alloc.h>
+
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
+#include <iostream>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -41,12 +47,16 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     }
 
     ~Ir77PVSwapchain() {
+        if (!m_device) return;
+
         VkDevice device;
         m_device->GetDevice(&device);
 
         for (std::size_t i = 0; i < m_swapchain_framebuffers.size(); i++) {
             vkDestroyFramebuffer(device, m_swapchain_framebuffers[i], nullptr);
         }
+
+        DestroyDepth(device);
 
         for (std::size_t i = 0; i < m_swapchain_views.size(); i++) {
             vkDestroyImageView(device, m_swapchain_views[i], nullptr);
@@ -113,6 +123,12 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> SetAllocator(VmaAllocator allocator) {
+        m_allocator = allocator;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) {
         m_render_pass = render_pass;
 
@@ -133,6 +149,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Destroys the framebuffers, depth image, views and the swapchain that DefineSwapchain replaced
     std::shared_ptr<IIr77Return const> CleanupSwapchain() {
         VkDevice device;
         m_device->GetDevice(&device);
@@ -140,12 +157,17 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         for (auto framebuffer : m_swapchain_framebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
+        m_swapchain_framebuffers.clear();
+
+        DestroyDepth(device);
 
         for (auto image_view : m_swapchain_views) {
             vkDestroyImageView(device, image_view, nullptr);
         }
+        m_swapchain_views.clear();
 
         vkDestroySwapchainKHR(device, m_old_swapchain, nullptr);
+        m_old_swapchain = VK_NULL_HANDLE;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -236,6 +258,8 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
         m_old_swapchain = m_swapchain;
 
+        std::cerr<< "Swapchain extent: " << m_swapchain_extent.width << "x" << m_swapchain_extent.height << "\n";
+
         m_swapchain_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         m_swapchain_info.surface = m_surface;
         m_swapchain_info.minImageCount = m_image_count;
@@ -248,11 +272,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         m_swapchain_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         m_swapchain_info.presentMode = m_present_mode;
         m_swapchain_info.clipped = VK_TRUE;
-        if (m_swapchain == VK_NULL_HANDLE) {
-            m_swapchain_info.oldSwapchain = VK_NULL_HANDLE;
-        } else {
-            m_swapchain_info.oldSwapchain = m_swapchain;
-        }
+        m_swapchain_info.oldSwapchain = m_swapchain;  // VK_NULL_HANDLE on the first call
 
         // add VK_SHARING_MODE_CONCURRENT when necessary
         m_swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -306,6 +326,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Attachment order matches the Main render pass: [0] color (per swapchain image), [1] depth (shared)
     std::shared_ptr<IIr77Return const> DefineFramebuffers() {
         VkDevice device;
         m_device->GetDevice(&device);
@@ -313,16 +334,20 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         VkRenderPass render_pass;
         m_render_pass->GetRenderPass(&render_pass);
 
+        if (m_allocator == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SetAllocator not called -- depth image needs it.");
+
+        if (!DefineDepth(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: depth image creation failed.");
+
         m_swapchain_framebuffers.resize(m_swapchain_views.size());
 
         for (size_t i = 0; i < m_swapchain_views.size(); i++) {
-            VkImageView attachments[] = {m_swapchain_views[i]};
+            std::array<VkImageView, 2> attachments{m_swapchain_views[i], m_depth_view};
 
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             framebufferInfo.renderPass = render_pass;
-            framebufferInfo.attachmentCount = 1;
-            framebufferInfo.pAttachments = attachments;
+            framebufferInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+            framebufferInfo.pAttachments = attachments.data();
             framebufferInfo.width = m_swapchain_extent.width;
             framebufferInfo.height = m_swapchain_extent.height;
             framebufferInfo.layers = 1;
@@ -367,11 +392,63 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     }
 
    private:
+    // One depth image per swapchain, sized to the current extent
+    bool DefineDepth(VkDevice device) {
+        DestroyDepth(device);
+
+        VkImageCreateInfo image_info{};
+        image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image_info.imageType = VK_IMAGE_TYPE_2D;
+        image_info.format = DEPTH_FORMAT;
+        image_info.extent = {m_swapchain_extent.width, m_swapchain_extent.height, 1};
+        image_info.mipLevels = 1;
+        image_info.arrayLayers = 1;
+        image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+        image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VmaAllocationCreateInfo alloc_info{};
+        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+        alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+
+        if (vmaCreateImage(m_allocator, &image_info, &alloc_info, &m_depth_image, &m_depth_allocation, nullptr) != VK_SUCCESS) return false;
+
+        VkImageViewCreateInfo view_info{};
+        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.image = m_depth_image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = DEPTH_FORMAT;
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        view_info.subresourceRange.baseMipLevel = 0;
+        view_info.subresourceRange.levelCount = 1;
+        view_info.subresourceRange.baseArrayLayer = 0;
+        view_info.subresourceRange.layerCount = 1;
+
+        return vkCreateImageView(device, &view_info, nullptr, &m_depth_view) == VK_SUCCESS;
+    }
+
+    void DestroyDepth(VkDevice device) {
+        if (m_depth_view != VK_NULL_HANDLE) vkDestroyImageView(device, m_depth_view, nullptr);
+        if (m_depth_image != VK_NULL_HANDLE) vmaDestroyImage(m_allocator, m_depth_image, m_depth_allocation);
+
+        m_depth_view = VK_NULL_HANDLE;
+        m_depth_image = VK_NULL_HANDLE;
+        m_depth_allocation = VK_NULL_HANDLE;
+    }
+
+   private:
+    // Must equal the depth attachment format in Ir77PVRenderPass (Main)
+    static constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
+
     std::shared_ptr<IIr77PVInstance> m_instance;
 
     std::shared_ptr<IIr77PVDevice> m_device;
 
     std::shared_ptr<IIr77PVRenderPass> m_render_pass;
+
+    VmaAllocator m_allocator{VK_NULL_HANDLE};
 
     SDL_Window* m_window{nullptr};
 
@@ -404,6 +481,12 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     std::vector<VkImageView> m_swapchain_views;
 
     std::vector<VkImage> m_swapchain_images;
+
+    VkImage m_depth_image{VK_NULL_HANDLE};
+
+    VmaAllocation m_depth_allocation{VK_NULL_HANDLE};
+
+    VkImageView m_depth_view{VK_NULL_HANDLE};
 
     std::vector<VkFramebuffer> m_swapchain_framebuffers;
 };

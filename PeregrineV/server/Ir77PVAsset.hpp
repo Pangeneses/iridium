@@ -80,7 +80,7 @@ struct Ir77PVMaterial {
     std::shared_ptr<IIr77PVDescriptorSet> set{};
 };
 
-// Testbed camera -- set 0 binding 0. The camera block in vert.spv must match:
+// Set 0 binding 0. The camera block in vert.spv must match:
 //   layout(set = 0, binding = 0) uniform Camera { mat4 view; mat4 proj; mat4 view_proj; vec4 eye; };
 struct Ir77PVTestCamera {
     glm::mat4 view{1.0f};
@@ -182,6 +182,19 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Camera for set 0 binding 0. Vulkan clip space is Y-down, so the projection is flipped.
+    static Ir77PVTestCamera MakeCamera(glm::vec3 const& eye, glm::vec3 const& target, float const& fov_degrees, float const& aspect) {
+        Ir77PVTestCamera camera{};
+
+        camera.eye = glm::vec4(eye, 1.0f);
+        camera.view = glm::lookAtRH(eye, target, glm::vec3(0.0f, 1.0f, 0.0f));
+        camera.proj = glm::perspectiveRH_ZO(glm::radians(fov_degrees), aspect, 0.1f, 100.0f);
+        camera.proj[1][1] *= -1.0f;
+        camera.view_proj = camera.proj * camera.view;
+
+        return camera;
+    }
+
     // =========================================================================================================================================
     // shaders
     // =========================================================================================================================================
@@ -194,9 +207,9 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             {"frag.spv", ID_SHADER_FRAG, Ir77PVShaderStage::Fragment, true},
             {"cef.vert.spv", ID_SHADER_CEF_VERT, Ir77PVShaderStage::Vertex, true},
             {"cef.frag.spv", ID_SHADER_CEF_FRAG, Ir77PVShaderStage::Fragment, true},
-            {"skinned.vert.spv", ID_SHADER_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
-            {"shadow.vert.spv", ID_SHADER_SHADOW_VERT, Ir77PVShaderStage::Vertex, false},
-            {"shadow_skinned.vert.spv", ID_SHADER_SHADOW_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
+            //{"skinned.vert.spv", ID_SHADER_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
+            //{"shadow.vert.spv", ID_SHADER_SHADOW_VERT, Ir77PVShaderStage::Vertex, false},
+            //{"shadow_skinned.vert.spv", ID_SHADER_SHADOW_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
         };
 
         auto shader = std::static_pointer_cast<IIr77PVShader>(std::make_shared<Ir77PVShader>());
@@ -235,7 +248,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Shaders.");
     }
 
-    // Feed straight into Ir77PeregrineV::CreatePipelines
+    // Feed straight into Ir77PeregrineV::CreatePipelines. Shadow kinds are still skipped there until a Shadow render pass exists.
     std::shared_ptr<IIr77Return const> GetPipelineKinds(std::vector<Ir77PVPipelineKind>& kinds) {
         auto const found = m_pipeline_kinds.find(m_context->m_current_device);
         if (found == m_pipeline_kinds.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreateShaders not called.");
@@ -340,11 +353,11 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         VkDescriptorImageInfo const flat_normal = m_context->GetPlaceholderImageInfo(Ir77PVPlaceholderKind::Normal);
 
-        material.set->BindImage(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);   // albedo
-        material.set->BindImage(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, flat_normal);   // normal
-        material.set->BindImage(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);   // ORM
-        material.set->BindImage(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);   // emissive
-        material.set->BindImage(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);   // AO
+        material.set->BindImage(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // albedo
+        material.set->BindImage(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, flat_normal);  // normal
+        material.set->BindImage(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // ORM
+        material.set->BindImage(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // emissive
+        material.set->BindImage(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // AO
 
         if (material.set->Write()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material set write failed.");
 
@@ -365,6 +378,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
     // Draw item for mesh + material through a given pipeline kind on a window. Caller fills model / instances.
+    // Needs CreatePipelines first; the pipeline lookup fails for kinds whose render pass wasn't created.
     std::shared_ptr<IIr77Return const> MakeDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& mesh_id,
                                                     std::uint32_t const& material_id, Ir77PVDrawItem& item) {
         Ir77PVMesh mesh{};
@@ -386,6 +400,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         item.index = mesh.index;
         item.index_type = mesh.index_type;
         item.index_count = mesh.index_count;
+        item.instance_count = 1;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -394,7 +409,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     // TESTBED -- a lit-by-normals grid of spinning cubes. Development only; nothing in the engine depends on it.
     //
     //   asset->CreateTestbed();                       // after CreatePipelines + CreateCommandBuffers
-    //   loop: asset->UpdateTestbed(paint, seconds);   // before paint->Draw()
+    //   loop: asset->UpdateTestbed(paint, seconds);   // before paint->Draw(); replaces the Opaque draw list and the camera
     //
     // Needs no depth attachment: back-face culling alone is correct for convex cubes that don't overlap.
     // =========================================================================================================================================
@@ -431,12 +446,9 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             float const orbit = seconds * 0.25f + static_cast<float>(w) * 0.5f;
             float const radius = 2.5f + static_cast<float>(m_testbed.grid);
 
-            Ir77PVTestCamera camera{};
-            camera.eye = glm::vec4(std::sin(orbit) * radius, radius * 0.6f, std::cos(orbit) * radius, 1.0f);
-            camera.view = glm::lookAtRH(glm::vec3(camera.eye), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-            camera.proj = glm::perspectiveRH_ZO(glm::radians(60.0f), aspect, 0.1f, 100.0f);
-            camera.proj[1][1] *= -1.0f;  // Vulkan clip space is Y-down
-            camera.view_proj = camera.proj * camera.view;
+            glm::vec3 const eye(std::sin(orbit) * radius, radius * 0.6f, std::cos(orbit) * radius);
+
+            Ir77PVTestCamera const camera = MakeCamera(eye, glm::vec3(0.0f), 60.0f, aspect);
 
             paint->SetFrameData(w, Ir77PVBufferSlot::Camera, &camera, sizeof(camera));
 

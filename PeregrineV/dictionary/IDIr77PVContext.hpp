@@ -3,8 +3,7 @@
 #include <cstdint>
 
 namespace NSIr77PeregrineV {
-// GPU INTERFACE
-// -----------------------------------------------------------------------------------------------------------------------------------------
+    
 static const std::uint64_t ID_INSTANCE = 0xA3F9C4D8127B55E1;
 
 static const std::uint64_t ID_DEVICE_001 = 0x9B72E4C1F08A33D7;
@@ -41,31 +40,18 @@ static const std::uint64_t ID_SWAPCHAIN_008 = 0xE875FE57BC5434AD;
 
 static const std::uint64_t ID_RENDER_PASS = 0xA1D7F3C8B4926E50;
 
-static const std::uint64_t ID_COMMAND_BUFFER = 0xD8A4F1C2B7E39510;
+static const std::uint64_t ID_LAYOUT_GFX = 0x68C8C3A0C53A4BDB;
 
-// PIPELINES
-// -----------------------------------------------------------------------------------------------------------------------------------------
+static const std::uint64_t ID_LAYOUT_COMPUTE = 0x35E82CB561C951D2;
+
 static const std::uint64_t ID_PIPELINE_GFX = 0xB4E7C1A9D238F560;
 
 static const std::uint64_t ID_PIPELINE_COMPUTE = 0xD3A9F7C1E845B602;
 
-//  LAYOUT
-// -----------------------------------------------------------------------------------------------------------------------------------------
-static const std::uint64_t ID_LAYOUT_GFX = 0x68C8C3A0C53A4BDB;
+static const std::uint64_t ID_BUFFER = 0x4EE431E16D835355;
 
-static const std::uint64_t ID_LAYOUT_CEF = 0x35E82CB561C951D2;
+static const std::uint64_t ID_COMMAND_BUFFER = 0xD8A4F1C2B7E39510;
 
-// BUFFER
-// -----------------------------------------------------------------------------------------------------------------------------------------
-static const std::uint64_t ID_BUFFER_GFX = 0x4EE431E16D835355;
-
-static const std::uint64_t ID_BUFFER_CEF = 0xB9F3C8A1D7426E50;
-
-// COMPUTE
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-// SHADER
-// -----------------------------------------------------------------------------------------------------------------------------------------
 static const std::uint64_t ID_SHADER = 0xA9F3C8D7E412B650;
 
 static const std::uint64_t ID_SHADER_VERT = 0xC4A1D7F3B8926E50;
@@ -82,13 +68,12 @@ static const std::uint64_t ID_SHADER_CEF_VERT = 0xC686B5A02D48E95F;
 
 static const std::uint64_t ID_SHADER_CEF_FRAG = 0xDF5D35C992EF1268;
 
-static const std::uint64_t ID_SHADER_COMPUTE = 0xE7C4A9F3D812B650;
+static const std::uint64_t ID_SHADER_CULLING_COMP = 0xE7C4A9F3D812B650;
 
-// MATERIAL
-// -----------------------------------------------------------------------------------------------------------------------------------------
-static const std::uint64_t ID_MATERIAL = 0xB3D7F9C8A4126E50;
+static const std::uint64_t ID_SHADER_SKINNING_COMP = 0x2BE61232E2F3B291;
 
-// MESH
-// -----------------------------------------------------------------------------------------------------------------------------------------
-static const std::uint64_t ID_MESH = 0xC1A7F3D8E492B650;
-}  // namespace NSIr77PeregrineV
+static const std::uint64_t ID_SHADER_MORPH_COMP = 0xD4D28C622F4CBF92;
+
+static const std::uint64_t ID_SHADER_CLOTH_COMP  = 0xE9A9676593DF336B;
+
+}

@@ -18,8 +18,6 @@
 #include "../dictionary/IDIIr77PeregrineV.hpp"
 #include "../dictionary/IDIr77PeregrineV.hpp"
 
-#include "../dictionary/IDIr77PVContext.hpp"
-
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
@@ -53,9 +51,12 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         for (std::size_t i = 0; i < m_fences_in_flight.size(); i++) {
             vkDestroySemaphore(device, m_semaphores_available[i], nullptr);
-            vkDestroySemaphore(device, m_semaphores_finished[i], nullptr);
             vkDestroyFence(device, m_fences_in_flight[i], nullptr);
         }
+
+        // sized to swapchain image count, not MAX_FRAMES_IN_FLIGHT -- destroyed separately
+        for (auto sem : m_semaphores_finished)
+            if (sem != VK_NULL_HANDLE) vkDestroySemaphore(device, sem, nullptr);
 
         vkDestroyCommandPool(device, m_cmd_pool, nullptr);
     }
@@ -123,16 +124,14 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) {
-        m_render_pass = render_pass;
+    std::shared_ptr<IIr77Return const> SetRenderPass(Ir77PVRenderPassKind const& kind, std::shared_ptr<IIr77PVRenderPass> render_pass) {
+        m_render_passes[kind] = render_pass;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // Depth-only pass the Shadow / ShadowSkinned pipelines were built against, plus its shadow-map framebuffer
-    std::shared_ptr<IIr77Return const> SetShadowTarget(std::shared_ptr<IIr77PVRenderPass> render_pass, VkFramebuffer const& framebuffer,
-                                                       VkExtent2D const& extent) {
-        m_shadow_render_pass = render_pass;
+    std::shared_ptr<IIr77Return const> SetShadowTarget(VkFramebuffer const& framebuffer, VkExtent2D const& extent) {
         m_shadow_framebuffer = framebuffer;
         m_shadow_extent = extent;
 
@@ -168,6 +167,28 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> SetComputePipeline(std::shared_ptr<IIr77PVPipelineCPT> pipeline) {
+        m_compute_pipeline = pipeline;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetComputeLayout(std::shared_ptr<IIr77PVLayoutCPT> layout) {
+        m_compute_layout = layout;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetComputeSets(std::vector<std::shared_ptr<IIr77PVDescriptorSet>> const& sets) {
+        m_compute_sets = sets;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetComputeDispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+        m_compute_groups_x = x;
+        m_compute_groups_y = y;
+        m_compute_groups_z = z;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // -------------------------------------------------------------------------------------------------------------------------------------
     // per frame
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -198,12 +219,15 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // -------------------------------------------------------------------------------------------------------------------------------------
     // setup
     // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // m_semaphores_available / m_fences_in_flight are frame-in-flight scoped (MAX_FRAMES_IN_FLIGHT).
+    // m_semaphores_finished is NOT created here -- see DefinePresentSemaphores, called from
+    // RecordCommandBuffer, since it must be sized to the swapchain's image count, not frame count.
     std::shared_ptr<IIr77Return const> DefineSyncObjects() {
         VkDevice device;
         m_device->GetDevice(&device);
 
         m_semaphores_available.assign(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
-        m_semaphores_finished.assign(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
         m_fences_in_flight.assign(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
 
         VkSemaphoreCreateInfo semaphore_info{};
@@ -215,7 +239,6 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         for (std::uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             if (vkCreateSemaphore(device, &semaphore_info, nullptr, &m_semaphores_available[i]) != VK_SUCCESS ||
-                vkCreateSemaphore(device, &semaphore_info, nullptr, &m_semaphores_finished[i]) != VK_SUCCESS ||
                 vkCreateFence(device, &fence_info, nullptr, &m_fences_in_flight[i]) != VK_SUCCESS) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: sync object creation failed.");
             }
@@ -289,6 +312,18 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Waits on every frame-in-flight fence for this window only, instead of vkDeviceWaitIdle
+    std::shared_ptr<IIr77Return const> WaitAllFrames() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        if (vkWaitForFences(device, static_cast<std::uint32_t>(m_fences_in_flight.size()), m_fences_in_flight.data(), VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: WaitAllFrames failed.");
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> AcquireNextImage(VkResult* acquire_next_result) {
         VkDevice device;
         m_device->GetDevice(&device);
@@ -317,7 +352,12 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     std::shared_ptr<IIr77Return const> RecordCommandBuffer() {
         if (m_cmd_buffers.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: AllocateCommandBuffer not called.");
-        if (!m_render_pass || !m_swapchain) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: render pass or swapchain not set.");
+
+        if (m_render_passes.count(Ir77PVRenderPassKind::Main) == 0 || !m_swapchain)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: main render pass or swapchain not set.");
+
+        if (DefinePresentSemaphores()->ID() != &GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: present semaphores not ready.");
 
         VkCommandBuffer const cmd = m_cmd_buffers[m_current_frame];
 
@@ -349,7 +389,11 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     std::shared_ptr<IIr77Return const> SubmitFrame() {
         VkSemaphore const wait_semaphores[] = {m_semaphores_available[m_current_frame]};
         VkPipelineStageFlags const wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-        VkSemaphore const signal_semaphores[] = {m_semaphores_finished[m_current_frame]};
+
+        // indexed by acquired image index, not frame-in-flight index -- present tracks semaphore
+        // lifetime per image, so reusing a frame-indexed semaphore across images is unsafe once
+        // frame-in-flight count and image count diverge
+        VkSemaphore const signal_semaphores[] = {m_semaphores_finished[m_index]};
 
         VkSubmitInfo submit_info{};
         submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -372,7 +416,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         VkSwapchainKHR swapchain;
         m_swapchain->GetSwapchain(&swapchain);
 
-        VkSemaphore const wait_semaphores[] = {m_semaphores_finished[m_current_frame]};
+        VkSemaphore const wait_semaphores[] = {m_semaphores_finished[m_index]};  // indexed by image index -- see SubmitFrame
 
         VkPresentInfoKHR present_info{};
         present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -442,6 +486,15 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         VkIndexType index_type{VK_INDEX_TYPE_UINT32};
     };
 
+    bool GetPass(Ir77PVRenderPassKind const& kind, VkRenderPass* render_pass) const {
+        auto const found = m_render_passes.find(kind);
+        if (found == m_render_passes.end() || !found->second) return false;
+
+        found->second->GetRenderPass(render_pass);
+
+        return true;
+    }
+
     static bool IsShadowKind(Ir77PVLayoutKind const& kind) { return kind == Ir77PVLayoutKind::Shadow || kind == Ir77PVLayoutKind::ShadowSkinned; }
 
     static bool UsesPassSet(Ir77PVLayoutKind const& kind) { return kind == Ir77PVLayoutKind::Static || kind == Ir77PVLayoutKind::Skinned; }
@@ -479,10 +532,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     void RecordShadowPass(VkCommandBuffer cmd) {
         auto const& draws = m_draws[static_cast<std::size_t>(Ir77PVPass::Shadow)];
 
-        if (draws.empty() || !m_shadow_render_pass || m_shadow_framebuffer == VK_NULL_HANDLE) return;
-
-        VkRenderPass render_pass;
-        m_shadow_render_pass->GetRenderPass(&render_pass);
+        VkRenderPass render_pass{VK_NULL_HANDLE};
+        if (draws.empty() || m_shadow_framebuffer == VK_NULL_HANDLE || !GetPass(Ir77PVRenderPassKind::Shadow, &render_pass)) return;
 
         VkClearValue clear_depth{};
         clear_depth.depthStencil = {1.0f, 0};
@@ -506,8 +557,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     }
 
     std::shared_ptr<IIr77Return const> RecordMainPass(VkCommandBuffer cmd) {
-        VkRenderPass render_pass;
-        m_render_pass->GetRenderPass(&render_pass);
+        VkRenderPass render_pass{VK_NULL_HANDLE};
+        if (!GetPass(Ir77PVRenderPassKind::Main, &render_pass)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: main render pass missing.");
 
         VkExtent2D extent;
         m_swapchain->GetSwapchainExtents(extent);
@@ -516,6 +567,41 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_swapchain->GetSwapchainFramebuffers(framebuffers);
 
         if (m_index >= framebuffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: image index has no framebuffer.");
+
+        // ---------------------------------------------------------
+        // [NEW] COMPUTE PIPELINE EXECUTION
+        // ---------------------------------------------------------
+        if (m_compute_pipeline && m_compute_layout) {
+            VkPipeline compute_pipeline{VK_NULL_HANDLE};
+            m_compute_pipeline->GetPipeline(&compute_pipeline);
+
+            VkPipelineLayout compute_layout{VK_NULL_HANDLE};
+            m_compute_layout->GetPipelineLayout(&compute_layout);
+
+            // Bind compute pipeline
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipeline);
+
+            // Bind descriptor sets for compute
+            std::uint32_t compute_set_count = 0;
+            m_compute_layout->GetSetCount(&compute_set_count);
+
+            for (std::uint32_t i = 0; i < compute_set_count; i++) {
+                VkDescriptorSet set{VK_NULL_HANDLE};
+                m_compute_sets[i]->GetSet(m_current_frame, &set);
+
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute_layout, i, 1, &set, 0, nullptr);
+            }
+
+            // Dispatch
+            vkCmdDispatch(cmd, m_compute_groups_x, m_compute_groups_y, m_compute_groups_z);
+
+            VkMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+        }
 
         // [0] color, [1] depth -- the depth clear is ignored until the render pass has a depth attachment
         std::array<VkClearValue, 2> clears{};
@@ -696,6 +782,39 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         vkCmdDraw(cmd, 6, 1, 0, 0);
     }
 
+    // Creates/resizes m_semaphores_finished to match the swapchain's image count. Must be sized to
+    // image count, not MAX_FRAMES_IN_FLIGHT, since the presentation engine tracks a signal semaphore's
+    // lifetime by which image it was used with -- reusing a frame-indexed semaphore across a different
+    // image index (which happens whenever frame-in-flight count != image count) is undefined behavior.
+    // Cheap no-op once sizes match; safe to call every RecordCommandBuffer so a resize (which can change
+    // image count) is picked up automatically.
+    std::shared_ptr<IIr77Return const> DefinePresentSemaphores() {
+        std::vector<VkFramebuffer> framebuffers{};
+        m_swapchain->GetSwapchainFramebuffers(framebuffers);
+        std::size_t const image_count = framebuffers.size();
+
+        if (image_count == m_semaphores_finished.size()) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        for (auto sem : m_semaphores_finished)
+            if (sem != VK_NULL_HANDLE) vkDestroySemaphore(device, sem, nullptr);
+
+        m_semaphores_finished.assign(image_count, VK_NULL_HANDLE);
+
+        VkSemaphoreCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        for (std::size_t i = 0; i < image_count; i++) {
+            if (vkCreateSemaphore(device, &info, nullptr, &m_semaphores_finished[i]) != VK_SUCCESS) {
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: present semaphore creation failed.");
+            }
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
    private:
     std::uint32_t m_index{0};
 
@@ -707,9 +826,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     std::shared_ptr<IIr77PVSwapchain> m_swapchain;
 
-    std::shared_ptr<IIr77PVRenderPass> m_render_pass;
-
-    std::shared_ptr<IIr77PVRenderPass> m_shadow_render_pass;
+    std::map<Ir77PVRenderPassKind, std::shared_ptr<IIr77PVRenderPass>> m_render_passes;
 
     VkFramebuffer m_shadow_framebuffer{VK_NULL_HANDLE};
 
@@ -733,14 +850,28 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     std::uint32_t m_queue_family{0};
 
+    // frame-in-flight scoped (MAX_FRAMES_IN_FLIGHT)
     std::vector<VkSemaphore> m_semaphores_available{};
 
-    std::vector<VkSemaphore> m_semaphores_finished{};
-
     std::vector<VkFence> m_fences_in_flight{};
+
+    // image-count scoped (see DefinePresentSemaphores) -- NOT the same size as the two above
+    std::vector<VkSemaphore> m_semaphores_finished{};
 
     VkCommandPool m_cmd_pool{VK_NULL_HANDLE};
 
     std::vector<VkCommandBuffer> m_cmd_buffers{};
+
+    std::vector<std::shared_ptr<IIr77PVDescriptorSet>> m_compute_sets;
+
+    std::shared_ptr<IIr77PVLayoutCPT> m_compute_layout;
+
+    std::shared_ptr<IIr77PVPipelineCPT> m_compute_pipeline;
+
+    std::uint32_t m_compute_groups_x{1};
+
+    std::uint32_t m_compute_groups_y{1};
+
+    std::uint32_t m_compute_groups_z{1};
 };
 }  // namespace NSIr77PeregrineV

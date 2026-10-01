@@ -22,10 +22,16 @@ class CEFRenderHandler : public CefRenderHandler {
     CEFRenderHandler(int width, int height, PaintCallback cb) : m_width{width}, m_height{height}, m_callback{std::move(cb)} {}
 
    public:
+       void SetViewSize(int w, int h) {
+        m_width = w;
+        m_height = h;
+    }
+    
     void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override { rect = CefRect(0, 0, m_width, m_height); }
 
     void OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type, const RectList& dirtyRects, const void* buffer, int width, int height) override {
         if (m_callback) {
+            std::cerr << "Paint: " << width << "x" << height << "\n";
             m_callback(buffer, width, height);
         }
     }
@@ -39,17 +45,13 @@ class CEFRenderHandler : public CefRenderHandler {
    public:
     void SetPaintCallback(std::function<void(const void*, int, int)> fn) { m_callback = std::move(fn); }
 
-    void SetSize(int w, int h) {
-        m_width = w;
-        m_height = h;
-    }
 
    private:
     PaintCallback m_callback;
 
-    int m_width = 1280;
+    std::atomic<int> m_width{1280};
 
-    int m_height = 720;
+    std::atomic<int> m_height{720};
 
    private:
     IMPLEMENT_REFCOUNTING(CEFRenderHandler);

@@ -198,10 +198,17 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     }
 
     std::shared_ptr<IIr77Return const> DefineDeviceInfo() {
-        m_phys_device_features.samplerAnisotropy = VK_TRUE;
-        m_phys_device_features.geometryShader = VK_TRUE;
-        m_phys_device_features.multiDrawIndirect = VK_TRUE;
-        m_phys_device_features.independentBlend = VK_TRUE;
+        VkPhysicalDeviceFeatures supported{};
+        vkGetPhysicalDeviceFeatures(m_phys_device, &supported);
+
+        m_phys_device_features.samplerAnisotropy = supported.samplerAnisotropy;
+        m_phys_device_features.geometryShader = supported.geometryShader;
+        m_phys_device_features.multiDrawIndirect = supported.multiDrawIndirect;
+        m_phys_device_features.independentBlend = supported.independentBlend;
+        m_phys_device_features.drawIndirectFirstInstance = supported.drawIndirectFirstInstance;
+
+        if (!supported.multiDrawIndirect) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: multiDrawIndirect not supported.");
+        if (!supported.drawIndirectFirstInstance) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: drawIndirectFirstInstance not supported.");
 
         m_create_info.clear();
         for (std::size_t i = 0; i < m_queue_families.size(); i++) m_create_info.push_back(m_queue_families[i].create_info);

@@ -18,12 +18,12 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-typedef struct IIr77PVLayout : virtual public IIr77Enlisted {
-    IIr77PVLayout() = default;
+typedef struct IIr77PVLayoutCPT : virtual public IIr77Enlisted {
+    IIr77PVLayoutCPT() = default;
 
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVLayoutKind const& kind) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVComputeKind const& kind) = 0;
 
     virtual std::shared_ptr<IIr77Return const> DefineDescriptorSetLayout() = 0;
 
@@ -33,7 +33,7 @@ typedef struct IIr77PVLayout : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> AllocateSet(std::uint32_t const& set_index, VkDescriptorSet* set) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetKind(Ir77PVLayoutKind* kind) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetKind(Ir77PVComputeKind* kind) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetSetCount(std::uint32_t* count) = 0;
 
@@ -43,6 +43,6 @@ typedef struct IIr77PVLayout : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetPipelineLayout(VkPipelineLayout* pipeline_layout) = 0;
 
-    virtual ~IIr77PVLayout() = default;
-}* pIIr77PVLayout;
+    virtual ~IIr77PVLayoutCPT() = default;
+}* pIIr77PVLayoutCPT;
 }  // namespace NSIr77PeregrineV

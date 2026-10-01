@@ -16,58 +16,17 @@
 #include "IIr77PVSwapchain.hpp"
 #include "IIr77PVRenderPass.hpp"
 #include "IIr77PVPipeline.hpp"
+#include "IIr77PVPipelineCPT.hpp"
 #include "IIr77PVLayout.hpp"
-#include "IIr77PVBuffer.hpp"
+#include "IIr77PVLayoutCPT.hpp"
 #include "IIr77PVDescriptorSet.hpp"
 #include "IIr77PVOverlay.hpp"
+
+#include "../runtime/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-
-// Which render pass a draw list is recorded into.
-//   Shadow      -> depth-only shadow pass (Shadow / ShadowSkinned pipelines)
-//   Opaque      -> main pass, first (Static / Skinned pipelines)
-//   Transparent -> main pass, after opaque; caller sorts back to front (Transparent pipeline)
-enum class Ir77PVPass : std::uint8_t { Shadow, Opaque, Transparent };
-
-// One draw. Sets 0 (global) and 1 (pass) are bound by the command buffer; the item carries only
-// what changes per draw. Leave indirect empty for a direct indexed draw.
-struct Ir77PVDrawItem {
-    std::shared_ptr<IIr77PVPipeline> pipeline{};
-
-    std::shared_ptr<IIr77PVLayout> layout{};
-
-    std::shared_ptr<IIr77PVDescriptorSet> material{};  // set 2 -- Static / Skinned / Transparent
-
-    std::shared_ptr<IIr77PVDescriptorSet> bones{};  // set 3 Skinned, set 1 ShadowSkinned
-
-    std::shared_ptr<IIr77PVBuffer> vertex{};
-
-    std::shared_ptr<IIr77PVBuffer> index{};
-
-    VkIndexType index_type{VK_INDEX_TYPE_UINT32};
-
-    std::uint32_t index_count{0};
-
-    std::uint32_t first_index{0};
-
-    std::int32_t vertex_offset{0};
-
-    std::uint32_t instance_count{1};
-
-    std::uint32_t first_instance{0};
-
-    std::shared_ptr<IIr77PVBuffer> indirect{};
-
-    VkDeviceSize indirect_offset{0};
-
-    std::uint32_t indirect_count{0};
-
-    std::array<float, 16> model{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
-
-    std::uint32_t light_index{0};  // shadow kinds only
-};
 
 typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     IIr77PVCmdBuffer() = default;
@@ -79,10 +38,9 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetRenderPass(Ir77PVRenderPassKind const& kind, std::shared_ptr<IIr77PVRenderPass> render_pass) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetShadowTarget(std::shared_ptr<IIr77PVRenderPass> render_pass, VkFramebuffer const& framebuffer,
-                                                               VkExtent2D const& extent) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetShadowTarget(VkFramebuffer const& framebuffer, VkExtent2D const& extent) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetGlobalSet(std::shared_ptr<IIr77PVDescriptorSet> global_set) = 0;
 
@@ -109,6 +67,8 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
 
     // frame loop
     virtual std::shared_ptr<IIr77Return const> WaitForFence() = 0;
+
+    virtual std::shared_ptr<IIr77Return const> WaitAllFrames() = 0;
 
     virtual std::shared_ptr<IIr77Return const> AcquireNextImage(VkResult* acquire_next_result) = 0;
 

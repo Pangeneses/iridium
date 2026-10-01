@@ -23,8 +23,8 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-typedef struct IIr77PVPipeline : virtual public IIr77Enlisted {
-    IIr77PVPipeline() = default;
+typedef struct IIr77PVPipelineCPT : virtual public IIr77Enlisted {
+    IIr77PVPipelineCPT() = default;
 
     virtual std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) = 0;
 
@@ -38,14 +38,14 @@ typedef struct IIr77PVPipeline : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetShader(std::shared_ptr<IIr77PVShader> shader_stack) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVPipelineKind const& kind) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVComputeKind const& kind) = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreatePipeline() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetKind(Ir77PVPipelineKind* kind) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetKind(Ir77PVComputeKind* kind) = 0;
 
-    virtual ~IIr77PVPipeline() = default;
-}* pIIr77PVPipeline;
+    virtual ~IIr77PVPipelineCPT() = default;
+}* pIIr77PVPipelineCPT;
 }  // namespace NSIr77PeregrineV

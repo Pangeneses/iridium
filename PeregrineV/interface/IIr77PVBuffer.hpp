@@ -11,13 +11,11 @@
 
 #include "IIr77PVDevice.hpp"
 
+#include "../runtime/Ir77PVTypes.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-
-// Dynamic: host-mapped, one copy per frame in flight, written with Update() every frame
-// Static:  device-local, single copy, written once with Upload() through a staging buffer
-enum class Ir77PVBufferMode : std::uint8_t { Dynamic, Static };
 
 typedef struct IIr77PVBuffer : virtual public IIr77Enlisted {
     IIr77PVBuffer() = default;

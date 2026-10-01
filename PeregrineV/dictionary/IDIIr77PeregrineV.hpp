@@ -35,7 +35,9 @@ inline Ir77GUID GUIDIIr77PVBuffer{(static_cast<unsigned __int128>(0xA665143705AD
 inline Ir77GUID GUIDIIr77PVCompute{(static_cast<unsigned __int128>(0x4CF567680DCB4A88) << 64) | 0x9A25F925F2778211};
 inline Ir77GUID GUIDIIr77PVDescriptorSet{(static_cast<unsigned __int128>(0xC7EFCD677B114AC8) << 64) | 0x9EF48FEFF8B288F8};
 inline Ir77GUID GUIDIIr77PVLayout{(static_cast<unsigned __int128>(0xF1FC7315669F4091) << 64) | 0x8DC0297D45CD38CD};
+inline Ir77GUID GUIDIIr77PVLayoutCPT{(static_cast<unsigned __int128>(0xE7669947A0E44A28) << 64) | 0xB79312BEFEB99E7B};
 inline Ir77GUID GUIDIIr77PVPipeline{(static_cast<unsigned __int128>(0xB10BE474EAC70D1A) << 64) | 0xFEFDBF8EA6C37F9D};
+inline Ir77GUID GUIDIIr77PVPipelineCPT{(static_cast<unsigned __int128>(0x46C20AB047F94AE2) << 64) | 0x9A1201B0DEE5A384};
 inline Ir77GUID GUIDIIr77PVCmdBuffer{(static_cast<unsigned __int128>(0xF71D19D109D2114D) << 64) | 0x1186ADBD29983077};
 inline Ir77GUID GUIDIIr77PVTexture{(static_cast<unsigned __int128>(0x3748583BB9C81720) << 64) | 0x08ACB330BEBFAC4F};
 inline Ir77GUID GUIDIIr77PVShader{(static_cast<unsigned __int128>(0xF4D60A74F19932D3) << 64) | 0xBEADFF0A12D9F258};
@@ -128,7 +130,9 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
         {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
         {"GUIDIIr77PVDescriptorSet", &GUIDIIr77PVDescriptorSet},
         {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},
+        {"GUIDIIr77PVLayoutCPT", &GUIDIIr77PVLayoutCPT},
         {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},
+        {"GUIDIIr77PVPipelineCPT", &GUIDIIr77PVPipelineCPT},
         {"GUIDIIr77PVTexture", &GUIDIIr77PVTexture},
         {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
         {"GUIDIIr77PVShader", &GUIDIIr77PVShader},

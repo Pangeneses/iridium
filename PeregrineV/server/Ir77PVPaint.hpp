@@ -6,6 +6,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "../runtime/Ir77PVTypes.hpp"
@@ -99,6 +100,10 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         std::vector<std::shared_ptr<IIr77PVCmdBuffer>> cmd_buffers{};
 
+        auto const passes = m_context->m_render_passes.find(device_id);
+        if (passes == m_context->m_render_passes.end() || passes->second.count(Ir77PVRenderPassKind::Main) == 0)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: main render pass must be created before command buffers.");
+
         for (std::size_t w = 0; w < windows; w++) {
             auto cmd_buffer = std::static_pointer_cast<IIr77PVCmdBuffer>(std::make_shared<Ir77PVCmdBuffer>());
 
@@ -108,7 +113,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             cmd_buffer->SetSwapchain(m_context->m_swapchains.at(device_id).at(w));
 
-            cmd_buffer->SetRenderPass(m_context->m_render_pass.at(device_id));
+            for (auto const& [kind, render_pass] : passes->second) cmd_buffer->SetRenderPass(kind, render_pass);
 
             cmd_buffer->SetGlobalSet(m_context->m_descriptor_sets_global.at(device_id).at(w));
 
@@ -124,8 +129,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
                 }
             }
 
-            if (cmd_buffer->DefineSyncObjects()->ID() != &GUIDIr77OperationSucceeded ||
-                cmd_buffer->DefineCommandPool()->ID() != &GUIDIr77OperationSucceeded ||
+            if (cmd_buffer->DefineSyncObjects()->ID() != &GUIDIr77OperationSucceeded || cmd_buffer->DefineCommandPool()->ID() != &GUIDIr77OperationSucceeded ||
                 cmd_buffer->AllocateCommandBuffer()->ID() != &GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: command buffer setup failed.");
             }
@@ -179,11 +183,14 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return found->second[window]->ClearDraws();
     }
 
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    // frame loop
-    // -------------------------------------------------------------------------------------------------------------------------------------
+    /********************************************* DRAW ********************************************************/
     std::shared_ptr<IIr77Return const> Draw() {
         if (m_context->m_resize_in_progress) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        auto const now = std::chrono::steady_clock::now();
+        m_delta_time = std::chrono::duration<float>(now - m_last_frame_time).count();
+        m_last_frame_time = now;
+        m_fps = m_delta_time > 0.0f ? 1.0f / m_delta_time : 0.0f;
 
         std::uint64_t const device_id = m_context->m_current_device;
 
@@ -192,7 +199,6 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         auto const& windows = m_context->m_windows.at(device_id);
 
         for (std::size_t i = 0; i < cmd_buffers.size(); i++) {
-            // a minimized window has a 0x0 surface -- no swapchain can be built, so skip it
             if (SDL_GetWindowFlags(windows.at(i)) & SDL_WINDOW_MINIMIZED) continue;
 
             auto const& cmd_buffer = cmd_buffers[i];
@@ -201,30 +207,29 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             if (cmd_buffer->WaitForFence()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: fence wait failed.");
 
-            // this frame's buffer copies are no longer in use by the GPU
             ApplyFrameData(i, frames.at(i));
 
             VkResult acquire_result{VK_SUCCESS};
             cmd_buffer->AcquireNextImage(&acquire_result);
 
-            // OUT_OF_DATE: nothing was acquired -- rebuild and try next frame.
-            // SUBOPTIMAL: the image *was* acquired and its semaphore will signal, so it must still be
-            // drawn and presented; recreating here would leave that semaphore signalled and break the next acquire.
             if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
-                ResetSwapchain(static_cast<std::uint32_t>(i));
-                continue;
-            }
+                if (ResetSwapchain(static_cast<std::uint32_t>(i))->ID() != &GUIDIr77OperationSucceeded)
+                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: swapchain rebuild failed.");
 
-            if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR)
+                cmd_buffer->AcquireNextImage(&acquire_result); 
+
+                if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR)
+                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: acquire failed after rebuild.");
+            } else if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: acquire failed.");
+            }
 
             cmd_buffer->ResetFence();
 
             if (cmd_buffer->RecordCommandBuffer()->ID() != &GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: record failed.");
 
-            if (cmd_buffer->SubmitFrame()->ID() != &GUIDIr77OperationSucceeded)
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: submit failed.");
+            if (cmd_buffer->SubmitFrame()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: submit failed.");
 
             VkResult present_result{VK_SUCCESS};
             cmd_buffer->PresentFrame(&present_result);
@@ -238,7 +243,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             }
         }
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Draw.");
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     std::shared_ptr<IIr77Return const> ResetSwapchain(std::uint32_t const& index) {
@@ -281,9 +286,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
     std::shared_ptr<IIr77Return const> RebuildSwapchain(std::uint32_t const& index) {
-        VkDevice device;
-        m_context->m_devices.at(m_context->m_current_device)->GetDevice(&device);
-        vkDeviceWaitIdle(device);
+        m_context->m_command_buffers.at(m_context->m_current_device).at(index)->WaitAllFrames();
 
         auto const& swapchain = m_context->m_swapchains.at(m_context->m_current_device).at(index);
 
@@ -293,8 +296,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (swapchain->SwapSurfaceFormat()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SwapSurfaceFormat failed.");
 
-        if (swapchain->PresentMode()->ID() != &GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: PresentMode failed.");
+        if (swapchain->PresentMode()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: PresentMode failed.");
 
         if (swapchain->SurfaceCapabilities()->ID() != &GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SurfaceCapabilities failed.");
@@ -322,5 +324,11 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
     // [device][window][slot]
     std::map<std::uint64_t, std::vector<std::map<Ir77PVBufferSlot, Ir77PVFrameWrite>>> m_frame_data{};
+
+    std::chrono::steady_clock::time_point m_last_frame_time{std::chrono::steady_clock::now()};
+
+    float m_delta_time{0.0f};
+
+    float m_fps{0.0f};
 };
 }  // namespace NSIr77PeregrineV

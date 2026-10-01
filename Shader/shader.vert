@@ -7,14 +7,21 @@ layout(location = 2) in vec2 inUV;
 layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec2 fragUV;
 
+// set 0 binding 0 -- matches Ir77PVTestCamera
 layout(set = 0, binding = 0) uniform CameraUBO {
-    mat4 projection;
     mat4 view;
-    mat4 model;
+    mat4 proj;
+    mat4 view_proj;
+    vec4 eye;
 } camera;
 
+// per-draw model matrix, from Ir77PVDrawItem::model
+layout(push_constant) uniform Push {
+    mat4 model;
+} push;
+
 void main() {
-    gl_Position = camera.projection * camera.view * camera.model * vec4(inPosition, 1.0);
-    fragNormal = mat3(camera.model) * inNormal;
+    gl_Position = camera.view_proj * push.model * vec4(inPosition, 1.0);
+    fragNormal = mat3(push.model) * inNormal;
     fragUV = inUV;
 }

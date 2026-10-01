@@ -1,9 +1,10 @@
 #pragma once
 
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
 
 #include <memory>
 
@@ -13,6 +14,8 @@
 #include "IIr77PVInstance.hpp"
 #include "IIr77PVDevice.hpp"
 #include "IIr77PVRenderPass.hpp"
+
+#include "../runtime/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
@@ -26,6 +29,8 @@ typedef struct IIr77PVSwapchain : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetAllocator(VmaAllocator allocator) = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreateSurface(SDL_Window* window) = 0;
 

@@ -13,17 +13,11 @@
 #include "IIr77PVInstance.hpp"
 #include "IIr77PVDevice.hpp"
 
+#include "../runtime/Ir77PVTypes.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-
-// Attachment 0 is always color when a pass has color; depth is the last attachment.
-
-//   Main      -- swapchain color + depth, ends PRESENT_SRC               (scene + CEF, today)
-//   Shadow    -- depth only, ends DEPTH_STENCIL_READ_ONLY (sampled later) (shadow maps)
-//   Offscreen -- color + depth, color ends SHADER_READ_ONLY              (HDR scene target, later)
-//   Post      -- swapchain color only, ends PRESENT_SRC                  (tonemap / fullscreen passes + CEF, later)
-enum class Ir77PVRenderPassKind : std::uint8_t { Main, Shadow, Offscreen, Post };
 
 typedef struct IIr77PVRenderPass : virtual public IIr77Enlisted {
     IIr77PVRenderPass() = default;

@@ -12,6 +12,8 @@
 #include "IIr77PVLayout.hpp"
 #include "IIr77PVBuffer.hpp"
 
+#include "../runtime/Ir77PVTypes.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {

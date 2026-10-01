@@ -119,7 +119,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetLayoutCEF(std::shared_ptr<IIr77PVLayout> layout_cef) {
+    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout_cef) {
         m_layout_cef = layout_cef;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -192,10 +192,10 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         VkDevice device;
         m_device->GetDevice(&device);
 
-        vkDeviceWaitIdle(device);
-
         // CEF size drives the texture size here, not the swapchain -- rebuild at the painted size
         if (static_cast<std::uint32_t>(cef_width) != m_swapchain_extent.width || static_cast<std::uint32_t>(cef_height) != m_swapchain_extent.height) {
+            vkDeviceWaitIdle(device);
+
             m_resizing = true;
 
             DestroyResources(device);
@@ -283,8 +283,6 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         if (vkQueueSubmit(queue, 1, &submit_info, m_upload_fence) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: vkQueueSubmit failed.");
         }
-
-        vkQueueWaitIdle(queue);
 
         m_ever_uploaded = true;
 

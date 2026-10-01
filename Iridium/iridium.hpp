@@ -1,14 +1,23 @@
 #pragma once
 
-#include <string>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_vulkan.h>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
@@ -41,12 +50,15 @@ class iridium {
     }
 
     bool IsResizing() {
-        bool resizing;
+        bool resizing{false};
         m_vulkan->IsResizing(resizing);
 
         return resizing;
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // dummy triangle
+    // -------------------------------------------------------------------------------------------------------------------------------------
     Ir77PVInputBuffer BuildTestTriangle() {
         Ir77PVInputBuffer buffer{};
 
@@ -61,22 +73,16 @@ class iridium {
         return buffer;
     }
 
-    Ir77PVCamera BuildTestCamera(std::uint32_t width, std::uint32_t height) {
-        Ir77PVCamera camera{};
+    // Same camera block the testbed writes: view, proj, view_proj, eye
+    Ir77PVTestCamera BuildTestCamera(int const width, int const height) {
+        float const aspect = height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
 
-        float aspect = static_cast<float>(width) / static_cast<float>(height);
-
-        camera.projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-        camera.projection[1][1] *= -1.0f;
-
-        camera.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-
-        camera.model = glm::mat4(1.0f);  // identity — no transform for this single test object
-
-        return camera;
+        return Ir77PVAsset::MakeCamera(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), 45.0f, aspect);
     }
 
-    // iridium.hpp — InitCEF
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // init
+    // -------------------------------------------------------------------------------------------------------------------------------------
     void InitializePipeline(int argc, char* argv[]) {
         m_rt_state->Initialize(argc, argv);
 
@@ -100,84 +106,130 @@ class iridium {
 
         m_windows.emplace(ID_DEVICE_001, windows);
 
-        auto peregrinev = std::make_shared<Ir77PeregrineV>();
-
-        m_vulkan = peregrinev;
-
+        m_vulkan = std::make_shared<Ir77PeregrineV>();
         m_cef = std::make_shared<Ir77PVCEF>();
-
-        m_cef->SetPeregrineV(peregrinev);
-
         m_paint = std::make_shared<Ir77PVPaint>();
-
-        m_paint->SetPeregrineV(peregrinev);
-
         m_asset = std::make_shared<Ir77PVAsset>();
 
-        m_asset->SetPeregrineV(peregrinev);
+        m_cef->SetPeregrineV(m_vulkan);
+        m_paint->SetPeregrineV(m_vulkan);
+        m_asset->SetPeregrineV(m_vulkan);
 
+        // instance / device
         m_vulkan->CreateInstance();
-
         m_vulkan->SetCurrentDevice(ID_DEVICE_001);
-
         m_vulkan->EnumeratePhysicalDevices(m_devices);
-
         m_vulkan->CreateSurfaces(m_windows);
-
         m_vulkan->EnumerateDeviceQueues();
-
         m_vulkan->CreateLogicalDevices();
-
         m_vulkan->CreateAllocator();
 
-        std::vector<Ir77PVInputBuffer> buffers{BuildTestTriangle()};
+        // layouts + passes (Main only; Shadow pipelines are skipped until CreateRenderPass(Shadow) is called)
+        Require(m_vulkan->CreateLayouts());
+        Require(m_vulkan->CreateRenderPass(Ir77PVRenderPassKind::Main));
+        Require(m_vulkan->CreateSwapchains());
 
-        m_asset->UploadVertexBuffer(buffers);
+        // frame resources -- the placeholder texture must exist before the descriptor sets and materials bind it
+        Require(m_vulkan->CreatePlaceholderTexture());
+        Require(m_vulkan->CreateFrameBuffers());
+        Require(m_vulkan->CreateDescriptorSets());
 
-        m_vulkan->CreateLayoutUBO();
+        // dummy triangle: mesh + a default material (constants + placeholder textures)
+        Require(m_asset->UploadMesh(BuildTestTriangle(), m_triangle_mesh));
+        Require(m_asset->CreateMaterial(Ir77PVMaterialConstants{}, m_triangle_material));
 
-        m_asset->CreateBuffersUBO();
+        // CEF overlay -- one per window, uses the CEF layout from CreateLayouts and each window's swapchain
+        Require(m_cef->CreateOverlays());
 
-        m_vulkan->CreateRenderPass();
+        std::shared_ptr<IIr77PVOverlay> overlay{};
+        Require(m_cef->GetOverlay(0, overlay), "Get overlay.");
 
-        m_vulkan->CreateSwapchains();
+        std::weak_ptr<IIr77PVOverlay> weak_overlay = overlay;
 
-        m_cef->CreateLayoutCEF();
+        m_rt_state->GetRenderHandler()->SetPaintCallback([weak_overlay](const void* buffer, int w, int h) {
+            if (auto const locked = weak_overlay.lock()) locked->UploadFrame(buffer, w, h);
+        });
 
-        m_cef->CreateBufferCEF();
+        // pipelines need shaders, layouts and the Main pass
+        Require(m_asset->CreateShaders(), "Create shaders.");
 
-        std::shared_ptr<Ir77PVOverlay> cef_buffer;
-        m_cef->GetBufferCEF(0, cef_buffer);
+        std::vector<Ir77PVPipelineKind> kinds{};
+        Require(m_asset->GetPipelineKinds(kinds));
+        Require(m_vulkan->CreatePipelines(kinds));
 
-        m_rt_state->GetRenderHandler()->SetPaintCallback([cef_buffer](const void* buffer, int w, int h) { cef_buffer->UploadFrame(buffer, w, h); });
+        // command buffers wire the overlay, so they come after CreateBufferCEF and CreatePipelines
+        Require(m_paint->CreateCommandBuffers());
 
-        m_asset->CreateShaders();
+        // triangle draw item -- persists until replaced
+        Ir77PVDrawItem triangle{};
+        Require(m_asset->MakeDrawItem(0, Ir77PVPipelineKind::Static, m_triangle_mesh, m_triangle_material, triangle), "Make draw.");
 
-        m_vulkan->CreatePipelineGFX();
+        glm::mat4 const model{1.0f};
+        std::memcpy(triangle.model.data(), glm::value_ptr(model), sizeof(float) * 16);
 
-        m_vulkan->CreatePipelineCEF();
-
-        m_paint->CreateCommandBuffers();
+        Require(m_paint->SetDraws(0, Ir77PVPass::Opaque, {triangle}));
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
     }
 
     bool IsRunning() { return running; }
-
     void WindowStep() {
         SDL_Event event;
+
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
                 case SDL_EVENT_QUIT:
                     running = false;
                     break;
+
                 case SDL_EVENT_WINDOW_RESIZED:
-                    m_pending_width = event.window.data1;
-                    m_pending_height = event.window.data2;
+                case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
+                    SDL_GetWindowSizeInPixels(m_window, &m_window_width, &m_window_height);
+
+                    m_pending_width = m_window_width;
+                    m_pending_height = m_window_height;
+
+                    m_last_resize_event = std::chrono::steady_clock::now();
+                    m_resize_pending = true;
+
                     break;
+                }
+
+                case SDL_EVENT_MOUSE_WHEEL: {
+                    float mouseX, mouseY;
+                    SDL_GetMouseState(&mouseX, &mouseY);
+
+                    CefMouseEvent cef_event;
+                    cef_event.x = mouseX;
+                    cef_event.y = mouseY;
+
+                    const int scroll_scale = 120;
+                    int deltaX = event.wheel.x * scroll_scale;
+                    int deltaY = event.wheel.y * scroll_scale;
+
+                    m_rt_state->GetBrowser()->GetHost()->SendMouseWheelEvent(cef_event, deltaX, deltaY);
+                    break;
+                }
+
                 default:
                     CEFInputEvent(&event, m_rt_state->GetBrowser());
                     break;
+            }
+        }
+
+        if (m_resize_pending) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_resize_event).count();
+
+            if (elapsed > 15) {
+                m_resize_pending = false;
+
+                m_cef_width = m_pending_width;
+                m_cef_height = m_pending_height;
+
+                m_rt_state->GetRenderHandler()->SetViewSize(m_cef_width, m_cef_height);
+                m_rt_state->GetBrowser()->GetHost()->WasResized();
+                m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
             }
         }
     }
@@ -189,8 +241,10 @@ class iridium {
     void VulkanStep() {}
 
     void VulkanFrameStart() {
-        auto camera_data = BuildTestCamera(m_pending_width, m_pending_height);
-        m_asset->UpdateBuffersUBO({&camera_data}, {sizeof(camera_data)});
+        auto const camera = BuildTestCamera(m_pending_width, m_pending_height);
+        m_paint->SetFrameData(0, Ir77PVBufferSlot::Camera, &camera, sizeof(camera));
+
+        std::cerr << "Draw: " << m_pending_width << "x" << m_pending_height << "\n";
 
         m_paint->Draw();
     }
@@ -199,10 +253,10 @@ class iridium {
 
     void Composition() {}
 
-    void VulkanFrameEnd() {  // m_adapter->Ir77VulkanFrame();
-    }
+    void VulkanFrameEnd() {}
 
     void Shutdown() {
+        m_rt_state->GetRenderHandler()->SetPaintCallback(nullptr);
         m_rt_state->DestroyRTState();
 
         if (m_window) {
@@ -214,33 +268,57 @@ class iridium {
     }
 
    private:
+    void Require(std::shared_ptr<IIr77Return const> const& result, char const* step = "") {
+        if (result->ID() != &GUIDIr77OperationSucceeded) {
+            std::cerr << "Iridium: init step failed: " << step << "\n";
+            throw std::runtime_error{step};
+        }
+    }
+
+   private:
+    std::chrono::steady_clock::time_point m_last_cef_pump{};
+
+    std::chrono::steady_clock::time_point m_last_cef_resize{};
+
     std::shared_ptr<CEFMessageLoop> m_message_loop;
 
     std::shared_ptr<CEFRTState> m_rt_state;
 
-    std::shared_ptr<IIr77PeregrineV> m_vulkan;
+    std::shared_ptr<Ir77PeregrineV> m_vulkan;
 
-    std::shared_ptr<IIr77PVCEF> m_cef;
+    std::shared_ptr<Ir77PVCEF> m_cef;
 
-    std::shared_ptr<IIr77PVPaint> m_paint;
+    std::shared_ptr<Ir77PVPaint> m_paint;
 
-    std::shared_ptr<IIr77PVAsset> m_asset;
+    std::shared_ptr<Ir77PVAsset> m_asset;
 
     std::map<std::uint64_t, std::shared_ptr<IIr77PVDevice>> m_devices;
 
-    SDL_Window* m_window;
+    SDL_Window* m_window{nullptr};
 
     std::map<std::uint64_t, std::vector<SDL_Window*>> m_windows;
 
+    std::uint32_t m_triangle_mesh{0};
+
+    std::uint32_t m_triangle_material{0};
+
     bool running = true;
+
+    int m_window_width{1280};
+
+    int m_window_height{720};
+
+    int m_cef_width{1280};
+
+    int m_cef_height{720};
 
     int m_pending_width{1280};
 
     int m_pending_height{720};
 
-    std::chrono::steady_clock::time_point m_last_resize_event;
+    bool m_resize_pending = false;
 
-    static constexpr int RESIZE_SETTLE_MS = 100;
+    std::chrono::steady_clock::time_point m_last_resize_event{};
 };
 
 }  // namespace Ir77

@@ -12,6 +12,8 @@
 #include "IIr77PVSwapchain.hpp"
 #include "IIr77PVLayout.hpp"
 
+#include "../runtime/Ir77PVTypes.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
@@ -25,7 +27,7 @@ typedef struct IIr77PVOverlay : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetLayoutCEF(std::shared_ptr<IIr77PVLayout> layout_cef) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout_cef) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetResizing(bool const& resizing) = 0;
 
