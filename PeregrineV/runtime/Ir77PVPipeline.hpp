@@ -10,7 +10,7 @@
 #include <memory>
 #include <vector>
 
-#include "../runtime/Ir77PVTypes.hpp"
+#include "../server/Ir77PVTypes.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 

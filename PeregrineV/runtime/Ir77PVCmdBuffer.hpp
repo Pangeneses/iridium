@@ -371,13 +371,26 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: vkBeginCommandBuffer failed.");
         }
 
-        RecordShadowPass(cmd);
+        auto const shadow = RecordShadowPass(cmd);
+        if (shadow->ID() != &GUIDIr77OperationSucceeded) {
+            vkEndCommandBuffer(cmd);
+            return shadow;
+        }
 
         auto const main = RecordMainPass(cmd);
         if (main->ID() != &GUIDIr77OperationSucceeded) {
             vkEndCommandBuffer(cmd);
             return main;
         }
+
+        /*
+        auto const compute = RecordCompute(cmd);
+        if (compute->ID() != &GUIDIr77OperationSucceeded) {
+            vkEndCommandBuffer(cmd);
+            return compute;
+        }
+
+        */
 
         if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: vkEndCommandBuffer failed.");
@@ -529,11 +542,12 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         vkCmdSetScissor(cmd, 0, 1, &scissor);
     }
 
-    void RecordShadowPass(VkCommandBuffer cmd) {
+    std::shared_ptr<IIr77Return const> RecordShadowPass(VkCommandBuffer cmd) {
         auto const& draws = m_draws[static_cast<std::size_t>(Ir77PVPass::Shadow)];
 
         VkRenderPass render_pass{VK_NULL_HANDLE};
-        if (draws.empty() || m_shadow_framebuffer == VK_NULL_HANDLE || !GetPass(Ir77PVRenderPassKind::Shadow, &render_pass)) return;
+        if (draws.empty() || m_shadow_framebuffer == VK_NULL_HANDLE || !GetPass(Ir77PVRenderPassKind::Shadow, &render_pass))
+            return Ir77RETURN<Ir77OperationSucceeded>();  // no shadow casters yet -- normal, not an error
 
         VkClearValue clear_depth{};
         clear_depth.depthStencil = {1.0f, 0};
@@ -554,6 +568,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         RecordDraws(cmd, draws);
 
         vkCmdEndRenderPass(cmd);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     std::shared_ptr<IIr77Return const> RecordMainPass(VkCommandBuffer cmd) {
@@ -567,41 +583,6 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_swapchain->GetSwapchainFramebuffers(framebuffers);
 
         if (m_index >= framebuffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: image index has no framebuffer.");
-
-        // ---------------------------------------------------------
-        // [NEW] COMPUTE PIPELINE EXECUTION
-        // ---------------------------------------------------------
-        if (m_compute_pipeline && m_compute_layout) {
-            VkPipeline compute_pipeline{VK_NULL_HANDLE};
-            m_compute_pipeline->GetPipeline(&compute_pipeline);
-
-            VkPipelineLayout compute_layout{VK_NULL_HANDLE};
-            m_compute_layout->GetPipelineLayout(&compute_layout);
-
-            // Bind compute pipeline
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipeline);
-
-            // Bind descriptor sets for compute
-            std::uint32_t compute_set_count = 0;
-            m_compute_layout->GetSetCount(&compute_set_count);
-
-            for (std::uint32_t i = 0; i < compute_set_count; i++) {
-                VkDescriptorSet set{VK_NULL_HANDLE};
-                m_compute_sets[i]->GetSet(m_current_frame, &set);
-
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute_layout, i, 1, &set, 0, nullptr);
-            }
-
-            // Dispatch
-            vkCmdDispatch(cmd, m_compute_groups_x, m_compute_groups_y, m_compute_groups_z);
-
-            VkMemoryBarrier barrier{};
-            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
-
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-        }
 
         // [0] color, [1] depth -- the depth clear is ignored until the render pass has a depth attachment
         std::array<VkClearValue, 2> clears{};
@@ -628,6 +609,44 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         RecordOverlay(cmd);
 
         vkCmdEndRenderPass(cmd);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> RecordCompute(VkCommandBuffer cmd) {
+        if (m_compute_pipeline && m_compute_layout) {
+            VkPipeline compute_pipeline{VK_NULL_HANDLE};
+            m_compute_pipeline->GetPipeline(&compute_pipeline);
+
+            VkPipelineLayout compute_layout{VK_NULL_HANDLE};
+            m_compute_layout->GetPipelineLayout(&compute_layout);
+
+            // Bind compute pipeline
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipeline);
+
+            // Bind descriptor sets for compute
+            std::uint32_t compute_set_count = 0;
+            m_compute_layout->GetSetCount(&compute_set_count);
+
+            for (std::uint32_t i = 0; i < compute_set_count; i++) {
+                if (i >= m_compute_sets.size()) break;
+
+                VkDescriptorSet set{VK_NULL_HANDLE};
+                m_compute_sets[i]->GetSet(m_current_frame, &set);
+
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute_layout, i, 1, &set, 0, nullptr);
+            }
+
+            // Dispatch
+            vkCmdDispatch(cmd, m_compute_groups_x, m_compute_groups_y, m_compute_groups_z);
+
+            VkMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

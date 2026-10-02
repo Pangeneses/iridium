@@ -258,8 +258,6 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
         m_old_swapchain = m_swapchain;
 
-        std::cerr<< "Swapchain extent: " << m_swapchain_extent.width << "x" << m_swapchain_extent.height << "\n";
-
         m_swapchain_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         m_swapchain_info.surface = m_surface;
         m_swapchain_info.minImageCount = m_image_count;

@@ -20,7 +20,7 @@
 
 #include "../interface/IIr77Material.hpp"
 
-#include "../PeregrineV/runtime/Ir77PVTypes.hpp"
+#include "../PeregrineV/server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -86,6 +86,5 @@ class Ir77Material : public Ir77Enlisted, public IIr77Material, public std::enab
     std::shared_ptr<IIr77Return const> LoadMaterialsFromAsset(fastgltf::Asset const& materials) { return Ir77RETURN<Ir77OperationSucceeded>(); }
 
    private:
-   
 };
 }  // namespace NSIr77Scene

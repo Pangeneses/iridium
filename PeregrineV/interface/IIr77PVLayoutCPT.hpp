@@ -12,7 +12,7 @@
 
 #include "IIr77PVDevice.hpp"
 
-#include "../runtime/Ir77PVTypes.hpp"
+#include "../server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 

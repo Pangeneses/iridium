@@ -20,7 +20,7 @@
 
 #include "../interface/IIr77Animation.hpp"
 
-#include "../PeregrineV/runtime/Ir77PVTypes.hpp"
+#include "../PeregrineV/server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -86,6 +86,5 @@ class Ir77Animation : public Ir77Enlisted, public IIr77Animation, public std::en
     std::shared_ptr<IIr77Return const> LoadAnimationsFromAsset(fastgltf::Asset const& animations) { return Ir77RETURN<Ir77OperationSucceeded>(); }
 
    private:
-   
 };
 }  // namespace NSIr77Scene

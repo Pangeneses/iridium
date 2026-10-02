@@ -17,7 +17,7 @@
 #include "IIr77PVLayout.hpp"
 #include "IIr77PVShader.hpp"
 
-#include "../runtime/Ir77PVTypes.hpp"
+#include "../server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 

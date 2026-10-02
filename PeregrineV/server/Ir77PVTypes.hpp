@@ -159,4 +159,10 @@ typedef struct Ir77PVSamplerDesc {
     bool compare{false};  // depth compare (sampler2DShadow / PCF); Depth kind only
 }* pIr77PVSamplerDesc;
 
+typedef struct Ir77PVUploadEntry {
+    VkBuffer dst{VK_NULL_HANDLE};
+    void const* data{nullptr};
+    VkDeviceSize size{0};
+}* pIr77PVUploadEntry;
+
 }  // namespace NSIr77PeregrineV

@@ -11,7 +11,7 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "../PeregrineV/runtime/Ir77PVTypes.hpp"
+#include "../PeregrineV/server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -25,15 +25,15 @@ typedef struct IIr77Mesh : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> AddMesh(fastgltf::Asset const& mesh, std::uint32_t const& index) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> PopulateMeshRanges()  = 0;
+    virtual std::shared_ptr<IIr77Return const> PopulateMeshRanges() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetVertexBuffer(std::vector<Ir77PVVertex>& vertex_buffer) = 0;
-    
-    virtual std::shared_ptr<IIr77Return const> GetIndexBuffer(std::vector<uint32_t>& index_buffer) = 0 ;
-    
+
+    virtual std::shared_ptr<IIr77Return const> GetIndexBuffer(std::vector<uint32_t>& index_buffer) = 0;
+
     virtual std::shared_ptr<IIr77Return const> GetInstanceBuffer(std::vector<glm::mat4>& instance_buffer) = 0;
-    
-    virtual std::shared_ptr<IIr77Return const> GetMeshRanges(std::vector<Ir77MeshRange>& mesh_ranges)  = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetMeshRanges(std::vector<Ir77MeshRange>& mesh_ranges) = 0;
 
     virtual ~IIr77Mesh() = default;
 }* pIIr77Mesh;

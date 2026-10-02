@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "../runtime/Ir77PVTypes.hpp"
+#include "../server/Ir77PVTypes.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -216,7 +216,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
                 if (ResetSwapchain(static_cast<std::uint32_t>(i))->ID() != &GUIDIr77OperationSucceeded)
                     return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: swapchain rebuild failed.");
 
-                cmd_buffer->AcquireNextImage(&acquire_result); 
+                cmd_buffer->AcquireNextImage(&acquire_result);
 
                 if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR)
                     return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: acquire failed after rebuild.");

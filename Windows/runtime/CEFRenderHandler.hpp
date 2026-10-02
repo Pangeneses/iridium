@@ -31,7 +31,7 @@ class CEFRenderHandler : public CefRenderHandler {
 
     void OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type, const RectList& dirtyRects, const void* buffer, int width, int height) override {
         if (m_callback) {
-            std::cerr << "Paint: " << width << "x" << height << "\n";
+            //std::cerr << "Paint: " << width << "x" << height << "\n";
             m_callback(buffer, width, height);
         }
     }

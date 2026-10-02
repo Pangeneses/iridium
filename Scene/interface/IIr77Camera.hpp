@@ -9,7 +9,7 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "../PeregrineV/runtime/Ir77PVTypes.hpp"
+#include "../PeregrineV/server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -25,4 +25,4 @@ typedef struct IIr77Camera : virtual public IIr77Enlisted {
 
     virtual ~IIr77Camera() = default;
 }* pIIr77Camera;
-}  // namespace NSIr77PeregrineV
+}  // namespace NSIr77Scene

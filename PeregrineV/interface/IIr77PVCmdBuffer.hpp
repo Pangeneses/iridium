@@ -22,7 +22,7 @@
 #include "IIr77PVDescriptorSet.hpp"
 #include "IIr77PVOverlay.hpp"
 
-#include "../runtime/Ir77PVTypes.hpp"
+#include "../server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
@@ -50,6 +50,14 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
                                                           std::shared_ptr<IIr77PVLayout> layout) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetClearColor(VkClearColorValue const& clear_color) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetComputePipeline(std::shared_ptr<IIr77PVPipelineCPT> pipeline) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetComputeLayout(std::shared_ptr<IIr77PVLayoutCPT> layout) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetComputeSets(std::vector<std::shared_ptr<IIr77PVDescriptorSet>> const& sets) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> SetComputeDispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) = 0;
 
     // per frame
     virtual std::shared_ptr<IIr77Return const> SetCurrentFrame(std::uint32_t const& current_frame) = 0;

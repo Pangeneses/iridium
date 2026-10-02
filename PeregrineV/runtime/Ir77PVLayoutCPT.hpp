@@ -33,8 +33,8 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
     Ir77PVLayoutCPT() {
         try {
             m_enlisted_uuid.Generate();
-        } catch (std::invalid_argument const& a) {
-            throw a;
+        } catch (std::invalid_argument const&) {
+            throw;
         }
 
         m_enlisted = std::chrono::system_clock::now();
@@ -111,12 +111,11 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
     }
 
     // ---------------------------------------------------------------------
-    // Per-kind configuration: descriptor sets, push constants, metadata
+    // Per-kind configuration: descriptor sets, push constants, workgroup size
     // ---------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> SetKind(Ir77PVComputeKind const& kind) {
         m_kind = kind;
 
-        // Reset per-kind state
         m_sets.clear();
         m_push = VkPushConstantRange{};
         m_push_count = 0;
@@ -131,11 +130,10 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
 
                 m_sets = BindingsCulling();
 
-                m_push = VkPushConstantRange{
-                    VK_SHADER_STAGE_COMPUTE_BIT,
-                    0,
-                    sizeof(float) * 16  // frustum planes / matrix
-                };
+                // Frustum planes travel as a push constant (cheap, changes every frame);
+                // binding 1 in BindingsCulling is for any auxiliary per-object culling data
+                // that doesn't fit a push constant, not a duplicate of this.
+                m_push = VkPushConstantRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 16};
                 m_push_count = 1;
 
                 m_local_size_x = 64;
@@ -147,11 +145,7 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
 
                 m_sets = BindingsSkinningUpdate();
 
-                m_push = VkPushConstantRange{
-                    VK_SHADER_STAGE_COMPUTE_BIT,
-                    0,
-                    sizeof(std::uint32_t)  // vertex count
-                };
+                m_push = VkPushConstantRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(std::uint32_t)};
                 m_push_count = 1;
 
                 m_local_size_x = 128;
@@ -163,7 +157,6 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
 
                 m_sets = BindingsMorphUpdate();
 
-                // No push constants
                 m_push_count = 0;
 
                 m_local_size_x = 64;
@@ -175,11 +168,7 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
 
                 m_sets = BindingsClothSim();
 
-                m_push = VkPushConstantRange{
-                    VK_SHADER_STAGE_COMPUTE_BIT,
-                    0,
-                    sizeof(float) * 4  // dt, damping, stiffness, iterations
-                };
+                m_push = VkPushConstantRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 4};
                 m_push_count = 1;
 
                 m_local_size_x = 32;
@@ -337,6 +326,20 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // x, y, z the shader's local_size_x/y/z must match; also what the dispatch-count math
+    // (groupCount = ceil(itemCount / local_size)) should divide by
+    std::shared_ptr<IIr77Return const> GetLocalSize(std::uint32_t* x, std::uint32_t* y, std::uint32_t* z) {
+        *x = m_local_size_x;
+        *y = m_local_size_y;
+        *z = m_local_size_z;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetDebugName(std::string* name) {
+        *name = m_debug_name;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
    private:
     static VkDescriptorSetLayoutBinding Bind(std::uint32_t binding, VkDescriptorType type, VkShaderStageFlags stages) {
         VkDescriptorSetLayoutBinding b{};
@@ -349,56 +352,15 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
     }
 
     // ---------------------------------------------------------------------
-    // Graphics layouts (existing, unchanged)
-    // ---------------------------------------------------------------------
-    static std::vector<VkDescriptorSetLayoutBinding> BindingsGlobal() {
-        return {
-            Bind(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT),  // camera
-            Bind(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT),                               // lights
-            Bind(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT),                                 // instances
-            Bind(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)                        // env / IBL
-        };
-    }
-
-    static std::vector<VkDescriptorSetLayoutBinding> BindingsPass() {
-        return {
-            Bind(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT),  // shadow map
-            Bind(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)            // shadow matrices
-        };
-    }
-
-    static std::vector<VkDescriptorSetLayoutBinding> BindingsMaterial() {
-        std::vector<VkDescriptorSetLayoutBinding> bindings{
-            Bind(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)  // material constants
-        };
-
-        for (std::uint32_t i = 1; i <= 5; ++i) {  // albedo, normal, ORM, emissive, AO
-            bindings.push_back(Bind(i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT));
-        }
-
-        return bindings;
-    }
-
-    static std::vector<VkDescriptorSetLayoutBinding> BindingsBones() {
-        return {
-            Bind(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)  // bone matrices
-        };
-    }
-
-    static std::vector<VkDescriptorSetLayoutBinding> BindingsCEF() {
-        return {
-            Bind(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)  // browser texture
-        };
-    }
-
-    // ---------------------------------------------------------------------
-    // Compute layouts per kind
+    // Compute layouts per kind -- each returns one or more descriptor sets,
+    // each set a list of bindings. Graphics bindings (camera/material/CEF/etc)
+    // live in Ir77PVLayout, not here.
     // ---------------------------------------------------------------------
     static std::vector<std::vector<VkDescriptorSetLayoutBinding>> BindingsCulling() {
         return {{
             Bind(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),  // AABBs
-            Bind(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),  // frustum
-            Bind(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)   // output visibility
+            Bind(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),  // per-object culling data
+            Bind(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)   // output visibility / indirect commands
         }};
     }
 
@@ -440,13 +402,13 @@ class Ir77PVLayoutCPT : public Ir77Enlisted, public IIr77PVLayoutCPT, public std
     Ir77PVComputeKind m_kind{Ir77PVComputeKind::Culling};
 
     std::vector<std::vector<VkDescriptorSetLayoutBinding>> m_sets{};
-    
+
     std::vector<VkDescriptorSetLayout> m_descriptor_layouts{};
 
     VkDescriptorPool m_descriptor_pool{VK_NULL_HANDLE};
 
     VkPushConstantRange m_push{};
-    
+
     std::uint32_t m_push_count{0};
 
     VkPipelineLayout m_pipeline_layout{VK_NULL_HANDLE};

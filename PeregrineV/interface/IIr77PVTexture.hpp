@@ -13,7 +13,7 @@
 
 #include "IIr77PVDevice.hpp"
 
-#include "../runtime/Ir77PVTypes.hpp"
+#include "../server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
@@ -35,11 +35,11 @@ typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
 
     // Color / Data: tightly packed pixels, width * height * bytes-per-pixel
     virtual std::shared_ptr<IIr77Return const> CreateFromPixels(VkCommandPool const& pool, VkQueue const& queue, void const* pixels, std::uint32_t const& width,
-                                                                 std::uint32_t const& height, bool const& mipmaps) = 0;
+                                                                std::uint32_t const& height, bool const& mipmaps) = 0;
 
     // Cube: six faces in +X, -X, +Y, -Y, +Z, -Z order, each size * size * bytes-per-pixel
     virtual std::shared_ptr<IIr77Return const> CreateCube(VkCommandPool const& pool, VkQueue const& queue, std::array<void const*, 6> const& faces,
-                                                           std::uint32_t const& size, bool const& mipmaps) = 0;
+                                                          std::uint32_t const& size, bool const& mipmaps) = 0;
 
     // Color / Data: 1x1 of one RGBA8 value (bytes R,G,B,A packed little-endian: 0xAABBGGRR)
     virtual std::shared_ptr<IIr77Return const> CreateSolid(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& rgba) = 0;

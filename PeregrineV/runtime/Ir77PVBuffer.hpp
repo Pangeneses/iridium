@@ -183,18 +183,15 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
     }
 
     // Static only: staging buffer -> one-time copy -> wait. Call at load time, not per frame.
-    std::shared_ptr<IIr77Return const> Upload(VkCommandPool const& pool, VkQueue const& queue, void const* data, VkDeviceSize const& size) {
-        if (m_mode != Ir77PVBufferMode::Static) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: Upload requires Static mode.");
-        if (m_buffers.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: CreateResources not called.");
-        if (size > m_size) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: upload exceeds buffer size.");
+    std::shared_ptr<IIr77Return const> UploadBatch(VkDevice device, VmaAllocator allocator, VkCommandPool pool, VkQueue queue,
+                                                          std::vector<Ir77PVUploadEntry> const& entries) {
+        VkDeviceSize total{0};
+        for (auto const& e : entries) total += e.size;
+        if (total == 0) return Ir77RETURN<Ir77OperationSucceeded>();
 
-        VkDevice device;
-        m_device->GetDevice(&device);
-
-        // staging
         VkBufferCreateInfo staging_info{};
         staging_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        staging_info.size = size;
+        staging_info.size = total;
         staging_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         staging_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -202,18 +199,22 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         staging_alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
         staging_alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
-        VkBuffer staging_buffer{VK_NULL_HANDLE};
+        VkBuffer staging{VK_NULL_HANDLE};
         VmaAllocation staging_allocation{VK_NULL_HANDLE};
         VmaAllocationInfo staging_result{};
 
-        if (vmaCreateBuffer(m_allocator, &staging_info, &staging_alloc_info, &staging_buffer, &staging_allocation, &staging_result) != VK_SUCCESS) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: staging buffer creation failed.");
+        if (vmaCreateBuffer(allocator, &staging_info, &staging_alloc_info, &staging, &staging_allocation, &staging_result) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(nullptr, "Ir77PVBuffer: batch staging buffer creation failed.");
+
+        std::vector<VkDeviceSize> offsets(entries.size());
+        VkDeviceSize cursor{0};
+        for (std::size_t i = 0; i < entries.size(); i++) {
+            offsets[i] = cursor;
+            std::memcpy(static_cast<std::uint8_t*>(staging_result.pMappedData) + cursor, entries[i].data, static_cast<std::size_t>(entries[i].size));
+            cursor += entries[i].size;
         }
+        vmaFlushAllocation(allocator, staging_allocation, 0, total);
 
-        std::memcpy(staging_result.pMappedData, data, static_cast<std::size_t>(size));
-        vmaFlushAllocation(m_allocator, staging_allocation, 0, size);
-
-        // one-time command buffer
         VkCommandBufferAllocateInfo cmd_alloc{};
         cmd_alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -222,22 +223,22 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
 
         VkCommandBuffer cmd{VK_NULL_HANDLE};
         if (vkAllocateCommandBuffers(device, &cmd_alloc, &cmd) != VK_SUCCESS) {
-            vmaDestroyBuffer(m_allocator, staging_buffer, staging_allocation);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: upload command buffer allocation failed.");
+            vmaDestroyBuffer(allocator, staging, staging_allocation);
+            return Ir77RETURN<Ir77NotConfigured>(nullptr, "Ir77PVBuffer: batch upload command buffer allocation failed.");
         }
 
         VkCommandBufferBeginInfo begin_info{};
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
         vkBeginCommandBuffer(cmd, &begin_info);
 
-        VkBufferCopy region{};
-        region.srcOffset = 0;
-        region.dstOffset = 0;
-        region.size = size;
-
-        vkCmdCopyBuffer(cmd, staging_buffer, m_buffers[0], 1, &region);
+        for (std::size_t i = 0; i < entries.size(); i++) {
+            VkBufferCopy region{};
+            region.srcOffset = offsets[i];
+            region.dstOffset = 0;
+            region.size = entries[i].size;
+            vkCmdCopyBuffer(cmd, staging, entries[i].dst, 1, &region);
+        }
 
         vkEndCommandBuffer(cmd);
 
@@ -250,9 +251,9 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         if (result == VK_SUCCESS) vkQueueWaitIdle(queue);
 
         vkFreeCommandBuffers(device, pool, 1, &cmd);
-        vmaDestroyBuffer(m_allocator, staging_buffer, staging_allocation);
+        vmaDestroyBuffer(allocator, staging, staging_allocation);
 
-        if (result != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: upload submit failed.");
+        if (result != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(nullptr, "Ir77PVBuffer: batch upload submit failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

@@ -12,7 +12,7 @@
 #include "IIr77PVLayout.hpp"
 #include "IIr77PVBuffer.hpp"
 
-#include "../runtime/Ir77PVTypes.hpp"
+#include "../server/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
@@ -27,7 +27,8 @@ typedef struct IIr77PVDescriptorSet : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> CreateSets(std::uint32_t const& copies) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> BindBuffer(std::uint32_t const& binding, VkDescriptorType const& type, std::shared_ptr<IIr77PVBuffer> buffer) = 0;
+    virtual std::shared_ptr<IIr77Return const> BindBuffer(std::uint32_t const& binding, VkDescriptorType const& type,
+                                                          std::shared_ptr<IIr77PVBuffer> buffer) = 0;
 
     virtual std::shared_ptr<IIr77Return const> BindImage(std::uint32_t const& binding, VkDescriptorType const& type, VkDescriptorImageInfo const& image) = 0;
 

@@ -135,8 +135,9 @@ class iridium {
         Require(m_vulkan->CreateDescriptorSets());
 
         // dummy triangle: mesh + a default material (constants + placeholder textures)
-        Require(m_asset->UploadMesh(BuildTestTriangle(), m_triangle_mesh));
-        Require(m_asset->CreateMaterial(Ir77PVMaterialConstants{}, m_triangle_material));
+        // Require(m_asset->UploadMesh(BuildTestTriangle(), m_triangle_mesh));
+        // Require(m_asset->CreateMaterial(Ir77PVMaterialConstants{}, m_triangle_material));
+        Require(m_asset->CreateTestbed());
 
         // CEF overlay -- one per window, uses the CEF layout from CreateLayouts and each window's swapchain
         Require(m_cef->CreateOverlays());
@@ -161,13 +162,13 @@ class iridium {
         Require(m_paint->CreateCommandBuffers());
 
         // triangle draw item -- persists until replaced
-        Ir77PVDrawItem triangle{};
-        Require(m_asset->MakeDrawItem(0, Ir77PVPipelineKind::Static, m_triangle_mesh, m_triangle_material, triangle), "Make draw.");
+        // Ir77PVDrawItem triangle{};
+        // Require(m_asset->MakeDrawItem(0, Ir77PVPipelineKind::Static, m_triangle_mesh, m_triangle_material, triangle), "Make draw.");
 
-        glm::mat4 const model{1.0f};
-        std::memcpy(triangle.model.data(), glm::value_ptr(model), sizeof(float) * 16);
+        // glm::mat4 const model{1.0f};
+        // std::memcpy(triangle.model.data(), glm::value_ptr(model), sizeof(float) * 16);
 
-        Require(m_paint->SetDraws(0, Ir77PVPass::Opaque, {triangle}));
+        // Require(m_paint->SetDraws(0, Ir77PVPass::Opaque, {triangle}));
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
     }
@@ -221,7 +222,7 @@ class iridium {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_resize_event).count();
 
-            if (elapsed > 15) {
+            if (elapsed > 10) {
                 m_resize_pending = false;
 
                 m_cef_width = m_pending_width;
@@ -241,12 +242,20 @@ class iridium {
     void VulkanStep() {}
 
     void VulkanFrameStart() {
+        float const seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_start_time).count();
+
+        m_asset->UpdateTestbed(m_paint, seconds);
+        
+        m_paint->Draw();
+
+        /*
         auto const camera = BuildTestCamera(m_pending_width, m_pending_height);
         m_paint->SetFrameData(0, Ir77PVBufferSlot::Camera, &camera, sizeof(camera));
 
         std::cerr << "Draw: " << m_pending_width << "x" << m_pending_height << "\n";
 
         m_paint->Draw();
+        */
     }
 
     void HUD() {}
@@ -319,6 +328,8 @@ class iridium {
     bool m_resize_pending = false;
 
     std::chrono::steady_clock::time_point m_last_resize_event{};
+
+    std::chrono::steady_clock::time_point m_start_time{std::chrono::steady_clock::now()};
 };
 
 }  // namespace Ir77

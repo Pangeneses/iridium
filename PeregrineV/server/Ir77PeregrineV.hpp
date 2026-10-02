@@ -43,6 +43,8 @@
 #include "../runtime/Ir77PVOverlay.hpp"
 #include "../runtime/Ir77PVTexture.hpp"
 
+#include "../server/Ir77PVTypes.hpp"
+
 #include "Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
@@ -84,12 +86,12 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         m_buffers_vertex.clear();
         m_buffers_index.clear();
         m_overlays.clear();
-        m_swapchains.clear(); 
+        m_swapchains.clear();
         m_pipelines.clear();
         m_layouts.clear();
-                
+
         m_placeholders.clear();
-        
+
         for (auto& [device_id, allocator] : m_allocators) vmaDestroyAllocator(allocator);
     }
 
@@ -331,8 +333,8 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: main render pass must be created before swapchains.");
 
         for (auto& swapchain : swapchains) {
-            swapchain->SetAllocator(m_allocators.at(m_current_device));            
-            
+            swapchain->SetAllocator(m_allocators.at(m_current_device));
+
             swapchain->SetRenderPass(main_pass->second);
 
             swapchain->QuerySwapchainSupport();
