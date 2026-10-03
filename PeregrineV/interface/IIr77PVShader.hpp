@@ -10,32 +10,11 @@
 
 #include "IIr77PVDevice.hpp"
 
+#include "../server/Ir77PVTypes.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
-
-enum class Ir77PVShaderStage : uint32_t {
-    Vertex = 0,
-    Fragment = 1,
-    Compute = 2,
-    Geometry = 3,
-    TessellationControl = 4,
-    TessellationEvaluation = 5,
-    Mesh = 6,
-    Task = 7,
-    RayGeneration = 8,
-    RayMiss = 9,
-    RayClosestHit = 10,
-    RayAnyHit = 11,
-    RayIntersection = 12,
-};
-
-typedef struct Ir77PVShaderInfo {
-    Ir77PVShaderStage stage;
-    VkPipelineShaderStageCreateInfo stage_create_info{};
-    std::vector<char> byte_code;
-    std::uint32_t size;
-}* pIr77PVShaderInfo;
 
 typedef struct IIr77PVShader : virtual public IIr77Enlisted {
     IIr77PVShader() = default;

@@ -57,6 +57,29 @@ enum class Ir77PVTextureKind : std::uint8_t { Color, Data, Cube, Depth };
 // Compute passes -- graphics-adjacent, dispatched before or alongside the render pass
 enum class Ir77PVComputeKind : std::uint8_t { Culling, SkinningUpdate, MorphUpdate, ClothSim, ParticleSim, TerrainLOD, GPUOcclusion, IndirectPrep };
 
+enum class Ir77PVShaderStage : uint8_t {
+    Vertex,
+    Fragment,
+    Compute,
+    Geometry,
+    TessellationControl,
+    TessellationEvaluation,
+    Mesh,
+    Task,
+    RayGeneration,
+    RayMiss,
+    RayClosestHit,
+    RayAnyHit,
+    RayIntersection,
+};
+
+// Frame-level buffers every window owns, one Dynamic copy per frame in flight.
+// Mesh vertex/index buffers are per-asset and live in m_buffers_vertex / m_buffers_index (filled by Ir77PVAsset).
+enum class Ir77PVBufferSlot : std::uint8_t { Camera, Lights, Instances, ShadowMatrices, Bones, Indirect };
+
+// Default textures bound to image slots that have no real texture yet
+enum class Ir77PVPlaceholderKind : std::uint8_t { White, Normal };
+
 typedef struct Ir77PVVertex {
     glm::vec3 position{};
     glm::vec3 normal{};
@@ -68,6 +91,67 @@ typedef struct Ir77PVCamera {
     alignas(16) glm::mat4 view{};
     alignas(16) glm::mat4 model{};
 }* pIr77PVCamera;
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// Asset-side types
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+struct IIr77PVBuffer;
+
+// Uploaded mesh: device-local vertex + index buffers (single-mesh path, used by the testbed and any
+// one-off load). Scene loading uses UploadScene below instead -- one shared buffer per channel, not
+// one buffer pair per mesh.
+typedef struct Ir77PVMesh {
+    std::shared_ptr<IIr77PVBuffer> vertex{};
+    std::shared_ptr<IIr77PVBuffer> index{};
+    std::uint32_t index_count{0};
+    VkIndexType index_type{VK_INDEX_TYPE_UINT32};
+}* pIr77PVMesh;
+
+// Set 2 binding 0. std140-safe: vec4, then 4 floats packed into a vec4.
+typedef struct Ir77PVMaterialConstants {
+    std::array<float, 4> base_color{1.0f, 1.0f, 1.0f, 1.0f};
+    std::array<float, 4> emissive{0.0f, 0.0f, 0.0f, 0.0f};
+    float roughness{1.0f};
+    float metallic{0.0f};
+    float alpha_cutoff{0.5f};
+    float normal_scale{1.0f};
+}* pIr77PVMaterialConstants;
+
+struct IIr77PVDescriptorSet;
+
+// Set 2 as a whole: constants buffer + descriptor set (textures 1..5 start as placeholders)
+typedef struct Ir77PVMaterial {
+    std::shared_ptr<IIr77PVBuffer> constants{};
+    std::shared_ptr<IIr77PVDescriptorSet> set{};
+}* pIr77PVMaterial;
+
+// Set 0 binding 0. The camera block in vert.spv must match:
+//   layout(set = 0, binding = 0) uniform Camera { mat4 view; mat4 proj; mat4 view_proj; vec4 eye; };
+struct Ir77PVTestCamera {
+    glm::mat4 view{1.0f};
+
+    glm::mat4 proj{1.0f};
+
+    glm::mat4 view_proj{1.0f};
+
+    glm::vec4 eye{0.0f};
+};
+
+typedef struct Ir77PVShaderInfo {
+    Ir77PVShaderStage stage;
+    VkPipelineShaderStageCreateInfo stage_create_info{};
+    std::vector<char> byte_code;
+    std::uint32_t size;
+}* pIr77PVShaderInfo;
+
+// One shader file the loader looks for; optional ones are skipped when missing
+struct Ir77PVShaderFile {
+    std::string file{};
+    std::uint64_t id{0};
+    Ir77PVShaderStage stage{Ir77PVShaderStage::Vertex};
+    bool required{false};
+};
 
 typedef struct Ir77PVLight {
     glm::vec3 position{};

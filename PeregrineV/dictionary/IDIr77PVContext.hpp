@@ -3,7 +3,7 @@
 #include <cstdint>
 
 namespace NSIr77PeregrineV {
-    
+
 static const std::uint64_t ID_INSTANCE = 0xA3F9C4D8127B55E1;
 
 static const std::uint64_t ID_DEVICE_001 = 0x9B72E4C1F08A33D7;
@@ -74,6 +74,6 @@ static const std::uint64_t ID_SHADER_SKINNING_COMP = 0x2BE61232E2F3B291;
 
 static const std::uint64_t ID_SHADER_MORPH_COMP = 0xD4D28C622F4CBF92;
 
-static const std::uint64_t ID_SHADER_CLOTH_COMP  = 0xE9A9676593DF336B;
+static const std::uint64_t ID_SHADER_CLOTH_COMP = 0xE9A9676593DF336B;
 
-}
+}  // namespace NSIr77PeregrineV

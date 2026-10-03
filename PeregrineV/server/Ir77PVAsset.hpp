@@ -43,68 +43,6 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-// ---------------------------------------------------------------------------------------------------------------------------------------------
-// Asset-side types
-// ---------------------------------------------------------------------------------------------------------------------------------------------
-
-// Uploaded mesh: device-local vertex + index buffers (single-mesh path, used by the testbed and any
-// one-off load). Scene loading uses UploadScene below instead -- one shared buffer per channel, not
-// one buffer pair per mesh.
-struct Ir77PVMesh {
-    std::shared_ptr<IIr77PVBuffer> vertex{};
-
-    std::shared_ptr<IIr77PVBuffer> index{};
-
-    std::uint32_t index_count{0};
-
-    VkIndexType index_type{VK_INDEX_TYPE_UINT32};
-};
-
-// Set 2 binding 0. std140-safe: vec4, then 4 floats packed into a vec4.
-struct Ir77PVMaterialConstants {
-    std::array<float, 4> base_color{1.0f, 1.0f, 1.0f, 1.0f};
-
-    std::array<float, 4> emissive{0.0f, 0.0f, 0.0f, 0.0f};
-
-    float roughness{1.0f};
-
-    float metallic{0.0f};
-
-    float alpha_cutoff{0.5f};
-
-    float normal_scale{1.0f};
-};
-
-// Set 2 as a whole: constants buffer + descriptor set (textures 1..5 start as placeholders)
-struct Ir77PVMaterial {
-    std::shared_ptr<IIr77PVBuffer> constants{};
-
-    std::shared_ptr<IIr77PVDescriptorSet> set{};
-};
-
-// Set 0 binding 0. The camera block in vert.spv must match:
-//   layout(set = 0, binding = 0) uniform Camera { mat4 view; mat4 proj; mat4 view_proj; vec4 eye; };
-struct Ir77PVTestCamera {
-    glm::mat4 view{1.0f};
-
-    glm::mat4 proj{1.0f};
-
-    glm::mat4 view_proj{1.0f};
-
-    glm::vec4 eye{0.0f};
-};
-
-// One shader file the loader looks for; optional ones are skipped when missing
-struct Ir77PVShaderFile {
-    std::string file{};
-
-    std::uint64_t id{0};
-
-    Ir77PVShaderStage stage{Ir77PVShaderStage::Vertex};
-
-    bool required{false};
-};
-
 // -------------------------------------------------------------------------------------------------------------------------------------------
 // Whole-scene vertex-domain upload. Scene (glTF loader) stacks every primitive's data into these
 // arrays itself -- one entry per vertex/index across the entire file, not per mesh -- and prebuilds

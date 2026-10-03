@@ -50,30 +50,6 @@ class iridium {
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // dummy triangle
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    Ir77PVInputBuffer BuildTestTriangle() {
-        Ir77PVInputBuffer buffer{};
-
-        buffer.vertex_data = {
-            {{0.0f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 0.0f}},
-            {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-            {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-        };
-
-        buffer.index_data = {2, 1, 0};
-
-        return buffer;
-    }
-
-    // Same camera block the testbed writes: view, proj, view_proj, eye
-    Ir77PVTestCamera BuildTestCamera(int const width, int const height) {
-        float const aspect = height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
-
-        return Ir77PVAsset::MakeCamera(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), 45.0f, aspect);
-    }
-
-    // -------------------------------------------------------------------------------------------------------------------------------------
     // init
     // -------------------------------------------------------------------------------------------------------------------------------------
     void InitializePipeline(int argc, char* argv[]) {
@@ -97,7 +73,7 @@ class iridium {
 
         std::vector<SDL_Window*> windows{m_window};
 
-        m_windows.emplace(ID_DEVICE_001, windows);
+        m_windows.emplace(ID_DEVICE_002, windows);
 
         m_vulkan = std::make_shared<Ir77PeregrineV>();
         m_cef = std::make_shared<Ir77PVCEF>();
@@ -110,8 +86,8 @@ class iridium {
 
         // instance / device
         m_vulkan->CreateInstance();
-        m_vulkan->SetCurrentDevice(ID_DEVICE_002);
         m_vulkan->EnumeratePhysicalDevices();
+        m_vulkan->SetCurrentDevice(ID_DEVICE_002);
         m_vulkan->CreateSurfaces(m_windows);
         m_vulkan->EnumerateDeviceQueues();
         m_vulkan->CreateLogicalDevices();
@@ -119,7 +95,7 @@ class iridium {
 
         // layouts + passes (Main only; Shadow pipelines are skipped until CreateRenderPass(Shadow) is called)
         Require(m_vulkan->CreateLayouts());
-        Require(m_vulkan->CreateRenderPass(Ir77PVRenderPassKind::Main));
+        Require(m_vulkan->CreateRenderPasses());
         Require(m_vulkan->CreateSwapchains());
 
         // frame resources -- the placeholder texture must exist before the descriptor sets and materials bind it
@@ -127,9 +103,6 @@ class iridium {
         Require(m_vulkan->CreateFrameBuffers());
         Require(m_vulkan->CreateDescriptorSets());
 
-        // dummy triangle: mesh + a default material (constants + placeholder textures)
-        // Require(m_asset->UploadMesh(BuildTestTriangle(), m_triangle_mesh));
-        // Require(m_asset->CreateMaterial(Ir77PVMaterialConstants{}, m_triangle_material));
         Require(m_asset->CreateTestbed());
 
         // CEF overlay -- one per window, uses the CEF layout from CreateLayouts and each window's swapchain
@@ -147,21 +120,10 @@ class iridium {
         // pipelines need shaders, layouts and the Main pass
         Require(m_asset->CreateShaders(), "Create shaders.");
 
-        std::vector<Ir77PVPipelineKind> kinds{};
-        Require(m_asset->GetPipelineKinds(kinds));
-        Require(m_vulkan->CreatePipelines(kinds));
+        Require(m_vulkan->CreatePipelines());
 
         // command buffers wire the overlay, so they come after CreateBufferCEF and CreatePipelines
         Require(m_paint->CreateCommandBuffers());
-
-        // triangle draw item -- persists until replaced
-        // Ir77PVDrawItem triangle{};
-        // Require(m_asset->MakeDrawItem(0, Ir77PVPipelineKind::Static, m_triangle_mesh, m_triangle_material, triangle), "Make draw.");
-
-        // glm::mat4 const model{1.0f};
-        // std::memcpy(triangle.model.data(), glm::value_ptr(model), sizeof(float) * 16);
-
-        // Require(m_paint->SetDraws(0, Ir77PVPass::Opaque, {triangle}));
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
     }
@@ -238,17 +200,8 @@ class iridium {
         float const seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_start_time).count();
 
         m_asset->UpdateTestbed(m_paint, seconds);
-        
-        m_paint->Draw();
-
-        /*
-        auto const camera = BuildTestCamera(m_pending_width, m_pending_height);
-        m_paint->SetFrameData(0, Ir77PVBufferSlot::Camera, &camera, sizeof(camera));
-
-        std::cerr << "Draw: " << m_pending_width << "x" << m_pending_height << "\n";
 
         m_paint->Draw();
-        */
     }
 
     void HUD() {}
