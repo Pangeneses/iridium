@@ -14,6 +14,12 @@
 namespace NSIr77PeregrineV {
 static constexpr std::uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
+static constexpr std::size_t MAX_WINDOWS = 8;
+
+static constexpr std::uint32_t MATERIAL_CAPACITY = 256;
+
+static constexpr std::uint32_t SKELETON_CAPACITY = 64;
+
 // Which render pass a draw list is recorded into.
 // Shadow       -> depth-only shadow pass (Shadow / ShadowSkinned pipelines)
 // Opaque       -> main pass, first (Static / Skinned pipelines)
@@ -48,19 +54,8 @@ enum class Ir77PVBufferMode : std::uint8_t { Dynamic, Static };
 // Depth -- shadow map: D32, depth attachment + sampled, no mips, no upload
 enum class Ir77PVTextureKind : std::uint8_t { Color, Data, Cube, Depth };
 
-// Culling
-// etc
-// graphics specific 
-enum class Ir77PVComputeKind : std::uint8_t {
-    Culling,
-    SkinningUpdate,
-    MorphUpdate,
-    ClothSim,
-    ParticleSim,
-    TerrainLOD,
-    GPUOcclusion,
-    IndirectPrep
-};
+// Compute passes -- graphics-adjacent, dispatched before or alongside the render pass
+enum class Ir77PVComputeKind : std::uint8_t { Culling, SkinningUpdate, MorphUpdate, ClothSim, ParticleSim, TerrainLOD, GPUOcclusion, IndirectPrep };
 
 typedef struct Ir77PVVertex {
     glm::vec3 position{};
@@ -102,15 +97,16 @@ typedef struct Ir77MeshRange {
 
 static_assert(sizeof(Ir77MeshRange) == sizeof(VkDrawIndexedIndirectCommand));
 
-typedef struct Ir77PVVertexSkinned { 
-    glm::vec3 position{}; 
-    glm::vec3 normal{}; 
-    glm::vec2 uv{}; 
-    glm::uvec4 joints{}; 
-    glm::vec4 weights{}; 
+typedef struct Ir77PVVertexSkinned {
+    glm::vec3 position{};
+    glm::vec3 normal{};
+    glm::vec2 uv{};
+    glm::uvec4 joints{};
+    glm::vec4 weights{};
 }* pIr77PVVertexSkinned;
 
 struct IIr77PVBuffer;
+
 typedef struct Ir77PVDescriptorBinding {
     std::uint32_t binding{0};
     VkDescriptorType type{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER};
@@ -119,24 +115,32 @@ typedef struct Ir77PVDescriptorBinding {
     bool is_image{false};
 }* pIr77PVDescriptorBinding;
 
+// One destination buffer + the data going into it, for a batched multi-buffer upload
+// (one staging buffer, one command buffer, one submit covering several entries at once).
+typedef struct Ir77PVUploadEntry {
+    VkBuffer dst{VK_NULL_HANDLE};
+    void const* data{nullptr};
+    VkDeviceSize size{0};
+}* pIr77PVUploadEntry;
+
 typedef struct Ir77PVFrameSizes {
-    VkDeviceSize camera{256};                         // view, proj, view_proj, eye position
-    VkDeviceSize lights{64 * 64};                       // 64 lights x 64 bytes
-    VkDeviceSize instances{4096 * 64};            // 4096 instances x mat4
-    VkDeviceSize shadow_matrices{4 * 64};     // 4 cascades / lights x mat4
-    VkDeviceSize bones{256 * 128 * 64};          // 256 skeletons x 128 joints x mat4
+    VkDeviceSize camera{256};              // view, proj, view_proj, eye position
+    VkDeviceSize lights{64 * 64};          // 64 lights x 64 bytes
+    VkDeviceSize instances{4096 * 64};     // 4096 instances x mat4
+    VkDeviceSize shadow_matrices{4 * 64};  // 4 cascades / lights x mat4
+    VkDeviceSize bones{256 * 128 * 64};    // 256 skeletons x 128 joints x mat4
     VkDeviceSize indirect{4096 * sizeof(VkDrawIndexedIndirectCommand)};
 }* pIr77PVFrameSizes;
 
 struct IIr77PVPipeline;
 struct IIr77PVLayout;
 struct IIr77PVDescriptorSet;
-struct IIr77PVDescriptorSet;
+
 typedef struct Ir77PVDrawItem {
     std::shared_ptr<IIr77PVPipeline> pipeline{};
     std::shared_ptr<IIr77PVLayout> layout{};
     std::shared_ptr<IIr77PVDescriptorSet> material{};  // set 2 -- Static / Skinned / Transparent
-    std::shared_ptr<IIr77PVDescriptorSet> bones{};  // set 3 Skinned, set 1 ShadowSkinned
+    std::shared_ptr<IIr77PVDescriptorSet> bones{};     // set 3 Skinned, set 1 ShadowSkinned
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
     VkIndexType index_type{VK_INDEX_TYPE_UINT32};
@@ -156,13 +160,7 @@ typedef struct Ir77PVSamplerDesc {
     VkFilter filter{VK_FILTER_LINEAR};
     VkSamplerAddressMode address{VK_SAMPLER_ADDRESS_MODE_REPEAT};
     float anisotropy{0.0f};  // 0 = off; >0 requires samplerAnisotropy enabled on the device
-    bool compare{false};  // depth compare (sampler2DShadow / PCF); Depth kind only
+    bool compare{false};     // depth compare (sampler2DShadow / PCF); Depth kind only
 }* pIr77PVSamplerDesc;
-
-typedef struct Ir77PVUploadEntry {
-    VkBuffer dst{VK_NULL_HANDLE};
-    void const* data{nullptr};
-    VkDeviceSize size{0};
-}* pIr77PVUploadEntry;
 
 }  // namespace NSIr77PeregrineV

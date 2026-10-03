@@ -93,7 +93,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         std::uint64_t const device_id = m_context->m_current_device;
         std::size_t const windows = m_context->m_windows.at(device_id).size();
 
-        if (windows > Ir77PeregrineV::MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: too many windows.");
+        if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: too many windows.");
 
         auto const overlays = m_context->m_overlays.find(device_id);
         bool const has_overlays = overlays != m_context->m_overlays.end() && overlays->second.size() == windows;

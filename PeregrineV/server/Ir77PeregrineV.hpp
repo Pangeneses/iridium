@@ -40,11 +40,11 @@
 #include "../runtime/Ir77PVLayout.hpp"
 #include "../runtime/Ir77PVBuffer.hpp"
 #include "../runtime/Ir77PVDescriptorSet.hpp"
-#include "../runtime/Ir77PVOverlay.hpp"
 #include "../runtime/Ir77PVTexture.hpp"
 
 #include "../server/Ir77PVTypes.hpp"
 
+#include "IDIr77PVContext.hpp"
 #include "Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
@@ -140,12 +140,6 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> IsResizing(bool& resizing) {
-        resizing = m_resize_in_progress;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // -------------------------------------------------------------------------------------------------------------------------------------
     // instance / device / surface -- unchanged order
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -167,18 +161,23 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Instance.");
     }
 
-    std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices(std::map<std::uint64_t, std::shared_ptr<IIr77PVDevice>>& devices) {
+    std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices() {
         for (std::size_t i = 0; i < m_device_count; i++) {
             auto device = std::static_pointer_cast<IIr77PVDevice>(std::make_shared<Ir77PVDevice>());
 
-            m_devices.emplace(m_current_device, device);
+            if (i == 0) m_devices.emplace(ID_DEVICE_001, device);
+            else if (i == 1) m_devices.emplace(ID_DEVICE_002, device);
+            else if (i == 2) m_devices.emplace(ID_DEVICE_003, device);
+            else if (i == 3) m_devices.emplace(ID_DEVICE_004, device);
+            else if (i == 4) m_devices.emplace(ID_DEVICE_005, device);
+            else if (i == 5) m_devices.emplace(ID_DEVICE_006, device);
+            else if (i == 6) m_devices.emplace(ID_DEVICE_007, device);
+            else if (i == 7) m_devices.emplace(ID_DEVICE_008, device);
 
             device->SetInstance(m_instance);
 
-            device->EnumeratePhysicalDevices(1);  // change to i later
+            device->EnumeratePhysicalDevices(i);  // change to i later
         }
-
-        devices = m_devices;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Enumerate Devices.");
     }
@@ -664,21 +663,15 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     friend class Ir77PVAsset;
     friend class Ir77PVCEF;
 
-    static constexpr std::size_t MAX_WINDOWS = 8;
-
-    static constexpr std::uint32_t MATERIAL_CAPACITY = 256;
-
-    static constexpr std::uint32_t SKELETON_CAPACITY = 64;
+    std::shared_ptr<IIr77PVInstance> m_instance;
 
     std::uint32_t m_device_count{0};
 
     std::uint64_t m_current_device{0};
 
-    std::map<std::uint64_t, std::vector<std::uint32_t>> m_current_frames;
-
-    std::shared_ptr<IIr77PVInstance> m_instance;
-
     std::map<std::uint64_t, std::shared_ptr<IIr77PVDevice>> m_devices;
+
+    std::map<std::uint64_t, std::vector<std::uint32_t>> m_current_frames;
 
     std::map<std::uint64_t, std::vector<SDL_Window*>> m_windows;
 

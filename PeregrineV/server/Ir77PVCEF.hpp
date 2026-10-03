@@ -89,7 +89,7 @@ class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77P
         std::uint64_t const device_id = m_context->m_current_device;
         std::size_t const windows = m_context->m_windows.at(device_id).size();
 
-        if (windows > Ir77PeregrineV::MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: too many windows.");
+        if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: too many windows.");
 
         std::shared_ptr<IIr77PVLayout> layout_cef{};
         if (m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() != &GUIDIr77OperationSucceeded)

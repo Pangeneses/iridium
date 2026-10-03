@@ -49,13 +49,6 @@ class iridium {
         m_rt_state = std::make_shared<CEFRTState>();
     }
 
-    bool IsResizing() {
-        bool resizing{false};
-        m_vulkan->IsResizing(resizing);
-
-        return resizing;
-    }
-
     // -------------------------------------------------------------------------------------------------------------------------------------
     // dummy triangle
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -117,8 +110,8 @@ class iridium {
 
         // instance / device
         m_vulkan->CreateInstance();
-        m_vulkan->SetCurrentDevice(ID_DEVICE_001);
-        m_vulkan->EnumeratePhysicalDevices(m_devices);
+        m_vulkan->SetCurrentDevice(ID_DEVICE_002);
+        m_vulkan->EnumeratePhysicalDevices();
         m_vulkan->CreateSurfaces(m_windows);
         m_vulkan->EnumerateDeviceQueues();
         m_vulkan->CreateLogicalDevices();
@@ -285,10 +278,6 @@ class iridium {
     }
 
    private:
-    std::chrono::steady_clock::time_point m_last_cef_pump{};
-
-    std::chrono::steady_clock::time_point m_last_cef_resize{};
-
     std::shared_ptr<CEFMessageLoop> m_message_loop;
 
     std::shared_ptr<CEFRTState> m_rt_state;
@@ -301,15 +290,9 @@ class iridium {
 
     std::shared_ptr<Ir77PVAsset> m_asset;
 
-    std::map<std::uint64_t, std::shared_ptr<IIr77PVDevice>> m_devices;
-
     SDL_Window* m_window{nullptr};
 
     std::map<std::uint64_t, std::vector<SDL_Window*>> m_windows;
-
-    std::uint32_t m_triangle_mesh{0};
-
-    std::uint32_t m_triangle_material{0};
 
     bool running = true;
 
@@ -326,6 +309,10 @@ class iridium {
     int m_pending_height{720};
 
     bool m_resize_pending = false;
+
+    std::chrono::steady_clock::time_point m_last_cef_pump{};
+
+    std::chrono::steady_clock::time_point m_last_cef_resize{};
 
     std::chrono::steady_clock::time_point m_last_resize_event{};
 
