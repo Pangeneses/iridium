@@ -146,11 +146,11 @@ class IDIr77Return : public IIr77Dictionary, public std::enable_shared_from_this
         static Ir77GUID s_dictionary{(static_cast<unsigned __int128>(0xEDA0BCD07ED54DE1) << 64) | 0xA97AD08DAA70563B};
         static Ir77GUID s_mpvm{(static_cast<unsigned __int128>(0x9347D36C009246A9) << 64) | 0x93ADB344A22135D2};
 
-        if (iid == &s_enlisted)
+        if (iid == s_enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
-        else if (iid == &s_dictionary)
+        else if (iid == s_dictionary)
             obj = std::shared_ptr<IIr77Dictionary>(shared_from_this(), static_cast<IIr77Dictionary*>(this));
-        else if (iid == &s_mpvm)
+        else if (iid == s_mpvm)
             obj = std::shared_ptr<IDIr77Return>(shared_from_this(), static_cast<IDIr77Return*>(this));
         else
             return GUIDQueryFailed;

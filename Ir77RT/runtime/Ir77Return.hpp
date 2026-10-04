@@ -62,136 +62,136 @@ enum class Ir77RetEnum : unsigned int {
 };
 
 struct Ir77Unknown {
-    static IIr77GUID* MemberUUID() { return GUIDIr77Unknown; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77Unknown; }
 };
 struct Ir77False {
-    static IIr77GUID* MemberUUID() { return GUIDIr77False; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77False; }
 };
 struct Ir77True {
-    static IIr77GUID* MemberUUID() { return GUIDIr77True; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77True; }
 };
 struct Ir77IsEqual {
-    static IIr77GUID* MemberUUID() { return GUIDIr77IsEqual; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77IsEqual; }
 };
 struct Ir77IsLesser {
-    static IIr77GUID* MemberUUID() { return GUIDIr77IsLesser; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77IsLesser; }
 };
 struct Ir77IsGreater {
-    static IIr77GUID* MemberUUID() { return GUIDIr77IsGreater; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77IsGreater; }
 };
 struct Ir77InvalidArgument {
-    static IIr77GUID* MemberUUID() { return GUIDIr77InvalidArgument; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77InvalidArgument; }
 };
 struct Ir77ValidArgument {
-    static IIr77GUID* MemberUUID() { return GUIDIr77ValidArgument; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77ValidArgument; }
 };
 struct Ir77OperationFailed {
-    static IIr77GUID* MemberUUID() { return GUIDIr77OperationFailed; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77OperationFailed; }
 };
 struct Ir77OperationConflict {
-    static IIr77GUID* MemberUUID() { return GUIDIr77OperationConflict; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77OperationConflict; }
 };
 struct Ir77OperationSucceeded {
-    static IIr77GUID* MemberUUID() { return GUIDIr77OperationSucceeded; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77OperationSucceeded; }
 };
 struct Ir77InvalidOperation {
-    static IIr77GUID* MemberUUID() { return GUIDIr77InvalidOperation; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77InvalidOperation; }
 };
 struct Ir77NotConfigured {
-    static IIr77GUID* MemberUUID() { return GUIDIr77NotConfigured; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77NotConfigured; }
 };
 struct Ir77AlreadyConfigure {
-    static IIr77GUID* MemberUUID() { return GUIDIr77AlreadyConfigure; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77AlreadyConfigure; }
 };
 struct Ir77ImproperlyConfiged {
-    static IIr77GUID* MemberUUID() { return GUIDIr77ImproperlyConfiged; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77ImproperlyConfiged; }
 };
 struct Ir77ProperlyConfigured {
-    static IIr77GUID* MemberUUID() { return GUIDIr77ProperlyConfigured; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77ProperlyConfigured; }
 };
 struct Ir77MPVMError {
-    static IIr77GUID* MemberUUID() { return GUIDIr77MPVMError; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77MPVMError; }
 };
 struct Ir77OutOfMemory {
-    static IIr77GUID* MemberUUID() { return GUIDIr77OutOfMemory; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77OutOfMemory; }
 };
 struct Ir77OutOfRange {
-    static IIr77GUID* MemberUUID() { return GUIDIr77OutOfRange; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77OutOfRange; }
 };
 struct Ir77KeyNotFound {
-    static IIr77GUID* MemberUUID() { return GUIDIr77KeyNotFound; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77KeyNotFound; }
 };
 struct Ir77InvalidPointer {
-    static IIr77GUID* MemberUUID() { return GUIDIr77InvalidPointer; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77InvalidPointer; }
 };
 struct Ir77InvalidInterface {
-    static IIr77GUID* MemberUUID() { return GUIDIr77InvalidInterface; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77InvalidInterface; }
 };
 struct Ir77InvalidToken {
-    static IIr77GUID* MemberUUID() { return GUIDIr77InvalidToken; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77InvalidToken; }
 };
 struct Ir77Empty {
-    static IIr77GUID* MemberUUID() { return GUIDIr77Empty; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77Empty; }
 };
 struct Ir77Dirty {
-    static IIr77GUID* MemberUUID() { return GUIDIr77Dirty; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77Dirty; }
 };
 struct Ir77Sealed {
-    static IIr77GUID* MemberUUID() { return GUIDIr77Sealed; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77Sealed; }
 };
 struct Ir77Invalidated {
-    static IIr77GUID* MemberUUID() { return GUIDIr77Invalidated; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77Invalidated; }
 };
 struct Ir77NotSystemModule {
-    static IIr77GUID* MemberUUID() { return GUIDIr77NotSystemModule; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77NotSystemModule; }
 };
 struct Ir77ModuleNotFound {
-    static IIr77GUID* MemberUUID() { return GUIDIr77ModuleNotFound; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77ModuleNotFound; }
 };
 struct Ir77RTClassNotFound {
-    static IIr77GUID* MemberUUID() { return GUIDIr77RTClassNotFound; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77RTClassNotFound; }
 };
 struct Ir77ProcessNotFound {
-    static IIr77GUID* MemberUUID() { return GUIDIr77ProcessNotFound; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77ProcessNotFound; }
 };
 struct Ir77ProcessNotComplete {
-    static IIr77GUID* MemberUUID() { return GUIDIr77ProcessNotComplete; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77ProcessNotComplete; }
 };
 struct Ir77ProcessComplete {
-    static IIr77GUID* MemberUUID() { return GUIDIr77ProcessComplete; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77ProcessComplete; }
 };
 struct Ir77ImageNotLoaded {
-    static IIr77GUID* MemberUUID() { return GUIDIr77ImageNotLoaded; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77ImageNotLoaded; }
 };
 struct Ir77MPVMFailed {
-    static IIr77GUID* MemberUUID() { return GUIDIr77MPVMFailed; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77MPVMFailed; }
 };
 struct Ir77MPVMSucceeded {
-    static IIr77GUID* MemberUUID() { return GUIDIr77MPVMSucceeded; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77MPVMSucceeded; }
 };
 struct Ir77DirDoesntExist {
-    static IIr77GUID* MemberUUID() { return GUIDIr77DirDoesntExist; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77DirDoesntExist; }
 };
 struct Ir77DirAlreadyExists {
-    static IIr77GUID* MemberUUID() { return GUIDIr77DirAlreadyExists; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77DirAlreadyExists; }
 };
 struct Ir77PageAlreadyExist {
-    static IIr77GUID* MemberUUID() { return GUIDIr77PageAlreadyExist; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77PageAlreadyExist; }
 };
 struct Ir77NoFileOpen {
-    static IIr77GUID* MemberUUID() { return GUIDIr77NoFileOpen; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77NoFileOpen; }
 };
 struct Ir77FileDoesntExist {
-    static IIr77GUID* MemberUUID() { return GUIDIr77FileDoesntExist; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77FileDoesntExist; }
 };
 struct Ir77FileAlreadyExist {
-    static IIr77GUID* MemberUUID() { return GUIDIr77FileAlreadyExist; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77FileAlreadyExist; }
 };
 struct Ir77FileHandleOpen {
-    static IIr77GUID* MemberUUID() { return GUIDIr77FileHandleOpen; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77FileHandleOpen; }
 };
 struct Ir77FileBadFormatting {
-    static IIr77GUID* MemberUUID() { return GUIDIr77FileBadFormatting; }
+    static IIr77GUID* MemberUUID() { return &GUIDIr77FileBadFormatting; }
 };
 
 inline static std::string g_empty_log = "";
@@ -208,7 +208,7 @@ std::shared_ptr<IIr77Return const> Ir77RETURN(IIr77Enlisted const* sender = g_nu
     if (sender) {
         std::shared_ptr<void> obj;
         Ir77GUID enlisted_id{(static_cast<unsigned __int128>(0xC052EA89334C43AE) << 64) | 0x9F976D7E354FC406};
-        const_cast<IIr77Enlisted*>(sender)->QueryInterface(&enlisted_id, obj);
+        const_cast<IIr77Enlisted*>(sender)->QueryInterface(enlisted_id, obj);
         if (obj) {
             shared->PublicSetSender(std::static_pointer_cast<IIr77Enlisted const>(obj));
         }
@@ -337,13 +337,13 @@ class Ir77Return : public IIr77Return, public std::enable_shared_from_this<Ir77R
         Ir77GUID enlisted_id{(static_cast<unsigned __int128>(0xC052EA89334C43AE) << 64) | 0x9F976D7E354FC406};
         Ir77GUID return_id{(static_cast<unsigned __int128>(0x4B8F4936CB414575) << 64) | 0x8B58952FE375F7D7};
 
-        if (iid == &enlisted_id)
+        if (iid == enlisted_id)
             obj = std::shared_ptr<IIr77Enlisted>(this->shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &return_id)
+        else if (iid == return_id)
             obj = std::shared_ptr<IIr77Return>(this->shared_from_this(), static_cast<IIr77Return*>(this));
 
-        else if (iid == T::MemberUUID())
+        else if (iid == *static_cast<Ir77GUID const*>(T::MemberUUID()))
             obj = std::shared_ptr<Ir77Return<T>>(this->shared_from_this(), static_cast<Ir77Return<T>*>(this));
 
         else
