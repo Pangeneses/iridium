@@ -2,14 +2,15 @@
 
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
-#include <vulkan/vulkan_core.h>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
@@ -34,11 +35,7 @@ namespace NSIr77PeregrineV {
 class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::enable_shared_from_this<Ir77PVTexture> {
    public:
     Ir77PVTexture() {
-        try {
-            m_enlisted_uuid.Generate();
-        } catch (std::invalid_argument a) {
-            throw a;
-        }
+        m_enlisted_uuid.Generate();
 
         m_enlisted = std::chrono::system_clock::now();
     }
@@ -128,9 +125,10 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
                 break;
 
             case Ir77PVTextureKind::Depth:
-                // outside the shadow map = lit (border depth 1.0)
+                // outside the shadow map = lit (border depth 1.0); compare on by default for sampler2DShadow / hardware PCF
                 m_format = VK_FORMAT_D32_SFLOAT;
                 m_sampler_desc.address = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+                m_sampler_desc.compare = true;
                 break;
 
             default:
@@ -146,6 +144,8 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // anisotropy > 0 is honoured only if the device supports samplerAnisotropy, and is clamped to its limit.
+    // The logical device must also have enabled the feature -- that is not checkable from here.
     std::shared_ptr<IIr77Return const> SetSampler(Ir77PVSamplerDesc const& sampler) {
         m_sampler_desc = sampler;
 
@@ -189,7 +189,11 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return CreateSampled(pool, queue, {&rgba}, 1, 1, false);
     }
 
-    std::shared_ptr<IIr77Return const> CreateDepth(std::uint32_t const& width, std::uint32_t const& height) {
+    // Cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL, so it is valid to sample before any shadow pass has run
+    // (reads as "fully lit"). The shadow render pass can use initialLayout UNDEFINED or DEPTH_STENCIL_READ_ONLY_OPTIMAL and
+    // must use finalLayout DEPTH_STENCIL_READ_ONLY_OPTIMAL. A 1x1 Depth texture doubles as the shadow-map placeholder.
+    std::shared_ptr<IIr77Return const> CreateDepth(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width,
+                                                    std::uint32_t const& height) {
         if (m_kind != Ir77PVTextureKind::Depth) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateDepth needs Depth kind.");
 
         if (width == 0 || height == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth extent is zero.");
@@ -205,14 +209,40 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         m_layers = 1;
         m_mip_levels = 1;
 
-        if (!CreateImage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0))
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth image failed.");
+        VkImageUsageFlags const usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-        if (!CreateView(device, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth view failed.");
+        if (!CreateImage(usage, 0)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth image failed.");
 
-        if (!CreateSamplerObject(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth sampler failed.");
+        VkCommandBuffer cmd{VK_NULL_HANDLE};
+        if (!BeginOneTime(device, pool, &cmd)) {
+            Destroy(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth init command buffer failed.");
+        }
 
-        // the shadow render pass must end in this layout (finalLayout)
+        Barrier(cmd, VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+        VkClearDepthStencilValue const clear{1.0f, 0};
+        VkImageSubresourceRange const range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        vkCmdClearDepthStencilImage(cmd, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
+
+        Barrier(cmd, VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+        if (!EndOneTime(device, pool, queue, cmd)) {
+            Destroy(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth init submit failed.");
+        }
+
+        // linear on a compare sampler = 2x2 hardware PCF; needs the format feature, otherwise fall back to nearest
+        if (m_sampler_desc.filter == VK_FILTER_LINEAR && !HasFormatFeatures(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+            m_sampler_desc.filter = VK_FILTER_NEAREST;
+
+        if (!CreateView(device, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT) || !CreateSamplerObject(device)) {
+            Destroy(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth view or sampler failed.");
+        }
+
         m_read_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Depth Texture.");
@@ -313,9 +343,11 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
 
         Destroy(device);
 
+        bool const can_blit = HasFormatFeatures(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
+
         m_extent = {width, height};
         m_layers = static_cast<std::uint32_t>(layers.size());
-        m_mip_levels = (mipmaps && SupportsLinearBlit()) ? static_cast<std::uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1 : 1;
+        m_mip_levels = (mipmaps && can_blit) ? static_cast<std::uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1 : 1;
 
         bool const cube = m_kind == Ir77PVTextureKind::Cube;
 
@@ -360,8 +392,8 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: upload command buffer failed.");
         }
 
-        Barrier(cmd, 0, m_mip_levels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, m_mip_levels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
         std::vector<VkBufferImageCopy> regions(m_layers);
         for (std::uint32_t i = 0; i < m_layers; i++) {
@@ -375,8 +407,8 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         if (m_mip_levels > 1) {
             GenerateMips(cmd);
         } else {
-            Barrier(cmd, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                    VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
         }
 
         bool const submitted = EndOneTime(device, pool, queue, cmd);
@@ -404,8 +436,8 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         std::int32_t h = static_cast<std::int32_t>(m_extent.height);
 
         for (std::uint32_t level = 1; level < m_mip_levels; level++) {
-            Barrier(cmd, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                    VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
             std::int32_t const next_w = std::max(w / 2, 1);
             std::int32_t const next_h = std::max(h / 2, 1);
@@ -418,27 +450,26 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
 
             vkCmdBlitImage(cmd, m_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
 
-            Barrier(cmd, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
-                    VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 
             w = next_w;
             h = next_h;
         }
 
-        Barrier(cmd, m_mip_levels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, m_mip_levels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
     }
 
-    // Mip blits need linear filtering on the format; without it the texture is created with one level
-    bool SupportsLinearBlit() {
+    // true when every bit in `features` is supported for m_format with optimal tiling
+    bool HasFormatFeatures(VkFormatFeatureFlags const& features) {
         VkPhysicalDevice physical{VK_NULL_HANDLE};
         m_device->GetPhysicalDevice(&physical);
 
         VkFormatProperties props{};
         vkGetPhysicalDeviceFormatProperties(physical, m_format, &props);
 
-        return (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0 &&
-               (props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0 && (props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
+        return (props.optimalTilingFeatures & features) == features;
     }
 
     bool CreateImage(VkImageUsageFlags const& usage, VkImageCreateFlags const& flags) {
@@ -474,7 +505,16 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
     }
 
     bool CreateSamplerObject(VkDevice device) {
-        bool const anisotropic = m_sampler_desc.anisotropy > 0.0f;
+        VkPhysicalDevice physical{VK_NULL_HANDLE};
+        m_device->GetPhysicalDevice(&physical);
+
+        VkPhysicalDeviceFeatures features{};
+        vkGetPhysicalDeviceFeatures(physical, &features);
+
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(physical, &properties);
+
+        bool const anisotropic = m_sampler_desc.anisotropy > 0.0f && features.samplerAnisotropy == VK_TRUE;
         bool const compare = m_sampler_desc.compare && m_kind == Ir77PVTextureKind::Depth;
 
         VkSamplerCreateInfo sampler_info{};
@@ -486,7 +526,7 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         sampler_info.addressModeV = m_sampler_desc.address;
         sampler_info.addressModeW = m_sampler_desc.address;
         sampler_info.anisotropyEnable = anisotropic ? VK_TRUE : VK_FALSE;
-        sampler_info.maxAnisotropy = anisotropic ? m_sampler_desc.anisotropy : 1.0f;
+        sampler_info.maxAnisotropy = anisotropic ? std::min(m_sampler_desc.anisotropy, properties.limits.maxSamplerAnisotropy) : 1.0f;
         sampler_info.compareEnable = compare ? VK_TRUE : VK_FALSE;
         sampler_info.compareOp = compare ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_ALWAYS;
         sampler_info.minLod = 0.0f;
@@ -497,8 +537,9 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return vkCreateSampler(device, &sampler_info, nullptr, &m_sampler) == VK_SUCCESS;
     }
 
-    void Barrier(VkCommandBuffer cmd, std::uint32_t const& base_mip, std::uint32_t const& mip_count, VkImageLayout const& from, VkImageLayout const& to,
-                 VkAccessFlags const& src_access, VkAccessFlags const& dst_access, VkPipelineStageFlags const& src_stage, VkPipelineStageFlags const& dst_stage) {
+    void Barrier(VkCommandBuffer cmd, VkImageAspectFlags const& aspect, std::uint32_t const& base_mip, std::uint32_t const& mip_count,
+                 VkImageLayout const& from, VkImageLayout const& to, VkAccessFlags const& src_access, VkAccessFlags const& dst_access,
+                 VkPipelineStageFlags const& src_stage, VkPipelineStageFlags const& dst_stage) {
         VkImageMemoryBarrier barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.oldLayout = from;
@@ -506,7 +547,7 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = m_image;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, base_mip, mip_count, 0, m_layers};
+        barrier.subresourceRange = {aspect, base_mip, mip_count, 0, m_layers};
         barrier.srcAccessMask = src_access;
         barrier.dstAccessMask = dst_access;
 

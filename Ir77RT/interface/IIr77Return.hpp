@@ -10,9 +10,9 @@ namespace NSIr77RT {
 typedef struct IIr77Return : virtual public IIr77Enlisted {
     IIr77Return() = default;
 
-    virtual IIr77GUID const* ID() const = 0;
+    virtual Ir77GUID ID() const = 0;
 
-    virtual IIr77GUID const* GID() const = 0;
+    virtual Ir77GUID GID() const = 0;
 
     virtual std::shared_ptr<IIr77Return const> InvalidateReturn(std::shared_ptr<IIr77Return const>& condition) = 0;
 

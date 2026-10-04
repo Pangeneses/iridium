@@ -13,53 +13,53 @@
 
 namespace NSIr77RT {
 
-typedef enum class Ir77RETEnum : unsigned int {
-    EIr77RET,
-    EIr77Unknown = 1,
-    EIr77False = 2,
-    EIr77True = 3,
-    EIr77IsEqual = 4,
-    EIr77IsLesser = 5,
-    EIr77IsGreater = 6,
-    EIr77InvalidArgument = 7,
-    EIr77ValidArgument = 8,
-    EIr77OperationFailed = 9,
-    EIr77OperationConflict = 10,
-    EIr77OperatorSucceededed = 11,
-    EIr77InvalidOperation = 12,
-    EIr77NotConfigured = 13,
-    EIr77AlreadyConfigured = 14,
-    EIr77ImproperlyConfigedured = 15,
-    EIr77ProperlyConfigured = 16,
-    EIr77MPVMError = 17,
-    EIr77OutOfMemory = 18,
-    EIr77OutOfRange = 19,
-    EIr77KeyNotFound = 20,
-    EIr77InvalidPointer = 21,
-    EIr77InvalidInterface = 22,
-    EIr77InvalidToken = 23,
-    EIr77Empty = 24,
-    EIr77Dirty = 25,
-    EIr77Sealed = 26,
-    EIr77Invalidated = 27,
-    EIr77NotSystemModule = 28,
-    EIr77ModuleNotFound = 29,
-    EIr77RtclassNotFound = 30,
-    EIr77ProcessNotFound = 31,
-    EIr77ProcessNotCompletete = 32,
-    EIr77ProcessComplete = 33,
-    EIr77ImageNotLoaded = 34,
-    EIr77MPVMFailed = 35,
-    EIr77MPVMSucceeded = 36,
-    EIr77DirDoesntExist = 37,
-    EIr77DirAlreadyExists = 38,
-    EIr77PageAlreadyExists = 39,
-    EIr77NoFileOpen = 40,
-    EIr77FileDoesntExist = 41,
-    EIr77FileAlreadyExists = 42,
-    EIr77FileHandleOpen = 43,
-    EIr77FileBadFormatting = 44
-} Ir77RETEnum;
+enum class Ir77RetEnum : unsigned int {
+    Ir77RET,
+    Ir77Unknown = 1,
+    Ir77False = 2,
+    Ir77True = 3,
+    Ir77IsEqual = 4,
+    Ir77IsLesser = 5,
+    Ir77IsGreater = 6,
+    Ir77InvalidArgument = 7,
+    Ir77ValidArgument = 8,
+    Ir77OperationFailed = 9,
+    Ir77OperationConflict = 10,
+    Ir77OperatorSucceededed = 11,
+    Ir77InvalidOperation = 12,
+    Ir77NotConfigured = 13,
+    Ir77AlreadyConfigured = 14,
+    Ir77ImproperlyConfigedured = 15,
+    Ir77ProperlyConfigured = 16,
+    Ir77MPVMError = 17,
+    Ir77OutOfMemory = 18,
+    Ir77OutOfRange = 19,
+    Ir77KeyNotFound = 20,
+    Ir77InvalidPointer = 21,
+    Ir77InvalidInterface = 22,
+    Ir77InvalidToken = 23,
+    Ir77Empty = 24,
+    Ir77Dirty = 25,
+    Ir77Sealed = 26,
+    Ir77Invalidated = 27,
+    Ir77NotSystemModule = 28,
+    Ir77ModuleNotFound = 29,
+    Ir77RtclassNotFound = 30,
+    Ir77ProcessNotFound = 31,
+    Ir77ProcessNotCompletete = 32,
+    Ir77ProcessComplete = 33,
+    Ir77ImageNotLoaded = 34,
+    Ir77MPVMFailed = 35,
+    Ir77MPVMSucceeded = 36,
+    Ir77DirDoesntExist = 37,
+    Ir77DirAlreadyExists = 38,
+    Ir77PageAlreadyExists = 39,
+    Ir77NoFileOpen = 40,
+    Ir77FileDoesntExist = 41,
+    Ir77FileAlreadyExists = 42,
+    Ir77FileHandleOpen = 43,
+    Ir77FileBadFormatting = 44
+};
 
 struct Ir77Unknown {
     static IIr77GUID* MemberUUID() { return &GUIDIr77Unknown; }
@@ -352,9 +352,9 @@ class Ir77Return : public IIr77Return, public std::enable_shared_from_this<Ir77R
         return &GUIDQuerySucceeded;
     }
 
-    IIr77GUID const* ID() const { return T::MemberUUID(); }
+    Ir77GUID ID() const { return *static_cast<Ir77GUID const*>(T::MemberUUID()); }
 
-    IIr77GUID const* GID() const { return &GUIDIr77RETURN; }
+    Ir77GUID GID() const { return GUIDIr77RETURN; }
 
     std::shared_ptr<IIr77Return const> InvalidateReturn(std::shared_ptr<IIr77Return const>& condition) {
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");

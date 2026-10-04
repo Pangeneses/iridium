@@ -1,8 +1,10 @@
 #pragma once
 
-#include <mutex>
 #include <algorithm>
+#include <cstdint>
 #include <iomanip>
+#include <iterator>
+#include <mutex>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -39,6 +41,8 @@ class Ir77GUID : public IIr77GUID {
 
     bool operator==(IIr77GUID const& uuid) const { return m_tag_uuid == static_cast<Ir77GUID const&>(uuid).m_tag_uuid; }
 
+    bool operator==(IIr77GUID const* uuid) const { return uuid != nullptr && m_tag_uuid == static_cast<Ir77GUID const*>(uuid)->m_tag_uuid; }
+
     bool operator!=(std::string const& uuid) const {
         unsigned __int128 hvid{};
         ToGUID(uuid, hvid);
@@ -49,17 +53,23 @@ class Ir77GUID : public IIr77GUID {
 
     bool operator!=(IIr77GUID const& uuid) const { return m_tag_uuid != static_cast<Ir77GUID const&>(uuid).m_tag_uuid; }
 
+    bool operator!=(IIr77GUID const* uuid) const { return uuid != nullptr && m_tag_uuid != static_cast<Ir77GUID const*>(uuid)->m_tag_uuid; }
+
     bool operator<(std::string const& uuid) const { return *this < Ir77GUID{uuid}; }
 
     bool operator<(unsigned __int128 const& uuid) const { return m_tag_uuid < uuid; }
 
     bool operator<(IIr77GUID const& uuid) const { return m_tag_uuid < static_cast<Ir77GUID const&>(uuid).m_tag_uuid; }
 
+    bool operator<(IIr77GUID const* uuid) const { return uuid != nullptr && m_tag_uuid < static_cast<Ir77GUID const*>(uuid)->m_tag_uuid; }
+
     bool operator>(std::string const& uuid) const { return *this > Ir77GUID{uuid}; }
 
     bool operator>(unsigned __int128 const& uuid) const { return m_tag_uuid > uuid; }
 
     bool operator>(IIr77GUID const& uuid) const { return m_tag_uuid > static_cast<Ir77GUID const&>(uuid).m_tag_uuid; }
+
+    bool operator>(IIr77GUID const* uuid) const { return uuid != nullptr && m_tag_uuid > static_cast<Ir77GUID const*>(uuid)->m_tag_uuid; }
 
     unsigned __int128 operator()() const { return m_tag_uuid; }
 
@@ -131,9 +141,8 @@ struct Ir77GUIDHash {
     }
 };
 
+// by value, to match Ir77GUIDHash -- equal-valued GUIDs at different addresses are the same key
 struct Ir77GUIDEqual {
-    bool operator()(Ir77GUID const* a, Ir77GUID const* b) const {
-        return a == b;
-    }
+    bool operator()(Ir77GUID const* a, Ir77GUID const* b) const { return a == b || (*a)() == (*b)(); }
 };
 }  // namespace NSIr77RT

@@ -2,7 +2,6 @@
 
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
-#include <vulkan/vulkan_core.h>
 
 #include <array>
 #include <cstdint>
@@ -26,11 +25,13 @@ typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetAllocator(VmaAllocator allocator) = 0;
 
+    // Call first -- resets format and sampler to the kind's defaults (Depth: D32, clamp-to-border white, compare on)
     virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVTextureKind const& kind) = 0;
 
     // Overrides the kind's default format (e.g. VK_FORMAT_R16G16B16A16_SFLOAT for an HDR cube)
     virtual std::shared_ptr<IIr77Return const> SetFormat(VkFormat const& format) = 0;
 
+    // anisotropy > 0 is used only if the device supports it (clamped to its limit); the logical device must enable samplerAnisotropy
     virtual std::shared_ptr<IIr77Return const> SetSampler(Ir77PVSamplerDesc const& sampler) = 0;
 
     // Color / Data: tightly packed pixels, width * height * bytes-per-pixel
@@ -44,8 +45,10 @@ typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
     // Color / Data: 1x1 of one RGBA8 value (bytes R,G,B,A packed little-endian: 0xAABBGGRR)
     virtual std::shared_ptr<IIr77Return const> CreateSolid(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& rgba) = 0;
 
-    // Depth: render target for a shadow pass; layout is managed by the render pass that writes it
-    virtual std::shared_ptr<IIr77Return const> CreateDepth(std::uint32_t const& width, std::uint32_t const& height) = 0;
+    // Depth: shadow-map target, cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL so it can be sampled before any
+    // shadow pass runs. The shadow render pass must end in DEPTH_STENCIL_READ_ONLY_OPTIMAL. 1x1 doubles as the shadow placeholder.
+    virtual std::shared_ptr<IIr77Return const> CreateDepth(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width,
+                                                           std::uint32_t const& height) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetImageInfo(VkDescriptorImageInfo* info) = 0;
 
