@@ -356,7 +356,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         if (m_render_passes.count(Ir77PVRenderPassKind::Main) == 0 || !m_swapchain)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: main render pass or swapchain not set.");
 
-        if (DefinePresentSemaphores()->ID() != &GUIDIr77OperationSucceeded)
+        if (DefinePresentSemaphores()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: present semaphores not ready.");
 
         VkCommandBuffer const cmd = m_cmd_buffers[m_current_frame];
@@ -372,20 +372,20 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         }
 
         auto const shadow = RecordShadowPass(cmd);
-        if (shadow->ID() != &GUIDIr77OperationSucceeded) {
+        if (shadow->ID() != GUIDIr77OperationSucceeded) {
             vkEndCommandBuffer(cmd);
             return shadow;
         }
 
         auto const main = RecordMainPass(cmd);
-        if (main->ID() != &GUIDIr77OperationSucceeded) {
+        if (main->ID() != GUIDIr77OperationSucceeded) {
             vkEndCommandBuffer(cmd);
             return main;
         }
 
         /*
         auto const compute = RecordCompute(cmd);
-        if (compute->ID() != &GUIDIr77OperationSucceeded) {
+        if (compute->ID() != GUIDIr77OperationSucceeded) {
             vkEndCommandBuffer(cmd);
             return compute;
         }

@@ -41,8 +41,6 @@ class Ir77GUID : public IIr77GUID {
 
     bool operator==(IIr77GUID const& uuid) const { return m_tag_uuid == static_cast<Ir77GUID const&>(uuid).m_tag_uuid; }
 
-    bool operator==(IIr77GUID const* uuid) const { return uuid != nullptr && m_tag_uuid == static_cast<Ir77GUID const*>(uuid)->m_tag_uuid; }
-
     bool operator!=(std::string const& uuid) const {
         unsigned __int128 hvid{};
         ToGUID(uuid, hvid);
@@ -53,15 +51,11 @@ class Ir77GUID : public IIr77GUID {
 
     bool operator!=(IIr77GUID const& uuid) const { return m_tag_uuid != static_cast<Ir77GUID const&>(uuid).m_tag_uuid; }
 
-    bool operator!=(IIr77GUID const* uuid) const { return uuid != nullptr && m_tag_uuid != static_cast<Ir77GUID const*>(uuid)->m_tag_uuid; }
-
     bool operator<(std::string const& uuid) const { return *this < Ir77GUID{uuid}; }
 
     bool operator<(unsigned __int128 const& uuid) const { return m_tag_uuid < uuid; }
 
     bool operator<(IIr77GUID const& uuid) const { return m_tag_uuid < static_cast<Ir77GUID const&>(uuid).m_tag_uuid; }
-
-    bool operator<(IIr77GUID const* uuid) const { return uuid != nullptr && m_tag_uuid < static_cast<Ir77GUID const*>(uuid)->m_tag_uuid; }
 
     bool operator>(std::string const& uuid) const { return *this > Ir77GUID{uuid}; }
 

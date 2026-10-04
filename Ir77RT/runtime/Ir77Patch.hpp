@@ -83,7 +83,7 @@ class Ir77Patch : public Ir77Enlisted, public IIr77Patch, public std::enable_sha
 
         auto stack_mut = std::const_pointer_cast<IIr77Stack>(stack);
 
-        if (stack_mut->ForwardIterator(fitt)->ID() != &GUIDIr77OperationSucceeded) {
+        if (stack_mut->ForwardIterator(fitt)->ID() != GUIDIr77OperationSucceeded) {
             return Ir77RETURN<Ir77MPVMError>(this, "Cannot acquire iterator.");
         }
 
@@ -91,15 +91,15 @@ class Ir77Patch : public Ir77Enlisted, public IIr77Patch, public std::enable_sha
 
         std::int32_t step{1};
 
-        for (fitt_mut->IttBegin(); fitt_mut->IttEndOfStack()->ID() != &GUIDIr77True; fitt_mut->IttMove(step)) {
+        for (fitt_mut->IttBegin(); fitt_mut->IttEndOfStack()->ID() != GUIDIr77True; fitt_mut->IttMove(step)) {
             Ir77Operation operation{};
 
-            if (fitt_mut->IttCurrentOperation(operation)->ID() != &GUIDIr77OperationSucceeded)
+            if (fitt_mut->IttCurrentOperation(operation)->ID() != GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77MPVMError>(this, "Cannot acquire operation from stack.");
 
             operation.ret = m_implementation.at(operation.op)(operation.lhs, operation.rhs);
 
-            if (operation.ret->ID() == &GUIDIr77OperationSucceeded) {
+            if (operation.ret->ID() == GUIDIr77OperationSucceeded) {
                 std::shared_ptr<IIr77Return const> invalidated = Ir77RETURN<Ir77OperationFailed>(this, "Could not perform operation #.");
 
                 fitt_mut->InvalidateIterator(invalidated);

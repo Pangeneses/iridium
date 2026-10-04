@@ -188,7 +188,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
                 continue;
             }
 
-            if (shader->LoadShader(path.string(), entry.id, entry.stage)->ID() != &GUIDIr77OperationSucceeded) {
+            if (shader->LoadShader(path.string(), entry.id, entry.stage)->ID() != GUIDIr77OperationSucceeded) {
                 if (entry.required) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: required shader failed to load.");
                 continue;
             }
@@ -247,8 +247,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         mesh.vertex->GetBuffer(0, &vertex_dst);
         mesh.index->GetBuffer(0, &index_dst);
 
-        if (UploadBatch(pool, queue, {{vertex_dst, input.vertex_data.data(), vertex_size}, {index_dst, input.index_data.data(), index_size}})->ID() !=
-            &GUIDIr77OperationSucceeded) {
+        if (UploadBatch(pool, queue, {{vertex_dst, input.vertex_data.data(), vertex_size}, {index_dst, input.index_data.data(), index_size}})->ID() != GUIDIr77OperationSucceeded) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: mesh upload failed.");
         }
 
@@ -272,7 +271,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             std::uint32_t mesh_id{0};
 
             auto const result = UploadMesh(input, mesh_id);
-            if (result->ID() != &GUIDIr77OperationSucceeded) return result;
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -377,15 +376,15 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: UploadScene not called, or channel empty.");
 
         Ir77PVMaterial material{};
-        if (GetMaterial(material_id, material)->ID() != &GUIDIr77OperationSucceeded)
+        if (GetMaterial(material_id, material)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown material.");
 
         item = Ir77PVDrawItem{};
 
-        if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != &GUIDIr77OperationSucceeded)
+        if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline kind not created for window.");
 
-        if (m_context->GetLayout(LayoutKindFor(kind), item.layout)->ID() != &GUIDIr77OperationSucceeded)
+        if (m_context->GetLayout(LayoutKindFor(kind), item.layout)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: layout not created.");
 
         item.material = material.set;
@@ -409,7 +408,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         Ir77PVMaterial material{};
         auto const result = BuildMaterial(pool, queue, constants, material);
-        if (result->ID() != &GUIDIr77OperationSucceeded) return result;
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         auto& materials = m_materials[m_context->m_current_device];
         material_id = static_cast<std::uint32_t>(materials.size());
@@ -434,7 +433,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         for (auto const& constants : materials_in) {
             Ir77PVMaterial material{};
             auto const result = BuildMaterial(pool, queue, constants, material);
-            if (result->ID() != &GUIDIr77OperationSucceeded) return result;
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
             material_ids.push_back(static_cast<std::uint32_t>(materials.size()));
             materials.push_back(material);
@@ -459,16 +458,16 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         Ir77PVMesh mesh{};
         Ir77PVMaterial material{};
 
-        if (GetMesh(mesh_id, mesh)->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown mesh.");
-        if (GetMaterial(material_id, material)->ID() != &GUIDIr77OperationSucceeded)
+        if (GetMesh(mesh_id, mesh)->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown mesh.");
+        if (GetMaterial(material_id, material)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown material.");
 
         item = Ir77PVDrawItem{};
 
-        if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != &GUIDIr77OperationSucceeded)
+        if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline kind not created for window.");
 
-        if (m_context->GetLayout(LayoutKindFor(kind), item.layout)->ID() != &GUIDIr77OperationSucceeded)
+        if (m_context->GetLayout(LayoutKindFor(kind), item.layout)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: layout not created.");
 
         item.material = material.set;
@@ -496,13 +495,13 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         auto const cube = BuildCube(0.5f);
 
         auto result = UploadMesh(cube, m_testbed.mesh);
-        if (result->ID() != &GUIDIr77OperationSucceeded) return result;
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         Ir77PVMaterialConstants constants{};
         constants.base_color = {0.8f, 0.8f, 0.8f, 1.0f};
 
         result = CreateMaterial(constants, m_testbed.material);
-        if (result->ID() != &GUIDIr77OperationSucceeded) return result;
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         m_testbed.grid = std::max<std::uint32_t>(grid, 1);
         m_testbed.ready = true;
@@ -533,7 +532,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             // cubes
             Ir77PVDrawItem base{};
-            if (MakeDrawItem(w, Ir77PVPipelineKind::Static, m_testbed.mesh, m_testbed.material, base)->ID() != &GUIDIr77OperationSucceeded)
+            if (MakeDrawItem(w, Ir77PVPipelineKind::Static, m_testbed.mesh, m_testbed.material, base)->ID() != GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: testbed draw item failed.");
 
             std::vector<Ir77PVDrawItem> draws{};
@@ -640,7 +639,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         buffer->SetMode(Ir77PVBufferMode::Static);
 
-        if (buffer->CreateResources(size, 1)->ID() != &GUIDIr77OperationSucceeded) return nullptr;
+        if (buffer->CreateResources(size, 1)->ID() != GUIDIr77OperationSucceeded) return nullptr;
 
         return buffer;
     }
@@ -649,7 +648,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     std::shared_ptr<IIr77Return const> BuildMaterial(VkCommandPool const& pool, VkQueue const& queue, Ir77PVMaterialConstants const& constants,
                                                      Ir77PVMaterial& material) {
         std::shared_ptr<IIr77PVLayout> layout{};
-        if (m_context->GetLayout(Ir77PVLayoutKind::Static, layout)->ID() != &GUIDIr77OperationSucceeded)
+        if (m_context->GetLayout(Ir77PVLayoutKind::Static, layout)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: Static layout not created.");
 
         VkDescriptorImageInfo const placeholder = m_context->GetPlaceholderImageInfo();
@@ -661,7 +660,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         VkBuffer constants_dst{VK_NULL_HANDLE};
         material.constants->GetBuffer(0, &constants_dst);
 
-        if (UploadBatch(pool, queue, {{constants_dst, &constants, sizeof(Ir77PVMaterialConstants)}})->ID() != &GUIDIr77OperationSucceeded)
+        if (UploadBatch(pool, queue, {{constants_dst, &constants, sizeof(Ir77PVMaterialConstants)}})->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material upload failed.");
 
         material.set = std::static_pointer_cast<IIr77PVDescriptorSet>(std::make_shared<Ir77PVDescriptorSet>());
@@ -669,7 +668,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         material.set->SetDevice(m_context->m_devices.at(m_context->m_current_device));
         material.set->SetLayout(layout, 2);
 
-        if (material.set->CreateSets(1)->ID() != &GUIDIr77OperationSucceeded)
+        if (material.set->CreateSets(1)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material set allocation failed -- raise MATERIAL_CAPACITY.");
 
         material.set->BindBuffer(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, material.constants);
@@ -682,7 +681,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         material.set->BindImage(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // emissive
         material.set->BindImage(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // AO
 
-        if (material.set->Write()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material set write failed.");
+        if (material.set->Write()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material set write failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

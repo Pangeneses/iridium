@@ -224,7 +224,7 @@ class iridium {
 
    private:
     void Require(std::shared_ptr<IIr77Return const> const& result, char const* step = "") {
-        if (result->ID() != &GUIDIr77OperationSucceeded) {
+        if (result->ID() != GUIDIr77OperationSucceeded) {
             std::cerr << "Iridium: init step failed: " << step << "\n";
             throw std::runtime_error{step};
         }

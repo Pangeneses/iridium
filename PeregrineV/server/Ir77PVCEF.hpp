@@ -92,7 +92,7 @@ class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77P
         if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: too many windows.");
 
         std::shared_ptr<IIr77PVLayout> layout_cef{};
-        if (m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() != &GUIDIr77OperationSucceeded)
+        if (m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: CEF layout not created -- call CreateLayouts first.");
 
         std::vector<std::shared_ptr<IIr77PVOverlay>> overlays{};
@@ -108,7 +108,7 @@ class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77P
 
             overlay->SetLayout(layout_cef);
 
-            if (overlay->CreateResources()->ID() != &GUIDIr77OperationSucceeded)
+            if (overlay->CreateResources()->ID() != GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: overlay creation failed.");
 
             overlays.push_back(overlay);

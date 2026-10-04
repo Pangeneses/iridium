@@ -107,7 +107,7 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         m_sets.assign(copies, VK_NULL_HANDLE);
 
         for (std::uint32_t i = 0; i < copies; i++) {
-            if (m_layout->AllocateSet(m_set_index, &m_sets[i])->ID() != &GUIDIr77OperationSucceeded) {
+            if (m_layout->AllocateSet(m_set_index, &m_sets[i])->ID() != GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: set allocation failed.");
             }
         }
@@ -148,7 +148,7 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
     std::shared_ptr<IIr77Return const> Write() {
         for (std::uint32_t i = 0; i < m_sets.size(); i++) {
             auto result = WriteCopy(i);
-            if (result->ID() != &GUIDIr77OperationSucceeded) return result;
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -186,7 +186,7 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
                 write.pImageInfo = &image_infos.back();
             } else {
                 VkDescriptorBufferInfo info{};
-                if (entry.buffer->GetBufferInfo(copy, &info)->ID() != &GUIDIr77OperationSucceeded) {
+                if (entry.buffer->GetBufferInfo(copy, &info)->ID() != GUIDIr77OperationSucceeded) {
                     return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: buffer info failed.");
                 }
 

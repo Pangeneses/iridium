@@ -157,7 +157,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         if (!DefineUploadFence(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: upload fence failed.");
 
         // CEF layout has a single set at index 0
-        if (m_layout_cef->AllocateSet(0, &m_descriptor_set)->ID() != &GUIDIr77OperationSucceeded) {
+        if (m_layout_cef->AllocateSet(0, &m_descriptor_set)->ID() != GUIDIr77OperationSucceeded) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: descriptor set allocation failed.");
         }
 
@@ -207,7 +207,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
 
             m_resizing = false;
 
-            if (result->ID() != &GUIDIr77OperationSucceeded) return result;
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
         }
 
         VkQueue queue{VK_NULL_HANDLE};

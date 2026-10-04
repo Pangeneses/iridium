@@ -123,14 +123,14 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
                 std::shared_ptr<IIr77PVPipeline> pipeline_cef{};
                 std::shared_ptr<IIr77PVLayout> layout_cef{};
 
-                if (m_context->GetPipeline(w, Ir77PVPipelineKind::CEF, pipeline_cef)->ID() == &GUIDIr77OperationSucceeded &&
-                    m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() == &GUIDIr77OperationSucceeded) {
+                if (m_context->GetPipeline(w, Ir77PVPipelineKind::CEF, pipeline_cef)->ID() == GUIDIr77OperationSucceeded &&
+                    m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() == GUIDIr77OperationSucceeded) {
                     cmd_buffer->SetOverlay(overlays->second.at(w), pipeline_cef, layout_cef);
                 }
             }
 
-            if (cmd_buffer->DefineSyncObjects()->ID() != &GUIDIr77OperationSucceeded || cmd_buffer->DefineCommandPool()->ID() != &GUIDIr77OperationSucceeded ||
-                cmd_buffer->AllocateCommandBuffer()->ID() != &GUIDIr77OperationSucceeded) {
+            if (cmd_buffer->DefineSyncObjects()->ID() != GUIDIr77OperationSucceeded || cmd_buffer->DefineCommandPool()->ID() != GUIDIr77OperationSucceeded ||
+                cmd_buffer->AllocateCommandBuffer()->ID() != GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: command buffer setup failed.");
             }
 
@@ -205,7 +205,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             cmd_buffer->SetCurrentFrame(frames.at(i));
 
-            if (cmd_buffer->WaitForFence()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: fence wait failed.");
+            if (cmd_buffer->WaitForFence()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: fence wait failed.");
 
             ApplyFrameData(i, frames.at(i));
 
@@ -213,7 +213,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             cmd_buffer->AcquireNextImage(&acquire_result);
 
             if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
-                if (ResetSwapchain(static_cast<std::uint32_t>(i))->ID() != &GUIDIr77OperationSucceeded)
+                if (ResetSwapchain(static_cast<std::uint32_t>(i))->ID() != GUIDIr77OperationSucceeded)
                     return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: swapchain rebuild failed.");
 
                 cmd_buffer->AcquireNextImage(&acquire_result);
@@ -226,10 +226,10 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             cmd_buffer->ResetFence();
 
-            if (cmd_buffer->RecordCommandBuffer()->ID() != &GUIDIr77OperationSucceeded)
+            if (cmd_buffer->RecordCommandBuffer()->ID() != GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: record failed.");
 
-            if (cmd_buffer->SubmitFrame()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: submit failed.");
+            if (cmd_buffer->SubmitFrame()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: submit failed.");
 
             VkResult present_result{VK_SUCCESS};
             cmd_buffer->PresentFrame(&present_result);
@@ -279,7 +279,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         for (auto const& [slot, write] : device->second[window]) {
             std::shared_ptr<IIr77PVBuffer> buffer{};
-            if (m_context->GetFrameBuffer(window, slot, buffer)->ID() != &GUIDIr77OperationSucceeded || !buffer) continue;
+            if (m_context->GetFrameBuffer(window, slot, buffer)->ID() != GUIDIr77OperationSucceeded || !buffer) continue;
 
             buffer->Update(frame, write.bytes.data(), static_cast<VkDeviceSize>(write.bytes.size()), write.offset);
         }
@@ -290,30 +290,30 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         auto const& swapchain = m_context->m_swapchains.at(m_context->m_current_device).at(index);
 
-        if (swapchain->QuerySwapchainSupport()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->QuerySwapchainSupport()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: QuerySwapchainSupport failed.");
 
-        if (swapchain->SwapSurfaceFormat()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->SwapSurfaceFormat()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SwapSurfaceFormat failed.");
 
-        if (swapchain->PresentMode()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: PresentMode failed.");
+        if (swapchain->PresentMode()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: PresentMode failed.");
 
-        if (swapchain->SurfaceCapabilities()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->SurfaceCapabilities()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SurfaceCapabilities failed.");
 
-        if (swapchain->DefineSwapchain()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->DefineSwapchain()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineSwapchain failed.");
 
-        if (swapchain->CleanupSwapchain()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->CleanupSwapchain()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: CleanupSwapchain failed.");
 
-        if (swapchain->InitSwapchainImages()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->InitSwapchainImages()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: InitSwapchainImages failed.");
 
-        if (swapchain->DefineImageView()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->DefineImageView()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineImageView failed.");
 
-        if (swapchain->DefineFramebuffers()->ID() != &GUIDIr77OperationSucceeded)
+        if (swapchain->DefineFramebuffers()->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineFramebuffers failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Reset Swapchain.");

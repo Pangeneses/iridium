@@ -155,7 +155,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
         DefineColorBlendState();
 
-        if (DefinePipeline()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: DefinePipeline failed.");
+        if (DefinePipeline()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: DefinePipeline failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -443,7 +443,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         m_render_pass->GetRenderPass(&render_pass);
 
         std::vector<VkPipelineShaderStageCreateInfo> shader_stages{};
-        if (DefineShaderStages(shader_stages)->ID() != &GUIDIr77OperationSucceeded) {
+        if (DefineShaderStages(shader_stages)->ID() != GUIDIr77OperationSucceeded) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: shader stages failed.");
         }
 

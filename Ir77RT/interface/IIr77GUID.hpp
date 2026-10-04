@@ -18,15 +18,11 @@ namespace NSIr77RT {
 
 		virtual bool operator == (IIr77GUID const& uuid) const = 0;
 
-		virtual bool operator == (IIr77GUID const* uuid) const = 0;
-
 		virtual bool operator == (unsigned __int128 const& uuid) const = 0;
 
 		virtual bool operator != (std::string const& uuid) const = 0;
 
 		virtual bool operator != (IIr77GUID const& uuid) const = 0;
-
-		virtual bool operator != (IIr77GUID const* uuid) const = 0;
 
 		virtual bool operator != (unsigned __int128 const& uuid) const = 0;
 
@@ -34,15 +30,11 @@ namespace NSIr77RT {
 
 		virtual bool operator < (IIr77GUID const& uuid) const = 0;
 
-		virtual bool operator < (IIr77GUID const* uuid) const = 0;
-
 		virtual bool operator < (unsigned __int128 const& uuid) const = 0;
 
 		virtual bool operator > (std::string const& uuid) const = 0;
 
 		virtual bool operator > (IIr77GUID const& uuid) const = 0;
-
-		virtual bool operator > (IIr77GUID const* uuid) const = 0;
 
 		virtual bool operator > (unsigned __int128 const& uuid) const = 0;
 

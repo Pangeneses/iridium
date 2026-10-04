@@ -277,9 +277,9 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
             layout->SetDevice(m_devices.at(m_current_device));
 
-            if (layout->SetKind(kind)->ID() != &GUIDIr77OperationSucceeded || layout->DefineDescriptorSetLayout()->ID() != &GUIDIr77OperationSucceeded ||
-                layout->DefineDescriptorPool(capacity)->ID() != &GUIDIr77OperationSucceeded ||
-                layout->DefinePipelineLayout()->ID() != &GUIDIr77OperationSucceeded) {
+            if (layout->SetKind(kind)->ID() != GUIDIr77OperationSucceeded || layout->DefineDescriptorSetLayout()->ID() != GUIDIr77OperationSucceeded ||
+                layout->DefineDescriptorPool(capacity)->ID() != GUIDIr77OperationSucceeded ||
+                layout->DefinePipelineLayout()->ID() != GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: layout creation failed.");
             }
 
@@ -310,8 +310,8 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             if (kind == Ir77PVRenderPassKind::Main || kind == Ir77PVRenderPassKind::Post) {
                 auto const& swapchain = m_swapchains.at(m_current_device).at(0);
 
-                if (swapchain->QuerySwapchainSupport()->ID() != &GUIDIr77OperationSucceeded ||
-                    swapchain->SwapSurfaceFormat()->ID() != &GUIDIr77OperationSucceeded)
+                if (swapchain->QuerySwapchainSupport()->ID() != GUIDIr77OperationSucceeded ||
+                    swapchain->SwapSurfaceFormat()->ID() != GUIDIr77OperationSucceeded)
                     return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: surface format query failed.");
 
                 VkSurfaceFormatKHR surface_format{};
@@ -320,7 +320,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
                 render_pass->SetColorFormat(surface_format.format);
             }
 
-            if (render_pass->CreateRenderPass()->ID() != &GUIDIr77OperationSucceeded)
+            if (render_pass->CreateRenderPass()->ID() != GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: render pass failed.");
 
             m_render_passes[m_current_device][kind] = render_pass;
@@ -401,7 +401,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             texture->SetAllocator(m_allocators.at(m_current_device));
             texture->SetKind(Ir77PVTextureKind::Data);
 
-            if (texture->CreateSolid(pool, queue, rgba)->ID() != &GUIDIr77OperationSucceeded) {
+            if (texture->CreateSolid(pool, queue, rgba)->ID() != GUIDIr77OperationSucceeded) {
                 vkDestroyCommandPool(device, pool, nullptr);
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: placeholder texture failed.");
             }
@@ -451,7 +451,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
                 buffer->SetMode(Ir77PVBufferMode::Dynamic);
 
-                if (buffer->CreateResources(spec.size, MAX_FRAMES_IN_FLIGHT)->ID() != &GUIDIr77OperationSucceeded) {
+                if (buffer->CreateResources(spec.size, MAX_FRAMES_IN_FLIGHT)->ID() != GUIDIr77OperationSucceeded) {
                     return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: frame buffer creation failed.");
                 }
 
@@ -486,7 +486,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             global->SetDevice(m_devices.at(m_current_device));
             global->SetLayout(layout, 0);
 
-            if (global->CreateSets(MAX_FRAMES_IN_FLIGHT)->ID() != &GUIDIr77OperationSucceeded) {
+            if (global->CreateSets(MAX_FRAMES_IN_FLIGHT)->ID() != GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: global set allocation failed.");
             }
 
@@ -495,7 +495,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             global->BindBuffer(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slots.at(Ir77PVBufferSlot::Instances));
             global->BindImage(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // env / IBL
 
-            if (global->Write()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: global set write failed.");
+            if (global->Write()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: global set write failed.");
 
             // set 1 -- shadow map, shadow matrices
             auto pass = std::static_pointer_cast<IIr77PVDescriptorSet>(std::make_shared<Ir77PVDescriptorSet>());
@@ -503,14 +503,14 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             pass->SetDevice(m_devices.at(m_current_device));
             pass->SetLayout(layout, 1);
 
-            if (pass->CreateSets(MAX_FRAMES_IN_FLIGHT)->ID() != &GUIDIr77OperationSucceeded) {
+            if (pass->CreateSets(MAX_FRAMES_IN_FLIGHT)->ID() != GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: pass set allocation failed.");
             }
 
             pass->BindImage(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // shadow map
             pass->BindBuffer(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, slots.at(Ir77PVBufferSlot::ShadowMatrices));
 
-            if (pass->Write()->ID() != &GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: pass set write failed.");
+            if (pass->Write()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: pass set write failed.");
 
             globals.push_back(global);
             passes.push_back(pass);
@@ -526,52 +526,51 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     // Kinds whose render pass hasn't been created yet (e.g. Shadow) are skipped.
     // Only request kinds whose shaders are loaded (Skinned / Shadow shaders don't exist yet).
     // -------------------------------------------------------------------------------------------------------------------------------------
-std::shared_ptr<IIr77Return const> CreatePipelines() {
-    static constexpr std::array<Ir77PVPipelineKind, 6> kAllKinds{
-        Ir77PVPipelineKind::Static,       Ir77PVPipelineKind::Skinned,
-        Ir77PVPipelineKind::Shadow,       Ir77PVPipelineKind::ShadowSkinned,
-        Ir77PVPipelineKind::Transparent,  Ir77PVPipelineKind::CEF,
-    };
+    std::shared_ptr<IIr77Return const> CreatePipelines() {
+        static constexpr std::array<Ir77PVPipelineKind, 6> kAllKinds{
+            Ir77PVPipelineKind::Static,        Ir77PVPipelineKind::Skinned,     Ir77PVPipelineKind::Shadow,
+            Ir77PVPipelineKind::ShadowSkinned, Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::CEF,
+        };
 
-    std::size_t const windows = m_windows.at(m_current_device).size();
+        std::size_t const windows = m_windows.at(m_current_device).size();
 
-    if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: too many windows.");
+        if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: too many windows.");
 
-    auto const& render_passes = m_render_passes.at(m_current_device);
-    auto const& layouts = m_layouts.at(m_current_device);
+        auto const& render_passes = m_render_passes.at(m_current_device);
+        auto const& layouts = m_layouts.at(m_current_device);
 
-    std::vector<std::map<Ir77PVPipelineKind, std::shared_ptr<IIr77PVPipeline>>> per_window(windows);
+        std::vector<std::map<Ir77PVPipelineKind, std::shared_ptr<IIr77PVPipeline>>> per_window(windows);
 
-    for (std::size_t w = 0; w < windows; w++) {
-        for (auto const kind : kAllKinds) {
-            auto const pass = render_passes.find(RenderPassKindFor(kind));
-            if (pass == render_passes.end()) continue;  // that render pass kind doesn't exist
+        for (std::size_t w = 0; w < windows; w++) {
+            for (auto const kind : kAllKinds) {
+                auto const pass = render_passes.find(RenderPassKindFor(kind));
+                if (pass == render_passes.end()) continue;  // that render pass kind doesn't exist
 
-            auto const layout = layouts.find(LayoutKindFor(kind));
-            if (layout == layouts.end()) continue;  // that layout kind wasn't built
+                auto const layout = layouts.find(LayoutKindFor(kind));
+                if (layout == layouts.end()) continue;  // that layout kind wasn't built
 
-            auto ipipeline = std::static_pointer_cast<IIr77PVPipeline>(std::make_shared<Ir77PVPipeline>());
+                auto ipipeline = std::static_pointer_cast<IIr77PVPipeline>(std::make_shared<Ir77PVPipeline>());
 
-            ipipeline->SetInstance(m_instance);
-            ipipeline->SetDevice(m_devices.at(m_current_device));
-            ipipeline->SetSwapchain(m_swapchains.at(m_current_device).at(w));
-            ipipeline->SetRenderPass(pass->second);
-            ipipeline->SetLayout(layout->second);
-            ipipeline->SetShader(m_shaders.at(m_current_device));
-            ipipeline->SetKind(kind);
+                ipipeline->SetInstance(m_instance);
+                ipipeline->SetDevice(m_devices.at(m_current_device));
+                ipipeline->SetSwapchain(m_swapchains.at(m_current_device).at(w));
+                ipipeline->SetRenderPass(pass->second);
+                ipipeline->SetLayout(layout->second);
+                ipipeline->SetShader(m_shaders.at(m_current_device));
+                ipipeline->SetKind(kind);
 
-            if (ipipeline->CreatePipeline()->ID() != &GUIDIr77OperationSucceeded) {
-                continue;  // this kind's shader stage(s) aren't loaded -- skip it, not fatal
+                if (ipipeline->CreatePipeline()->ID() != GUIDIr77OperationSucceeded) {
+                    continue;  // this kind's shader stage(s) aren't loaded -- skip it, not fatal
+                }
+
+                per_window[w].emplace(kind, ipipeline);
             }
-
-            per_window[w].emplace(kind, ipipeline);
         }
+
+        m_pipelines[m_current_device] = per_window;
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Pipelines.");
     }
-
-    m_pipelines[m_current_device] = per_window;
-
-    return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Pipelines.");
-}
 
     // -------------------------------------------------------------------------------------------------------------------------------------
     // lookups for Paint / Asset / CEF
@@ -630,17 +629,17 @@ std::shared_ptr<IIr77Return const> CreatePipelines() {
         switch (kind) {
             case Ir77PVPipelineKind::Skinned:
                 return Ir77PVLayoutKind::Skinned;
-            
-                case Ir77PVPipelineKind::Shadow:
+
+            case Ir77PVPipelineKind::Shadow:
                 return Ir77PVLayoutKind::Shadow;
-            
-                case Ir77PVPipelineKind::ShadowSkinned:
+
+            case Ir77PVPipelineKind::ShadowSkinned:
                 return Ir77PVLayoutKind::ShadowSkinned;
-            
-                case Ir77PVPipelineKind::CEF:
+
+            case Ir77PVPipelineKind::CEF:
                 return Ir77PVLayoutKind::CEF;
-            
-                case Ir77PVPipelineKind::Static:
+
+            case Ir77PVPipelineKind::Static:
             case Ir77PVPipelineKind::Transparent:
             default:
                 return Ir77PVLayoutKind::Static;
@@ -650,7 +649,7 @@ std::shared_ptr<IIr77Return const> CreatePipelines() {
     static Ir77PVRenderPassKind RenderPassKindFor(Ir77PVPipelineKind const kind) {
         switch (kind) {
             case Ir77PVPipelineKind::Shadow:
-            
+
             case Ir77PVPipelineKind::ShadowSkinned:
                 return Ir77PVRenderPassKind::Shadow;
 
