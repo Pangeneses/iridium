@@ -43,28 +43,6 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-// -------------------------------------------------------------------------------------------------------------------------------------------
-// Whole-scene vertex-domain upload. Scene (glTF loader) stacks every primitive's data into these
-// arrays itself -- one entry per vertex/index across the entire file, not per mesh -- and prebuilds
-// indirect_commands with the offsets it already knows from that stacking. Asset does not compute
-// per-mesh ranges or hand back CPU-side mesh IDs; GPU-side indexing comes entirely from
-// indirect_commands at draw time via vkCmdDrawIndexedIndirect.
-//
-// Materials, textures and animation are separate channels (UploadMaterials below; textures and
-// animation are not built yet) -- they are not stacked into this struct.
-// -------------------------------------------------------------------------------------------------------------------------------------------
-struct Ir77PVSceneUpload {
-    std::vector<Ir77PVVertex> vertices{};
-
-    std::vector<std::uint32_t> indices{};
-
-    std::vector<Ir77PVVertexSkinned> vertices_skinned{};
-
-    std::vector<std::uint32_t> indices_skinned{};
-
-    std::vector<VkDrawIndexedIndirectCommand> indirect_commands{};
-};
-
 class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir77PVAsset> {
    public:
     Ir77PVAsset() {
@@ -169,9 +147,9 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             {"frag.spv", ID_SHADER_FRAG, Ir77PVShaderStage::Fragment, true},
             {"cef.vert.spv", ID_SHADER_CEF_VERT, Ir77PVShaderStage::Vertex, true},
             {"cef.frag.spv", ID_SHADER_CEF_FRAG, Ir77PVShaderStage::Fragment, true},
-            //{"skinned.vert.spv", ID_SHADER_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
-            //{"shadow.vert.spv", ID_SHADER_SHADOW_VERT, Ir77PVShaderStage::Vertex, false},
-            //{"shadow_skinned.vert.spv", ID_SHADER_SHADOW_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
+            {"skinned.vert.spv", ID_SHADER_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
+            {"shadow.vert.spv", ID_SHADER_SHADOW_VERT, Ir77PVShaderStage::Vertex, false},
+            {"shadow_skinned.vert.spv", ID_SHADER_SHADOW_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
         };
 
         auto shader = std::static_pointer_cast<IIr77PVShader>(std::make_shared<Ir77PVShader>());

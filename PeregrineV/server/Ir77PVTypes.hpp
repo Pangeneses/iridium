@@ -216,6 +216,25 @@ typedef struct Ir77PVFrameSizes {
     VkDeviceSize indirect{4096 * sizeof(VkDrawIndexedIndirectCommand)};
 }* pIr77PVFrameSizes;
 
+
+// -------------------------------------------------------------------------------------------------------------------------------------------
+// Whole-scene vertex-domain upload. Scene (glTF loader) stacks every primitive's data into these
+// arrays itself -- one entry per vertex/index across the entire file, not per mesh -- and prebuilds
+// indirect_commands with the offsets it already knows from that stacking. Asset does not compute
+// per-mesh ranges or hand back CPU-side mesh IDs; GPU-side indexing comes entirely from
+// indirect_commands at draw time via vkCmdDrawIndexedIndirect.
+//
+// Materials, textures and animation are separate channels (UploadMaterials below; textures and
+// animation are not built yet) -- they are not stacked into this struct.
+// -------------------------------------------------------------------------------------------------------------------------------------------
+typedef struct Ir77PVSceneUpload {
+    std::vector<Ir77PVVertex> vertices{};
+    std::vector<std::uint32_t> indices{};
+    std::vector<Ir77PVVertexSkinned> vertices_skinned{};
+    std::vector<std::uint32_t> indices_skinned{};
+    std::vector<VkDrawIndexedIndirectCommand> indirect_commands{};
+}* pIr77PVSceneUpload;
+
 struct IIr77PVPipeline;
 struct IIr77PVLayout;
 struct IIr77PVDescriptorSet;
