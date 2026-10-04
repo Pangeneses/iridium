@@ -77,20 +77,20 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77PVBuffer)
+        else if (iid == GUIDIIr77PVBuffer)
             obj = std::shared_ptr<IIr77PVBuffer>(shared_from_this(), static_cast<IIr77PVBuffer*>(this));
 
-        else if (iid == &GUIDIr77PVBuffer)
+        else if (iid == GUIDIr77PVBuffer)
             obj = std::shared_ptr<Ir77PVBuffer>(shared_from_this(), static_cast<Ir77PVBuffer*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:
@@ -184,7 +184,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
 
     // Static only: staging buffer -> one-time copy -> wait. Call at load time, not per frame.
     std::shared_ptr<IIr77Return const> UploadBatch(VkDevice device, VmaAllocator allocator, VkCommandPool pool, VkQueue queue,
-                                                          std::vector<Ir77PVUploadEntry> const& entries) {
+                                                   std::vector<Ir77PVUploadEntry> const& entries) {
         VkDeviceSize total{0};
         for (auto const& e : entries) total += e.size;
         if (total == 0) return Ir77RETURN<Ir77OperationSucceeded>();

@@ -62,25 +62,25 @@ class Ir77TextBlobW : public Ir77Enlisted, public Ir77Operand, public std::enabl
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Operand)
+        else if (iid == GUIDIIr77Operand)
             obj = std::shared_ptr<IIr77Operand>(shared_from_this(), static_cast<IIr77Operand*>(this));
 
-        else if (iid == &GUIDOPIr77TextBlobW)
+        else if (iid == GUIDOPIr77TextBlobW)
             obj = std::shared_ptr<Ir77TextBlobW>(shared_from_this(), static_cast<Ir77TextBlobW*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:
     std::shared_ptr<IIr77Return const> SetIndexed(std::uint64_t const& at, std::shared_ptr<IIr77Enlisted const>& obj) {
-        auto raw = QueryAs<IIr77MPVMOP<Ir77String>>(&GUIDOPIr77TimePoint, std::const_pointer_cast<IIr77Enlisted>(obj).get());
+        auto raw = QueryAs<IIr77MPVMOP<Ir77String>>(GUIDOPIr77TimePoint, std::const_pointer_cast<IIr77Enlisted>(obj).get());
 
         if (!raw.get()) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid RHS Operand.");
 
@@ -94,7 +94,7 @@ class Ir77TextBlobW : public Ir77Enlisted, public Ir77Operand, public std::enabl
         std::shared_ptr<IIr77Enlisted const> enlisted_rhs;
         rhs->GetIndexed(ID_VALUE, enlisted_rhs);
 
-        auto raw = QueryAs<IIr77MPVMOP<Ir77WString>>(&GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_rhs).get());
+        auto raw = QueryAs<IIr77MPVMOP<Ir77WString>>(GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_rhs).get());
 
         if (!raw.get()) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid RHS Operand.");
 
@@ -123,9 +123,9 @@ class Ir77TextBlobW : public Ir77Enlisted, public Ir77Operand, public std::enabl
         std::shared_ptr<IIr77Enlisted const> enlisted_rhs;
         rhs->GetIndexed(ID_VALUE, enlisted_rhs);
 
-        auto raw_lhs = QueryAs<IIr77MPVMOP<Ir77WString>>(&GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_lhs).get());
+        auto raw_lhs = QueryAs<IIr77MPVMOP<Ir77WString>>(GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_lhs).get());
 
-        auto raw_rhs = QueryAs<IIr77MPVMOP<Ir77WString>>(&GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_rhs).get());
+        auto raw_rhs = QueryAs<IIr77MPVMOP<Ir77WString>>(GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_rhs).get());
 
         if (!raw_lhs.get()) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid LHS Operand.");
 
@@ -155,9 +155,9 @@ class Ir77TextBlobW : public Ir77Enlisted, public Ir77Operand, public std::enabl
         std::shared_ptr<IIr77Enlisted const> enlisted_rhs;
         rhs->GetIndexed(ID_VALUE, enlisted_rhs);
 
-        auto raw_lhs = QueryAs<IIr77MPVMOP<Ir77WString>>(&GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_lhs).get());
+        auto raw_lhs = QueryAs<IIr77MPVMOP<Ir77WString>>(GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_lhs).get());
 
-        auto raw_rhs = QueryAs<IIr77MPVMOP<Ir77WString>>(&GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_rhs).get());
+        auto raw_rhs = QueryAs<IIr77MPVMOP<Ir77WString>>(GUIDOPIr77WString, std::const_pointer_cast<IIr77Enlisted>(enlisted_rhs).get());
 
         if (!raw_lhs.get()) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Invalid LHS Operand.");
 

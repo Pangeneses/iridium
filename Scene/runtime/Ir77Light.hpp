@@ -63,20 +63,20 @@ class Ir77Light : public Ir77Enlisted, public IIr77Light, public std::enable_sha
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Light)
+        else if (iid == GUIDIIr77Light)
             obj = std::shared_ptr<IIr77Light>(shared_from_this(), static_cast<IIr77Light*>(this));
 
-        else if (iid == &GUIDIr77Light)
+        else if (iid == GUIDIr77Light)
             obj = std::shared_ptr<Ir77Light>(shared_from_this(), static_cast<Ir77Light*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:
@@ -89,7 +89,7 @@ class Ir77Light : public Ir77Enlisted, public IIr77Light, public std::enable_sha
         pv_light.color = glm::vec3(light.color.x(), light.color.y(), light.color.z());
         pv_light.intensity = light.intensity;
 
-        pv_light.range = light.range.value_or(0.0f); 
+        pv_light.range = light.range.value_or(0.0f);
         pv_light.innerConeAngle = light.innerConeAngle.value_or(0.0f);
         pv_light.outerConeAngle = light.outerConeAngle.value_or(0.0f);
 
@@ -109,7 +109,7 @@ class Ir77Light : public Ir77Enlisted, public IIr77Light, public std::enable_sha
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-    
+
     std::shared_ptr<IIr77Return const> GetLightsBuffer(std::vector<Ir77PVLight>& lights) {
         lights = m_lights;
 

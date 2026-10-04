@@ -36,7 +36,7 @@ typedef struct IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> CollectionUuid(std::shared_ptr<IIr77GUID const>& uid) const = 0;
 
-    virtual IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) = 0;
+    virtual Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) = 0;
 
     virtual ~IIr77Enlisted() = default;
 
@@ -46,10 +46,10 @@ static Ir77GUID GUIDQuerySucceeded{(static_cast<unsigned __int128>(0x08EE51633DE
 static Ir77GUID GUIDQueryFailed{(static_cast<unsigned __int128>(0x33E0AA3E5AFC46E1) << 64) | 0x8207214888E2FA17};
 
 template <typename T>
-std::shared_ptr<T> QueryAs(IIr77GUID const* iid, IIr77Enlisted* obj) {
+std::shared_ptr<T> QueryAs(Ir77GUID iid, IIr77Enlisted* obj) {
     std::shared_ptr<void> iface{};
 
-    if (obj->QueryInterface(iid, iface) != &GUIDQuerySucceeded) return nullptr;
+    if (obj->QueryInterface(iid, iface) != GUIDQuerySucceeded) return nullptr;
 
     return std::static_pointer_cast<T>(iface);
 }

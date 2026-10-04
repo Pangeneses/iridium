@@ -54,20 +54,20 @@ class Ir77Fitt : public Ir77Enlisted, public IIr77Iterator, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Iterator)
+        else if (iid == GUIDIIr77Iterator)
             obj = std::shared_ptr<IIr77Iterator>(shared_from_this(), static_cast<IIr77Iterator*>(this));
 
-        else if (iid == &GUIDIr77Fitt)
+        else if (iid == GUIDIr77Fitt)
             obj = std::shared_ptr<Ir77Fitt>(shared_from_this(), static_cast<Ir77Fitt*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:

@@ -58,20 +58,20 @@ class Ir77Stack : public Ir77Enlisted, public IIr77Stack, public std::enable_sha
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Stack)
+        else if (iid == GUIDIIr77Stack)
             obj = std::shared_ptr<IIr77Stack>(shared_from_this(), static_cast<IIr77Stack*>(this));
 
-        else if (iid == &GUIDIr77Stack)
+        else if (iid == GUIDIr77Stack)
             obj = std::shared_ptr<Ir77Stack>(shared_from_this(), static_cast<Ir77Stack*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:

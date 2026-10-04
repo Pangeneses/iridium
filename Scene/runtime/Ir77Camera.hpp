@@ -63,20 +63,20 @@ class Ir77Camera : public Ir77Enlisted, public IIr77Camera, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Camera)
+        else if (iid == GUIDIIr77Camera)
             obj = std::shared_ptr<IIr77Camera>(shared_from_this(), static_cast<IIr77Camera*>(this));
 
-        else if (iid == &GUIDIr77Camera)
+        else if (iid == GUIDIr77Camera)
             obj = std::shared_ptr<Ir77Camera>(shared_from_this(), static_cast<Ir77Camera*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:
@@ -84,8 +84,8 @@ class Ir77Camera : public Ir77Enlisted, public IIr77Camera, public std::enable_s
         Ir77PVCamera cam{};
 
         if (auto* persp = std::get_if<fastgltf::Camera::Perspective>(&camera.camera)) {
-            float aspect = persp->aspectRatio.value_or(16.0f / 9.0f); 
-            float zfar = persp->zfar.value_or(1000.0f);               
+            float aspect = persp->aspectRatio.value_or(16.0f / 9.0f);
+            float zfar = persp->zfar.value_or(1000.0f);
 
             cam.projection = glm::perspective(persp->yfov, aspect, persp->znear, zfar);
         } else if (auto* ortho = std::get_if<fastgltf::Camera::Orthographic>(&camera.camera)) {

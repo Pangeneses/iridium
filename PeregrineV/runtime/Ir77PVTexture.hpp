@@ -74,20 +74,20 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77PVTexture)
+        else if (iid == GUIDIIr77PVTexture)
             obj = std::shared_ptr<IIr77PVTexture>(shared_from_this(), static_cast<IIr77PVTexture*>(this));
 
-        else if (iid == &GUIDIr77PVTexture)
+        else if (iid == GUIDIr77PVTexture)
             obj = std::shared_ptr<Ir77PVTexture>(shared_from_this(), static_cast<Ir77PVTexture*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -156,7 +156,7 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
     // creation
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreateFromPixels(VkCommandPool const& pool, VkQueue const& queue, void const* pixels, std::uint32_t const& width,
-                                                         std::uint32_t const& height, bool const& mipmaps) {
+                                                        std::uint32_t const& height, bool const& mipmaps) {
         if (m_kind != Ir77PVTextureKind::Color && m_kind != Ir77PVTextureKind::Data)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateFromPixels needs Color or Data kind.");
 
@@ -166,7 +166,7 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
     }
 
     std::shared_ptr<IIr77Return const> CreateCube(VkCommandPool const& pool, VkQueue const& queue, std::array<void const*, 6> const& faces,
-                                                   std::uint32_t const& size, bool const& mipmaps) {
+                                                  std::uint32_t const& size, bool const& mipmaps) {
         if (m_kind != Ir77PVTextureKind::Cube) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateCube needs Cube kind.");
 
         if (size == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: cube size is zero.");
@@ -192,8 +192,7 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
     // Cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL, so it is valid to sample before any shadow pass has run
     // (reads as "fully lit"). The shadow render pass can use initialLayout UNDEFINED or DEPTH_STENCIL_READ_ONLY_OPTIMAL and
     // must use finalLayout DEPTH_STENCIL_READ_ONLY_OPTIMAL. A 1x1 Depth texture doubles as the shadow-map placeholder.
-    std::shared_ptr<IIr77Return const> CreateDepth(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width,
-                                                    std::uint32_t const& height) {
+    std::shared_ptr<IIr77Return const> CreateDepth(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width, std::uint32_t const& height) {
         if (m_kind != Ir77PVTextureKind::Depth) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateDepth needs Depth kind.");
 
         if (width == 0 || height == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth extent is zero.");
@@ -332,7 +331,7 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
 
     // Shared path for Color / Data / Cube: stage every layer, copy to mip 0, then blit the chain or transition straight to read
     std::shared_ptr<IIr77Return const> CreateSampled(VkCommandPool const& pool, VkQueue const& queue, std::vector<void const*> const& layers,
-                                                      std::uint32_t const& width, std::uint32_t const& height, bool const& mipmaps) {
+                                                     std::uint32_t const& width, std::uint32_t const& height, bool const& mipmaps) {
         if (!Ready()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: device or allocator not set.");
 
         std::uint32_t const bpp = BytesPerPixel(m_format);
@@ -343,7 +342,8 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
 
         Destroy(device);
 
-        bool const can_blit = HasFormatFeatures(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
+        bool const can_blit =
+            HasFormatFeatures(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
 
         m_extent = {width, height};
         m_layers = static_cast<std::uint32_t>(layers.size());

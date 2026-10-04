@@ -76,20 +76,20 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77PVPipelineCPT)
+        else if (iid == GUIDIIr77PVPipelineCPT)
             obj = std::shared_ptr<IIr77PVPipelineCPT>(shared_from_this(), static_cast<IIr77PVPipelineCPT*>(this));
 
-        else if (iid == &GUIDIr77PVPipelineCPT)
+        else if (iid == GUIDIr77PVPipelineCPT)
             obj = std::shared_ptr<Ir77PVPipelineCPT>(shared_from_this(), static_cast<Ir77PVPipelineCPT*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:
@@ -128,7 +128,8 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
         m_layout->GetPipelineLayout(&pipeline_layout);
 
-        if (pipeline_layout == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: layout has no VkPipelineLayout -- call its DefinePipelineLayout first.");
+        if (pipeline_layout == VK_NULL_HANDLE)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: layout has no VkPipelineLayout -- call its DefinePipelineLayout first.");
 
         std::vector<VkPipelineShaderStageCreateInfo> shader_stages{};
 

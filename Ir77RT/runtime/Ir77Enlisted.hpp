@@ -89,7 +89,7 @@ class Ir77Enlisted : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> CollectionUuid(std::shared_ptr<IIr77GUID const>& uid) const = 0;
 
-    virtual IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>&) = 0;
+    virtual Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>&) = 0;
 
     // ── Data ─────────────────────────────────────────────────────
    protected:

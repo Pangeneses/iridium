@@ -136,20 +136,20 @@ class IDOPIr77MPVM : public IIr77Dictionary, public std::enable_shared_from_this
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Dictionary)
+        else if (iid == GUIDIIr77Dictionary)
             obj = std::shared_ptr<IIr77Dictionary>(shared_from_this(), static_cast<IIr77Dictionary*>(this));
 
-        else if (iid == &GUIDOPIr77MPVM)
+        else if (iid == GUIDOPIr77MPVM)
             obj = std::shared_ptr<IDOPIr77MPVM>(shared_from_this(), static_cast<IDOPIr77MPVM*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
     // ── IIr77Dictionary ──────────────────────────────────────────

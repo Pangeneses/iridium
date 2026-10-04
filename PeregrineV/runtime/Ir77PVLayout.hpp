@@ -78,20 +78,20 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77PVLayout)
+        else if (iid == GUIDIIr77PVLayout)
             obj = std::shared_ptr<IIr77PVLayout>(shared_from_this(), static_cast<IIr77PVLayout*>(this));
 
-        else if (iid == &GUIDIr77PVLayout)
+        else if (iid == GUIDIr77PVLayout)
             obj = std::shared_ptr<Ir77PVLayout>(shared_from_this(), static_cast<Ir77PVLayout*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:

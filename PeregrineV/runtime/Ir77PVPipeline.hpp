@@ -77,20 +77,20 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77PVPipeline)
+        else if (iid == GUIDIIr77PVPipeline)
             obj = std::shared_ptr<IIr77PVPipeline>(shared_from_this(), static_cast<IIr77PVPipeline*>(this));
 
-        else if (iid == &GUIDIr77PVPipeline)
+        else if (iid == GUIDIr77PVPipeline)
             obj = std::shared_ptr<Ir77PVPipeline>(shared_from_this(), static_cast<Ir77PVPipeline*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:

@@ -60,20 +60,20 @@ class IDIIr77Scene : public Ir77Enlisted, public IIr77Dictionary, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Dictionary)
+        else if (iid == GUIDIIr77Dictionary)
             obj = std::shared_ptr<IIr77Dictionary>(shared_from_this(), static_cast<IIr77Dictionary*>(this));
 
-        else if (iid == &GUIDIIr77Scene)
+        else if (iid == GUIDIIr77Scene)
             obj = std::shared_ptr<IDIIr77Scene>(shared_from_this(), static_cast<IDIIr77Scene*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
     // ── IIr77Dictionary ──────────────────────────────────────────

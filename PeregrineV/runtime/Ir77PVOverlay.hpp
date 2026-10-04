@@ -84,20 +84,20 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77PVOverlay)
+        else if (iid == GUIDIIr77PVOverlay)
             obj = std::shared_ptr<IIr77PVOverlay>(shared_from_this(), static_cast<IIr77PVOverlay*>(this));
 
-        else if (iid == &GUIDIr77PVOverlay)
+        else if (iid == GUIDIr77PVOverlay)
             obj = std::shared_ptr<Ir77PVOverlay>(shared_from_this(), static_cast<Ir77PVOverlay*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
    public:

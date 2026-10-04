@@ -76,20 +76,20 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    IIr77GUID* const QueryInterface(IIr77GUID const* iid, std::shared_ptr<void>& obj) {
-        if (iid == &GUIDIIr77Enlisted)
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == &GUIDIIr77Dictionary)
+        else if (iid == GUIDIIr77Dictionary)
             obj = std::shared_ptr<IIr77Dictionary>(shared_from_this(), static_cast<IIr77Dictionary*>(this));
 
-        else if (iid == &GUIDIIr77PeregrineV)
+        else if (iid == GUIDIIr77PeregrineV)
             obj = std::shared_ptr<IDIIr77PeregrineV>(shared_from_this(), static_cast<IDIIr77PeregrineV*>(this));
 
         else
-            return &GUIDQueryFailed;
+            return GUIDQueryFailed;
 
-        return &GUIDQuerySucceeded;
+        return GUIDQuerySucceeded;
     }
 
     // ── IIr77Dictionary ──────────────────────────────────────────
@@ -117,26 +117,16 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
     std::shared_ptr<IIr77Return const> m_invalidation_condition{nullptr};
 
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},
-        {"GUIDIIr77PVPaint", &GUIDIIr77PVPaint},
-        {"GUIDIIr77PVAsset", &GUIDIIr77PVAsset},
-        {"GUIDIIr77PVCEF", &GUIDIIr77PVCEF},
-        {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},
-        {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},
-        {"GUIDIIr77PVSwapchain", &GUIDIIr77PVSwapchain},
-        {"GUIDIIr77PVRenderPass", &GUIDIIr77PVRenderPass},
-        {"GUIDIIr77PVOverlay", &GUIDIIr77PVOverlay},
-        {"GUIDIIr77PVBuffer", &GUIDIIr77PVBuffer},
-        {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
-        {"GUIDIIr77PVDescriptorSet", &GUIDIIr77PVDescriptorSet},
-        {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},
-        {"GUIDIIr77PVLayoutCPT", &GUIDIIr77PVLayoutCPT},
-        {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},
-        {"GUIDIIr77PVPipelineCPT", &GUIDIIr77PVPipelineCPT},
-        {"GUIDIIr77PVTexture", &GUIDIIr77PVTexture},
-        {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
-        {"GUIDIIr77PVShader", &GUIDIIr77PVShader},
-        {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},
+        {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},   {"GUIDIIr77PVPaint", &GUIDIIr77PVPaint},
+        {"GUIDIIr77PVAsset", &GUIDIIr77PVAsset},         {"GUIDIIr77PVCEF", &GUIDIIr77PVCEF},
+        {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},   {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},
+        {"GUIDIIr77PVSwapchain", &GUIDIIr77PVSwapchain}, {"GUIDIIr77PVRenderPass", &GUIDIIr77PVRenderPass},
+        {"GUIDIIr77PVOverlay", &GUIDIIr77PVOverlay},     {"GUIDIIr77PVBuffer", &GUIDIIr77PVBuffer},
+        {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},     {"GUIDIIr77PVDescriptorSet", &GUIDIIr77PVDescriptorSet},
+        {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},       {"GUIDIIr77PVLayoutCPT", &GUIDIIr77PVLayoutCPT},
+        {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},   {"GUIDIIr77PVPipelineCPT", &GUIDIIr77PVPipelineCPT},
+        {"GUIDIIr77PVTexture", &GUIDIIr77PVTexture},     {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
+        {"GUIDIIr77PVShader", &GUIDIIr77PVShader},       {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},
         {"GUIDIIr77PVMesh", &GUIDIIr77PVMesh},
     };
 };
