@@ -115,6 +115,18 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
         m_device = device;
 
+        bool mesh{false};
+        m_device->GetMeshShading(mesh);
+
+        // extension commands aren't exported by the loader; stay null when mesh shading isn't enabled
+        if (mesh) {
+            VkDevice vk_device;
+            m_device->GetDevice(&vk_device);
+
+            m_draw_mesh_tasks = reinterpret_cast<PFN_vkCmdDrawMeshTasksEXT>(vkGetDeviceProcAddr(vk_device, "vkCmdDrawMeshTasksEXT"));
+            m_draw_mesh_tasks_indirect = reinterpret_cast<PFN_vkCmdDrawMeshTasksIndirectEXT>(vkGetDeviceProcAddr(vk_device, "vkCmdDrawMeshTasksIndirectEXT"));
+        }
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
@@ -188,6 +200,54 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         m_compute_groups_z = z;
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
+
+    /*
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // ray tracing / acceleration structures / mesh shading wiring
+    // Needs: IIr77PVPipelineRT (owns the SBT), IIr77PVLayoutRT, IIr77PVAccelStructure, and the device extensions
+    //   VK_KHR_acceleration_structure, VK_KHR_ray_tracing_pipeline, VK_KHR_deferred_host_operations,
+    //   VK_KHR_buffer_device_address (RT) / VK_EXT_mesh_shader (mesh) enabled in Ir77PVDevice.
+    // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // Extension commands are not exported by the loader -- resolve once per device, after DefineCommandPool
+    std::shared_ptr<IIr77Return const> DefineExtensionFunctions() {
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        m_trace_rays = reinterpret_cast<PFN_vkCmdTraceRaysKHR>(vkGetDeviceProcAddr(device, "vkCmdTraceRaysKHR"));
+        m_build_accel = reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(vkGetDeviceProcAddr(device, "vkCmdBuildAccelerationStructuresKHR"));
+        m_draw_mesh_tasks = reinterpret_cast<PFN_vkCmdDrawMeshTasksEXT>(vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksEXT"));
+        m_draw_mesh_tasks_indirect = reinterpret_cast<PFN_vkCmdDrawMeshTasksIndirectEXT>(vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksIndirectEXT"));
+
+        // null only means the extension isn't enabled -- each Record* path checks its own pointer
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Ray-tracing pipeline + layout + its sets (set 0 usually: TLAS, output image, camera)
+    std::shared_ptr<IIr77Return const> SetRayTracing(std::shared_ptr<IIr77PVPipelineRT> pipeline, std::shared_ptr<IIr77PVLayoutRT> layout,
+                                                     std::vector<std::shared_ptr<IIr77PVDescriptorSet>> const& sets) {
+        m_ray_pipeline = pipeline;
+        m_ray_layout = layout;
+        m_ray_sets = sets;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Storage image the raygen shader writes; the main pass samples it afterwards. Must track swapchain size on resize.
+    std::shared_ptr<IIr77Return const> SetRayTarget(VkImage const& image, VkExtent2D const& extent) {
+        m_ray_target = image;
+        m_ray_extent = extent;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Top-level structure rebuilt each frame from the instance list. Also used by ray queries in fragment / compute.
+    std::shared_ptr<IIr77Return const> SetAccelStructure(std::shared_ptr<IIr77PVAccelStructure> tlas) {
+        m_tlas = tlas;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+    */
 
     // -------------------------------------------------------------------------------------------------------------------------------------
     // per frame
@@ -350,6 +410,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Order: compute (culling / skinning / indirect prep) -> TLAS build -> ray trace -> shadow pass -> main pass.
+    // Everything before the shadow pass records outside any render pass.
     std::shared_ptr<IIr77Return const> RecordCommandBuffer() {
         if (m_cmd_buffers.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: AllocateCommandBuffer not called.");
 
@@ -371,6 +433,30 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: vkBeginCommandBuffer failed.");
         }
 
+        /*
+        auto const compute = RecordCompute(cmd);
+        if (compute->ID() != GUIDIr77OperationSucceeded) {
+            vkEndCommandBuffer(cmd);
+            return compute;
+        }
+
+        */
+
+        /*
+        // after compute: skinning / cloth may have just written the vertex data the BLAS refit reads
+        auto const accel = RecordAccelBuild(cmd);
+        if (accel->ID() != GUIDIr77OperationSucceeded) {
+            vkEndCommandBuffer(cmd);
+            return accel;
+        }
+
+        auto const ray = RecordRayTrace(cmd);
+        if (ray->ID() != GUIDIr77OperationSucceeded) {
+            vkEndCommandBuffer(cmd);
+            return ray;
+        }
+        */
+
         auto const shadow = RecordShadowPass(cmd);
         if (shadow->ID() != GUIDIr77OperationSucceeded) {
             vkEndCommandBuffer(cmd);
@@ -382,15 +468,6 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             vkEndCommandBuffer(cmd);
             return main;
         }
-
-        /*
-        auto const compute = RecordCompute(cmd);
-        if (compute->ID() != GUIDIr77OperationSucceeded) {
-            vkEndCommandBuffer(cmd);
-            return compute;
-        }
-
-        */
 
         if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: vkEndCommandBuffer failed.");
@@ -478,24 +555,27 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
    private:
     struct Ir77PVPushShadow {
         std::array<float, 16> model{};
-
         std::uint32_t light_index{0};
     };
+
+    struct Ir77PVPushMesh {
+        std::uint32_t draw_base{0};
+    };
+
+    static_assert(sizeof(Ir77PVPushMesh) == 4, "must match the Mesh push range in Ir77PVLayout::SetKind");
+
+    // must match local_size_x in the task shader
+    static constexpr std::uint32_t TASK_GROUP_SIZE = 32;
 
     // What is currently bound, so consecutive draws sharing state skip the rebind
     struct Ir77PVBindState {
         VkPipeline pipeline{VK_NULL_HANDLE};
-
         VkPipelineLayout layout{VK_NULL_HANDLE};
-
         VkDescriptorSet material{VK_NULL_HANDLE};
-
         VkDescriptorSet bones{VK_NULL_HANDLE};
-
+        VkDescriptorSet meshlets{VK_NULL_HANDLE};
         VkBuffer vertex{VK_NULL_HANDLE};
-
         VkBuffer index{VK_NULL_HANDLE};
-
         VkIndexType index_type{VK_INDEX_TYPE_UINT32};
     };
 
@@ -510,9 +590,16 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     static bool IsShadowKind(Ir77PVLayoutKind const& kind) { return kind == Ir77PVLayoutKind::Shadow || kind == Ir77PVLayoutKind::ShadowSkinned; }
 
-    static bool UsesPassSet(Ir77PVLayoutKind const& kind) { return kind == Ir77PVLayoutKind::Static || kind == Ir77PVLayoutKind::Skinned; }
+    static bool UsesPassSet(Ir77PVLayoutKind const& kind) {
+        return kind == Ir77PVLayoutKind::Static || kind == Ir77PVLayoutKind::Skinned || kind == Ir77PVLayoutKind::Mesh;
+    }
 
-    static bool UsesMaterialSet(Ir77PVLayoutKind const& kind) { return kind == Ir77PVLayoutKind::Static || kind == Ir77PVLayoutKind::Skinned; }
+    static bool UsesMaterialSet(Ir77PVLayoutKind const& kind) {
+        return kind == Ir77PVLayoutKind::Static || kind == Ir77PVLayoutKind::Skinned || kind == Ir77PVLayoutKind::Mesh;
+    }
+
+    // mesh shading -- add Ir77PVLayoutKind::Mesh (and MeshShadow if needed)
+    static bool IsMeshKind(Ir77PVLayoutKind const& kind) { return kind == Ir77PVLayoutKind::Mesh; }
 
     // UINT32_MAX = layout has no bones set
     static std::uint32_t BonesSetIndex(Ir77PVLayoutKind const& kind) {
@@ -651,6 +738,90 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    /*
+    // Rebuilds the TLAS from this frame's instance transforms (BLASes are built once at load by Asset).
+    // Outside any render pass. The barrier makes the build visible to ray tracing and to ray queries in fragment / compute.
+    std::shared_ptr<IIr77Return const> RecordAccelBuild(VkCommandBuffer cmd) {
+        if (!m_tlas || !m_build_accel) return Ir77RETURN<Ir77OperationSucceeded>();  // no ray work this frame -- not an error
+
+        VkAccelerationStructureBuildGeometryInfoKHR build_info{};
+        VkAccelerationStructureBuildRangeInfoKHR const* range{nullptr};
+
+        // the TLAS owns its geometry description, scratch buffer and instance buffer for this frame-in-flight
+        if (m_tlas->GetBuildInfo(m_current_frame, &build_info, &range)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: TLAS build info unavailable.");
+
+        m_build_accel(cmd, 1, &build_info, &range);
+
+        VkMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                             VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &barrier, 0, nullptr, 0, nullptr);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Raygen writes m_ray_target; the main pass samples it. Outside any render pass.
+    std::shared_ptr<IIr77Return const> RecordRayTrace(VkCommandBuffer cmd) {
+        if (!m_ray_pipeline || !m_ray_layout || !m_trace_rays || m_ray_target == VK_NULL_HANDLE) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        VkPipeline pipeline{VK_NULL_HANDLE};
+        m_ray_pipeline->GetPipeline(&pipeline);
+
+        VkPipelineLayout layout{VK_NULL_HANDLE};
+        m_ray_layout->GetPipelineLayout(&layout);
+
+        // SBT regions -- built by the pipeline from its shader group handles (raygen, miss, hit groups, callable)
+        VkStridedDeviceAddressRegionKHR raygen{};
+        VkStridedDeviceAddressRegionKHR miss{};
+        VkStridedDeviceAddressRegionKHR hit{};
+        VkStridedDeviceAddressRegionKHR callable{};
+        m_ray_pipeline->GetShaderBindingTable(&raygen, &miss, &hit, &callable);
+
+        // last frame's sampled image -> writable storage image (contents discarded, raygen overwrites every texel)
+        VkImageMemoryBarrier to_write{};
+        to_write.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        to_write.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        to_write.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        to_write.srcAccessMask = 0;
+        to_write.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        to_write.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_write.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_write.image = m_ray_target;
+        to_write.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, nullptr, 0, nullptr, 1,
+                             &to_write);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline);
+
+        for (std::uint32_t i = 0; i < m_ray_sets.size(); i++) {
+            VkDescriptorSet set{VK_NULL_HANDLE};
+            m_ray_sets[i]->GetSet(m_current_frame, &set);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, layout, i, 1, &set, 0, nullptr);
+        }
+
+        m_trace_rays(cmd, &raygen, &miss, &hit, &callable, m_ray_extent.width, m_ray_extent.height, 1);
+
+        // storage image -> sampled by the main pass fragment shader
+        VkImageMemoryBarrier to_read = to_write;
+        to_read.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        to_read.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        to_read.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        to_read.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &to_read);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+    */
+
     // Set 0 global and set 1 pass, rebound whenever the pipeline layout changes
     void BindFrameSets(VkCommandBuffer cmd, VkPipelineLayout layout, Ir77PVLayoutKind const& kind) {
         if (kind == Ir77PVLayoutKind::CEF) return;
@@ -670,11 +841,13 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         }
     }
 
+    // Pipeline, layout and set binds are skipped when unchanged from the previous item.
+    // Mesh items pull geometry from set 3 and dispatch task groups; everything else binds vertex / index and draws.
     void RecordDraws(VkCommandBuffer cmd, std::vector<Ir77PVDrawItem> const& draws) {
         Ir77PVBindState state{};
 
         for (auto const& item : draws) {
-            if (!item.pipeline || !item.layout || !item.vertex) continue;
+            if (!item.pipeline || !item.layout) continue;
 
             VkPipeline pipeline{VK_NULL_HANDLE};
             item.pipeline->GetPipeline(&pipeline);
@@ -686,6 +859,11 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             item.layout->GetKind(&kind);
 
             if (pipeline == VK_NULL_HANDLE || layout == VK_NULL_HANDLE) continue;
+
+            bool const mesh = IsMeshKind(kind);
+
+            // mesh items need the extension loaded and a meshlet set; raster items need a vertex buffer
+            if (mesh ? (!m_draw_mesh_tasks || !item.meshlets) : !item.vertex) continue;
 
             // pipeline
             if (pipeline != state.pipeline) {
@@ -699,6 +877,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
                 state.layout = layout;
                 state.material = VK_NULL_HANDLE;
                 state.bones = VK_NULL_HANDLE;
+                state.meshlets = VK_NULL_HANDLE;
             }
 
             // set 2 material
@@ -722,6 +901,33 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
                     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, bones_index, 1, &bones, 0, nullptr);
                     state.bones = bones;
                 }
+            }
+
+            // mesh -- set 3 meshlets, task/mesh push constants, no vertex / index binding
+            if (mesh) {
+                VkDescriptorSet meshlets{VK_NULL_HANDLE};
+                item.meshlets->GetSet(m_current_frame, &meshlets);
+
+                if (meshlets != state.meshlets) {
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 3, 1, &meshlets, 0, nullptr);
+                    state.meshlets = meshlets;
+                }
+
+                Ir77PVPushMesh push{};
+                push.draw_base = item.draw_base;
+
+                vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(Ir77PVPushMesh), &push);
+
+                if (item.indirect) {
+                    VkBuffer indirect{VK_NULL_HANDLE};
+                    item.indirect->GetBuffer(m_current_frame, &indirect);
+
+                    m_draw_mesh_tasks_indirect(cmd, indirect, item.indirect_offset, item.indirect_count, sizeof(VkDrawMeshTasksIndirectCommandEXT));
+                } else {
+                    m_draw_mesh_tasks(cmd, (item.meshlet_count + TASK_GROUP_SIZE - 1) / TASK_GROUP_SIZE, 1, 1);
+                }
+
+                continue;
             }
 
             // push constants -- sizes match Ir77PVLayout::SetKind
@@ -892,5 +1098,30 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     std::uint32_t m_compute_groups_y{1};
 
     std::uint32_t m_compute_groups_z{1};
+
+    /*
+    // ray tracing
+    std::shared_ptr<IIr77PVPipelineRT> m_ray_pipeline;
+
+    std::shared_ptr<IIr77PVLayoutRT> m_ray_layout;
+
+    std::vector<std::shared_ptr<IIr77PVDescriptorSet>> m_ray_sets;
+
+    VkImage m_ray_target{VK_NULL_HANDLE};
+
+    VkExtent2D m_ray_extent{};
+
+    // acceleration structures -- TLAS here, BLASes owned by Asset
+    std::shared_ptr<IIr77PVAccelStructure> m_tlas;
+
+    // extension commands (DefineExtensionFunctions)
+    PFN_vkCmdTraceRaysKHR m_trace_rays{nullptr};
+
+    PFN_vkCmdBuildAccelerationStructuresKHR m_build_accel{nullptr};
+    */
+
+    PFN_vkCmdDrawMeshTasksEXT m_draw_mesh_tasks{nullptr};
+
+    PFN_vkCmdDrawMeshTasksIndirectEXT m_draw_mesh_tasks_indirect{nullptr};
 };
 }  // namespace NSIr77PeregrineV

@@ -9,6 +9,8 @@
 
 #include "IIr77PVInstance.hpp"
 
+#include "../server/Ir77PVTypes.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
@@ -52,6 +54,8 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> GetDeviceProperties(VkPhysicalDeviceProperties& phys_device_props) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetDeviceFeatures(VkPhysicalDeviceFeatures& phys_device_features) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) = 0;
 

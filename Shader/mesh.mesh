@@ -1,0 +1,94 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+// One workgroup per visible meshlet. Outputs match vert.vert so frag.spv is shared unchanged.
+// max_vertices / max_primitives must match MESHLET_MAX_VERTICES / MESHLET_MAX_TRIANGLES.
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 64, max_primitives = 124) out;
+
+// set 0 binding 0 -- matches Ir77PVCamera
+layout(set = 0, binding = 0) uniform CameraUBO {
+    mat4 view;
+    mat4 proj;
+    mat4 view_proj;
+    vec4 eye;
+} camera;
+
+// set 3 -- matches Ir77PVLayout::BindingsMeshlet
+struct Meshlet {
+    vec4 sphere;
+    vec4 cone;
+    uint vertex_offset;
+    uint triangle_offset;
+    uint vertex_count;
+    uint triangle_count;
+};
+
+layout(std430, set = 3, binding = 0) readonly buffer Meshlets {
+    Meshlet meshlets[];
+};
+
+// meshlet-local index -> mesh vertex index
+layout(std430, set = 3, binding = 1) readonly buffer MeshletVertices {
+    uint meshlet_vertices[];
+};
+
+// uint8 x3 per triangle, read as packed words (no 8-bit storage feature needed)
+layout(std430, set = 3, binding = 2) readonly buffer MeshletTriangles {
+    uint meshlet_triangles[];
+};
+
+// Ir77PVVertex as 8 tightly packed floats: position xyz, normal xyz, uv
+layout(std430, set = 3, binding = 3) readonly buffer Vertices {
+    float vertices[];
+};
+
+// set 0 binding 2 -- one model matrix per instance
+layout(std430, set = 0, binding = 2) readonly buffer Instances {
+    mat4 models[];
+};
+
+// must match mesh.task
+struct TaskPayload {
+    uint instance;
+    uint meshlets[32];
+};
+
+taskPayloadSharedEXT TaskPayload payload;
+
+layout(location = 0) out vec3 fragNormal[];
+layout(location = 1) out vec2 fragUV[];
+
+uint TriangleByte(uint byte_index) {
+    return (meshlet_triangles[byte_index >> 2] >> ((byte_index & 3u) * 8u)) & 0xFFu;
+}
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+
+    Meshlet meshlet = meshlets[payload.meshlets[gl_WorkGroupID.x]];
+
+    SetMeshOutputsEXT(meshlet.vertex_count, meshlet.triangle_count);
+
+    mat4 model = models[payload.instance];
+    mat4 mvp = camera.view_proj * model;
+    mat3 normal_matrix = mat3(model);
+
+    for (uint i = lane; i < meshlet.vertex_count; i += 32) {
+        uint base = meshlet_vertices[meshlet.vertex_offset + i] * 8u;
+
+        vec3 position = vec3(vertices[base + 0], vertices[base + 1], vertices[base + 2]);
+        vec3 normal = vec3(vertices[base + 3], vertices[base + 4], vertices[base + 5]);
+        vec2 uv = vec2(vertices[base + 6], vertices[base + 7]);
+
+        gl_MeshVerticesEXT[i].gl_Position = mvp * vec4(position, 1.0);
+        fragNormal[i] = normal_matrix * normal;
+        fragUV[i] = uv;
+    }
+
+    for (uint t = lane; t < meshlet.triangle_count; t += 32) {
+        uint byte_index = meshlet.triangle_offset + t * 3u;
+
+        gl_PrimitiveTriangleIndicesEXT[t] = uvec3(TriangleByte(byte_index), TriangleByte(byte_index + 1u), TriangleByte(byte_index + 2u));
+    }
+}

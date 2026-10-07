@@ -227,6 +227,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
                 break;
 
             case Ir77PVPipelineKind::CEF:
+            case Ir77PVPipelineKind::Mesh:
                 // fullscreen quad generated from gl_VertexIndex -- no vertex input
                 break;
 
@@ -337,6 +338,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         switch (m_kind) {
             case Ir77PVPipelineKind::Static:
             case Ir77PVPipelineKind::Skinned:
+            case Ir77PVPipelineKind::Mesh:
             case Ir77PVPipelineKind::Shadow:
             case Ir77PVPipelineKind::ShadowSkinned:
                 m_depth_stencil_info.depthTestEnable = VK_TRUE;
@@ -419,6 +421,10 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
                 m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_SHADOW_SKINNED_VERT});
                 break;
 
+            case Ir77PVPipelineKind::Mesh:
+                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_MESH_TASK, ID_SHADER_MESH, ID_SHADER_FRAG});
+                break;
+
             case Ir77PVPipelineKind::CEF:
                 m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_CEF_VERT, ID_SHADER_CEF_FRAG});
                 break;
@@ -447,12 +453,14 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: shader stages failed.");
         }
 
+        bool const mesh = m_kind == Ir77PVPipelineKind::Mesh;
+
         m_pipeline_info = VkGraphicsPipelineCreateInfo{};
         m_pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         m_pipeline_info.stageCount = static_cast<std::uint32_t>(shader_stages.size());
         m_pipeline_info.pStages = shader_stages.data();
-        m_pipeline_info.pVertexInputState = &m_vertex_input_info;
-        m_pipeline_info.pInputAssemblyState = &m_input_assembly;
+        m_pipeline_info.pVertexInputState = mesh ? nullptr : &m_vertex_input_info;
+        m_pipeline_info.pInputAssemblyState = mesh ? nullptr : &m_input_assembly;
         m_pipeline_info.pViewportState = &m_viewport_state_info;
         m_pipeline_info.pRasterizationState = &m_rasterizer_state_info;
         m_pipeline_info.pMultisampleState = &m_multisampling_state_info;

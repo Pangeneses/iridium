@@ -76,4 +76,8 @@ static const std::uint64_t ID_SHADER_MORPH_COMP = 0xD4D28C622F4CBF92;
 
 static const std::uint64_t ID_SHADER_CLOTH_COMP = 0xE9A9676593DF336B;
 
+static const std::uint64_t ID_SHADER_MESH_TASK = 0x4DC032F58C73F8D8;
+
+static const std::uint64_t ID_SHADER_MESH = 0xFDD73F2AA1BD7C54;
+
 }  // namespace NSIr77PeregrineV

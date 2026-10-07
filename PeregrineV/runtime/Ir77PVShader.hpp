@@ -174,6 +174,9 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
             case Ir77PVShaderStage::RayIntersection:
                 info.stage_create_info.stage = VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
                 break;
+            case Ir77PVShaderStage::RayCallable:
+                info.stage_create_info.stage = VK_SHADER_STAGE_CALLABLE_BIT_KHR; 
+                break;
         }
 
         info.stage_create_info.pName = "main";

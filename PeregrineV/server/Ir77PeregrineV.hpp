@@ -159,7 +159,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             auto device = std::static_pointer_cast<IIr77PVDevice>(std::make_shared<Ir77PVDevice>());
 
             if (i == 0)
-                m_devices.emplace(ID_DEVICE_002, device);
+                m_devices.emplace(ID_DEVICE_001, device);
             else if (i == 1)
                 m_devices.emplace(ID_DEVICE_002, device);
             else if (i == 2)
@@ -262,7 +262,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         // Static also serves the per-window global + pass sets and every material; Skinned serves bones sets.
         std::uint32_t const frame_sets = windows * MAX_FRAMES_IN_FLIGHT;
 
-        std::map<Ir77PVLayoutKind, std::uint32_t> const capacities{
+        std::map<Ir77PVLayoutKind, std::uint32_t> capacities{
             {Ir77PVLayoutKind::Static, std::max(frame_sets, MATERIAL_CAPACITY)},
             {Ir77PVLayoutKind::Skinned, std::max(frame_sets, SKELETON_CAPACITY)},
             {Ir77PVLayoutKind::Shadow, frame_sets},
@@ -270,12 +270,19 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             {Ir77PVLayoutKind::CEF, std::max<std::uint32_t>(windows, 1)},
         };
 
+        bool mesh{false};
+        m_devices.at(m_current_device)->GetMeshShading(mesh);
+
+        if (mesh) capacities.emplace(Ir77PVLayoutKind::Mesh, std::max(frame_sets, MATERIAL_CAPACITY));
+
         std::map<Ir77PVLayoutKind, std::shared_ptr<IIr77PVLayout>> layouts{};
 
         for (auto const& [kind, capacity] : capacities) {
             auto layout = std::static_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayout>());
 
             layout->SetDevice(m_devices.at(m_current_device));
+
+            layout->SetMeshShading(mesh);
 
             if (layout->SetKind(kind)->ID() != GUIDIr77OperationSucceeded || layout->DefineDescriptorSetLayout()->ID() != GUIDIr77OperationSucceeded ||
                 layout->DefineDescriptorPool(capacity)->ID() != GUIDIr77OperationSucceeded ||
@@ -526,11 +533,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     // Kinds whose render pass hasn't been created yet (e.g. Shadow) are skipped.
     // Only request kinds whose shaders are loaded (Skinned / Shadow shaders don't exist yet).
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> CreatePipelines() {
-        static constexpr std::array<Ir77PVPipelineKind, 6> kAllKinds{
-            Ir77PVPipelineKind::Static,        Ir77PVPipelineKind::Skinned,     Ir77PVPipelineKind::Shadow,
-            Ir77PVPipelineKind::ShadowSkinned, Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::CEF,
-        };
+    std::shared_ptr<IIr77Return const> CreatePipelines(std::vector<Ir77PVPipelineKind> const& kinds) {
 
         std::size_t const windows = m_windows.at(m_current_device).size();
 
@@ -542,7 +545,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         std::vector<std::map<Ir77PVPipelineKind, std::shared_ptr<IIr77PVPipeline>>> per_window(windows);
 
         for (std::size_t w = 0; w < windows; w++) {
-            for (auto const kind : kAllKinds) {
+            for (auto const kind : kinds) {
                 auto const pass = render_passes.find(RenderPassKindFor(kind));
                 if (pass == render_passes.end()) continue;  // that render pass kind doesn't exist
 
@@ -635,6 +638,9 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
             case Ir77PVPipelineKind::ShadowSkinned:
                 return Ir77PVLayoutKind::ShadowSkinned;
+
+            case Ir77PVPipelineKind::Mesh:
+                return Ir77PVLayoutKind::Mesh;
 
             case Ir77PVPipelineKind::CEF:
                 return Ir77PVLayoutKind::CEF;

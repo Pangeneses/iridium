@@ -25,6 +25,8 @@ typedef struct IIr77PVLayout : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVLayoutKind const& kind) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> SetMeshShading(bool const& enabled) = 0;
+
     virtual std::shared_ptr<IIr77Return const> DefineDescriptorSetLayout() = 0;
 
     virtual std::shared_ptr<IIr77Return const> DefineDescriptorPool(std::uint32_t const& max_count) = 0;

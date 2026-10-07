@@ -132,6 +132,14 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
                 m_push_count = 1;
                 break;
 
+            // task / mesh / fragment -- geometry comes from set 3 storage buffers, not vertex input.
+            // Same sets 0-2 as Static so global / pass / material sets stay compatible.
+            case Ir77PVLayoutKind::Mesh:
+                m_sets = {BindingsGlobal(), BindingsPass(), BindingsMaterial(), BindingsMeshlet()};
+                m_push = VkPushConstantRange{VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(std::uint32_t)};
+                m_push_count = 1;
+                break;
+
             case Ir77PVLayoutKind::CEF:
                 m_sets = {BindingsCEF()};
                 break;
@@ -139,6 +147,12 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
             default:
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayout: unknown layout kind.");
         }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetMeshShading(bool const& enabled) {
+        m_geometry_stages = enabled ? (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT) : VK_SHADER_STAGE_VERTEX_BIT;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -265,18 +279,22 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
         return VkDescriptorSetLayoutBinding{binding, type, 1, stages, nullptr};
     }
 
-    // Set 0 -- per-frame, shared by Static/Skinned/Shadow (identical definition keeps them compatible)
-    static std::vector<VkDescriptorSetLayoutBinding> BindingsGlobal() {
-        return {Bind(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT),  // camera
-                Bind(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT),                               // lights
-                Bind(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT),                                 // instances
-                Bind(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)};                      // env / IBL
+    // Set 0 -- camera, lights, instances, env. Shared by every layout kind, so the flags must be identical across them.
+    std::vector<VkDescriptorSetLayoutBinding> BindingsGlobal() const {
+        return {
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, m_geometry_stages | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},  // camera
+            {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},                      // lights
+            {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, m_geometry_stages, nullptr},                                 // instances
+            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},              // env / IBL
+        };
     }
 
-    // Set 1 -- per-pass
-    static std::vector<VkDescriptorSetLayoutBinding> BindingsPass() {
-        return {Bind(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT),  // shadow map
-                Bind(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)};           // shadow matrices
+    // Set 1 -- shadow map, shadow matrices
+    std::vector<VkDescriptorSetLayoutBinding> BindingsPass() const {
+        return {
+            {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},              // shadow map
+            {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, m_geometry_stages | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},  // shadow matrices
+        };
     }
 
     // Set 2 -- per-material
@@ -292,6 +310,19 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
     // Set 3 -- skinned objects
     static std::vector<VkDescriptorSetLayoutBinding> BindingsBones() {
         return {Bind(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)};  // bone matrices
+    }
+
+    // Set 3 for Mesh -- meshoptimizer layout. Task reads meshlets for culling; mesh reads everything.
+    static std::vector<VkDescriptorSetLayoutBinding> BindingsMeshlet() {
+        VkShaderStageFlags const task_mesh = VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT;
+
+        return {
+            {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, task_mesh, nullptr},                     // meshlets (offsets, counts, bounds)
+            {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_MESH_BIT_EXT, nullptr},  // meshlet vertex indices
+            {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_MESH_BIT_EXT, nullptr},  // meshlet triangles (uint8 x3)
+            {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_MESH_BIT_EXT, nullptr},  // vertices
+            {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, task_mesh, nullptr},
+        };
     }
 
     // Set 0 -- CEF composite
@@ -315,5 +346,7 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
     std::uint32_t m_push_count{0};
 
     VkPipelineLayout m_pipeline_layout{VK_NULL_HANDLE};
+
+    VkShaderStageFlags m_geometry_stages{VK_SHADER_STAGE_VERTEX_BIT};
 };
 }  // namespace NSIr77PeregrineV

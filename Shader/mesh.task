@@ -1,0 +1,126 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+// One invocation per meshlet. Culls against the frustum and the meshlet's normal cone, then emits
+// one mesh workgroup per survivor. local_size_x must match TASK_GROUP_SIZE in Ir77PVCmdBuffer.
+layout(local_size_x = 32) in;
+
+// set 0 binding 0 -- matches Ir77PVCamera
+layout(set = 0, binding = 0) uniform CameraUBO {
+    mat4 view;
+    mat4 proj;
+    mat4 view_proj;
+    vec4 eye;
+} camera;
+
+// set 3 binding 0 -- matches Ir77PVMeshlet (48 bytes)
+struct Meshlet {
+    vec4 sphere;  // xyz center, w radius -- object space
+    vec4 cone;    // xyz axis, w cutoff
+    uint vertex_offset;
+    uint triangle_offset;
+    uint vertex_count;
+    uint triangle_count;
+};
+
+layout(std430, set = 3, binding = 0) readonly buffer Meshlets {
+    Meshlet meshlets[];
+};
+
+// set 0 binding 2 -- one model matrix per instance, written every frame
+layout(std430, set = 0, binding = 2) readonly buffer Instances {
+    mat4 models[];
+};
+
+// set 3 binding 4 -- matches Ir77PVMeshDraw (16 bytes). One record per object drawn.
+struct MeshDraw {
+    uint instance;        // index into models[]
+    uint meshlet_offset;  // first meshlet of this object in binding 0
+    uint meshlet_count;
+    uint pad;
+};
+
+layout(std430, set = 3, binding = 4) readonly buffer Draws {
+    MeshDraw draws[];
+};
+
+// matches Ir77PVPushMesh (4 bytes).
+// Direct draw: draw_base = the object's record, gl_DrawID = 0.
+// Indirect draw: draw_base = first record of the run, gl_DrawID = 0..indirect_count-1.
+layout(push_constant) uniform Push {
+    uint draw_base;
+} push;
+
+// must be declared identically in mesh.mesh
+struct TaskPayload {
+    uint instance;      // so the mesh shader doesn't look the record up again
+    uint meshlets[32];
+};
+
+taskPayloadSharedEXT TaskPayload payload;
+
+shared uint visible_count;
+
+bool PlaneVisible(vec4 plane, vec3 center, float radius) {
+    return dot(plane.xyz, center) + plane.w >= -radius * length(plane.xyz);
+}
+
+// Gribb-Hartmann: planes from the rows of view_proj; Vulkan depth is 0..1, so near is row 2 alone
+bool FrustumVisible(vec3 center, float radius) {
+    mat4 m = transpose(camera.view_proj);
+
+    return PlaneVisible(m[3] + m[0], center, radius) &&  // left
+           PlaneVisible(m[3] - m[0], center, radius) &&  // right
+           PlaneVisible(m[3] + m[1], center, radius) &&  // top / bottom
+           PlaneVisible(m[3] - m[1], center, radius) &&
+           PlaneVisible(m[2], center, radius) &&         // near
+           PlaneVisible(m[3] - m[2], center, radius);    // far
+}
+
+// meshoptimizer's cone test -- true when every triangle in the meshlet faces away from the eye
+bool ConeCulled(vec3 center, float radius, vec3 axis, float cutoff) {
+    vec3 to_center = center - camera.eye.xyz;
+
+    return dot(to_center, axis) >= cutoff * length(to_center) + radius;
+}
+
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    uint index = gl_GlobalInvocationID.x;
+
+    MeshDraw draw = draws[push.draw_base + gl_DrawID];
+    mat4 model = models[draw.instance];
+
+    if (lane == 0) {
+        visible_count = 0;
+        payload.instance = draw.instance;
+    }
+
+    memoryBarrierShared();
+    barrier();
+
+    bool visible = false;
+
+    if (index < draw.meshlet_count) {
+        uint meshlet_index = draw.meshlet_offset + index;
+        Meshlet meshlet = meshlets[meshlet_index];
+
+        // object -> world. Radius scales by the largest axis so non-uniform scale stays conservative.
+        vec3 center = (model * vec4(meshlet.sphere.xyz, 1.0)).xyz;
+        float scale = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
+        float radius = meshlet.sphere.w * scale;
+        vec3 axis = normalize(mat3(model) * meshlet.cone.xyz);
+
+        visible = FrustumVisible(center, radius) && !ConeCulled(center, radius, axis, meshlet.cone.w);
+
+        if (visible) {
+            uint slot = atomicAdd(visible_count, 1);
+            payload.meshlets[slot] = meshlet_index;
+        }
+    }
+
+    memoryBarrierShared();
+    barrier();
+
+    EmitMeshTasksEXT(visible_count, 1, 1);
+}

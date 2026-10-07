@@ -7,7 +7,7 @@ layout(location = 2) in vec2 inUV;
 layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec2 fragUV;
 
-// set 0 binding 0 -- matches Ir77PVTestCamera
+// set 0 binding 0 -- matches Ir77PVCamera
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 view;
     mat4 proj;
@@ -15,13 +15,16 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 eye;
 } camera;
 
-// per-draw model matrix, from Ir77PVDrawItem::model
-layout(push_constant) uniform Push {
-    mat4 model;
-} push;
+// set 0 binding 2 -- one model matrix per instance, written every frame.
+// gl_InstanceIndex = firstInstance + instance, so firstInstance picks the object.
+layout(std430, set = 0, binding = 2) readonly buffer Instances {
+    mat4 models[];
+};
 
 void main() {
-    gl_Position = camera.view_proj * push.model * vec4(inPosition, 1.0);
-    fragNormal = mat3(push.model) * inNormal;
+    mat4 model = models[gl_InstanceIndex];
+
+    gl_Position = camera.view_proj * model * vec4(inPosition, 1.0);
+    fragNormal = mat3(model) * inNormal;
     fragUV = inUV;
 }

@@ -39,18 +39,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVBuffer() {
-        if (m_device) {
-            VkDevice device;
-            m_device->GetDevice(&device);
-
-            vkDeviceWaitIdle(device);
-        }
-
-        for (std::size_t i = 0; i < m_buffers.size(); i++) {
-            if (m_buffers[i] != VK_NULL_HANDLE) vmaDestroyBuffer(m_allocator, m_buffers[i], m_allocations[i]);
-        }
-    }
+    ~Ir77PVBuffer() { Release(); }
 
    public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -123,6 +112,8 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         if (m_allocator == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: allocator not set.");
         if (m_usage == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: usage not set.");
         if (size == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: size is zero.");
+
+        Release();
 
         m_size = size;
 
@@ -295,6 +286,28 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         *mode = m_mode;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+   private:
+    // Frees every copy. Waits for the GPU first -- a frame in flight may still be reading the old buffers.
+    void Release() {
+        if (m_buffers.empty()) return;
+
+        if (m_device) {
+            VkDevice device;
+            m_device->GetDevice(&device);
+
+            vkDeviceWaitIdle(device);
+        }
+
+        for (std::size_t i = 0; i < m_buffers.size(); i++) {
+            if (m_buffers[i] != VK_NULL_HANDLE) vmaDestroyBuffer(m_allocator, m_buffers[i], m_allocations[i]);
+        }
+
+        m_buffers.clear();
+        m_allocations.clear();
+        m_mapped_ptrs.clear();
+        m_size = 0;
     }
 
    private:

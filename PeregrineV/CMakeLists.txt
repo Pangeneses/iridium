@@ -4,7 +4,12 @@ project(PeregrineV LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-file(GLOB_RECURSE PV_SOURCES
+include(FetchContent)
+
+# -----------------------------------------------------------------------------
+# library
+# -----------------------------------------------------------------------------
+file(GLOB_RECURSE PV_SOURCES CONFIGURE_DEPENDS
     "*.cpp"
 )
 
@@ -23,23 +28,20 @@ target_include_directories(PeregrineV PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/server
 )
 
-# Vulkan
+# -----------------------------------------------------------------------------
+# system packages
+# -----------------------------------------------------------------------------
 find_package(Vulkan REQUIRED)
-target_include_directories(PeregrineV PUBLIC ${Vulkan_INCLUDE_DIRS})
-target_link_libraries(PeregrineV PUBLIC Vulkan::Vulkan)
+find_package(SDL3 REQUIRED)
 
-include(FetchContent)
-
-# VMA
+# -----------------------------------------------------------------------------
+# fetched dependencies
+# -----------------------------------------------------------------------------
 FetchContent_Declare(
     vma
     GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
     GIT_TAG        v3.4.0
 )
-
-FetchContent_MakeAvailable(vma)
-
-target_include_directories(PeregrineV PUBLIC ${vma_SOURCE_DIR}/include)
 
 FetchContent_Declare(
     glm
@@ -47,12 +49,23 @@ FetchContent_Declare(
     GIT_TAG        1.0.1
 )
 
-FetchContent_MakeAvailable(glm)
+FetchContent_Declare(
+    meshoptimizer
+    GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+    GIT_TAG        v0.23
+)
 
-target_link_libraries(PeregrineV PUBLIC glm::glm)
+FetchContent_MakeAvailable(vma glm meshoptimizer)
 
-# SDL3
-find_package(SDL3 REQUIRED)
-target_link_libraries(PeregrineV PUBLIC SDL3::SDL3)
+# -----------------------------------------------------------------------------
+# linkage -- PUBLIC because the headers that use these are included by consumers
+# -----------------------------------------------------------------------------
+target_include_directories(PeregrineV PUBLIC ${vma_SOURCE_DIR}/include)
 
-target_link_libraries(PeregrineV PUBLIC Ir77RT)
+target_link_libraries(PeregrineV PUBLIC
+    Vulkan::Vulkan
+    SDL3::SDL3
+    glm::glm
+    meshoptimizer
+    Ir77RT
+)

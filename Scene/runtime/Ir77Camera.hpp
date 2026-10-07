@@ -80,20 +80,28 @@ class Ir77Camera : public Ir77Enlisted, public IIr77Camera, public std::enable_s
     }
 
    public:
+    // glTF camera node -> Ir77PVCamera (set 0 binding 0). Same conventions as Ir77PVAsset::MakeCamera:
+    // right-handed, depth 0..1 (_ZO), Y flipped for Vulkan clip space.
     std::shared_ptr<IIr77Return const> AddCamera(fastgltf::Camera const& camera, glm::mat4 const& world_transform) {
         Ir77PVCamera cam{};
 
-        if (auto* persp = std::get_if<fastgltf::Camera::Perspective>(&camera.camera)) {
-            float aspect = persp->aspectRatio.value_or(16.0f / 9.0f);
-            float zfar = persp->zfar.value_or(1000.0f);
+        if (auto const* persp = std::get_if<fastgltf::Camera::Perspective>(&camera.camera)) {
+            float const aspect = persp->aspectRatio.value_or(16.0f / 9.0f);
+            float const zfar = persp->zfar.value_or(1000.0f);  // glTF: no zfar = infinite; 1000 stands in
 
-            cam.projection = glm::perspective(persp->yfov, aspect, persp->znear, zfar);
-        } else if (auto* ortho = std::get_if<fastgltf::Camera::Orthographic>(&camera.camera)) {
-            cam.projection = glm::ortho(-ortho->xmag, ortho->xmag, -ortho->ymag, ortho->ymag, ortho->znear, ortho->zfar);
+            cam.proj = glm::perspectiveRH_ZO(persp->yfov, aspect, persp->znear, zfar);
+        } else if (auto const* ortho = std::get_if<fastgltf::Camera::Orthographic>(&camera.camera)) {
+            cam.proj = glm::orthoRH_ZO(-ortho->xmag, ortho->xmag, -ortho->ymag, ortho->ymag, ortho->znear, ortho->zfar);
+        } else {
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: camera is neither perspective nor orthographic.");
         }
 
+        cam.proj[1][1] *= -1.0f;
+
+        // the node's world transform places the camera; the view matrix is its inverse
         cam.view = glm::inverse(world_transform);
-        cam.model = world_transform;
+        cam.eye = glm::vec4(glm::vec3(world_transform[3]), 1.0f);
+        cam.view_proj = cam.proj * cam.view;
 
         m_cameras.push_back(cam);
 

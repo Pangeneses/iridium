@@ -103,8 +103,6 @@ class iridium {
         Require(m_vulkan->CreateFrameBuffers());
         Require(m_vulkan->CreateDescriptorSets());
 
-        Require(m_asset->CreateTestbed());
-
         // CEF overlay -- one per window, uses the CEF layout from CreateLayouts and each window's swapchain
         Require(m_cef->CreateOverlays());
 
@@ -120,7 +118,12 @@ class iridium {
         // pipelines need shaders, layouts and the Main pass
         Require(m_asset->CreateShaders(), "Create shaders.");
 
-        Require(m_vulkan->CreatePipelines());
+        std::vector<Ir77PVPipelineKind> kinds;
+        Require( m_asset->GetPipelineKinds(kinds));
+
+        Require(m_vulkan->CreatePipelines(kinds));
+
+        Require(m_asset->CreateTestbed(3, true, true), "Create testbed.");
 
         // command buffers wire the overlay, so they come after CreateBufferCEF and CreatePipelines
         Require(m_paint->CreateCommandBuffers());
