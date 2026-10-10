@@ -206,7 +206,7 @@ class iridium {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_resize_event).count();
 
-            if (elapsed > 10) {
+            if (elapsed > 0) {
                 m_resize_pending = false;
 
                 m_cef_width = m_pending_width;
