@@ -24,3 +24,15 @@ CompileFlags:
     - -I/home/alpha/workspace/iridium/build/_deps/vma-src/include
     - -I/home/alpha/workspace/iridium/build/_deps/glm-src
     - -I/home/alpha/workspace/iridium/build/_deps/fastgltf-src/include
+    - -I/home/alpha/workspace/iridium/build/_deps/stb-src
+---
+If:
+  PathMatch: ".*Iridium/.*\\.(hpp|h)"
+CompileFlags:
+  Add:
+    - -I/home/alpha/workspace/cef
+    - -I/home/alpha/workspace/cef/include
+    - -I/home/alpha/workspace/iridium/build/_deps/vma-src/include
+    - -I/home/alpha/workspace/iridium/build/_deps/glm-src
+    - -I/home/alpha/workspace/iridium/build/_deps/fastgltf-src/include
+    - -I/home/alpha/workspace/iridium/build/_deps/stb-src

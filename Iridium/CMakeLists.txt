@@ -25,6 +25,7 @@ target_include_directories(Ir77 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Vulkan
 find_package(Vulkan REQUIRED)
 target_link_libraries(Ir77 PRIVATE Vulkan::Vulkan)
 
@@ -37,12 +38,11 @@ set(CEF_ROOT "$ENV{HOME}/workspace/cef")
 
 set(CEF_WRAPPER_LIB "${CEF_ROOT}/build/libcef_dll_wrapper/libcef_dll_wrapper.a")
 
-# CEF headers
-target_include_directories(Ir77 PRIVATE 
+target_include_directories(Ir77 PRIVATE
     ${CEF_ROOT}
-    ${CEF_ROOT}/include)
+    ${CEF_ROOT}/include
+)
 
-# Link engine + wrapper
 target_link_libraries(Ir77 PRIVATE
     ${CEF_WRAPPER_LIB}
     ${CEF_ROOT}/Release/libcef.so
@@ -50,18 +50,20 @@ target_link_libraries(Ir77 PRIVATE
 
 target_compile_definitions(Ir77 PRIVATE WRAPPING_CEF_SHARED)
 
-# Copy runtime resources next to the executable
+# Copy CEF's runtime next to the executable -- every .so / .bin / .json in Release, plus Resources
 add_custom_command(TARGET Ir77 POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${CEF_ROOT}/Release/libcef.so $<TARGET_FILE_DIR:Ir77>
-    COMMAND ${CMAKE_COMMAND} -E copy ${CEF_ROOT}/Release/v8_context_snapshot.bin $<TARGET_FILE_DIR:Ir77>
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CEF_ROOT}/Release $<TARGET_FILE_DIR:Ir77>
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CEF_ROOT}/Resources $<TARGET_FILE_DIR:Ir77>
 )
 
+# --- engine libraries ---
+# Ir77RT is whole-archived (keeps every object even if nothing references it); the rest link normally.
+# Ir77Scene brings fastgltf, glm and stb_image with it (PUBLIC in its own CMakeLists).
 target_link_libraries(Ir77 PRIVATE
     -Wl,--whole-archive
     Ir77RT
     -Wl,--no-whole-archive
     PeregrineV
-    -Wl,--no-whole-archive
     Windows
+    Ir77Scene
 )

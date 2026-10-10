@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-#include "../server/Ir77PVTypes.hpp"
+#include "../types/Ir77PVTypes.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -41,6 +41,7 @@
 #include "../runtime/Ir77PVBuffer.hpp"
 #include "../runtime/Ir77PVDescriptorSet.hpp"
 #include "../runtime/Ir77PVShader.hpp"
+#include "../runtime/Ir77PVTexture.hpp"
 
 using namespace NSIr77RT;
 
@@ -65,7 +66,7 @@ typedef struct Ir77PVMaterialTextures {
 // Ir77PVAsset -- the data binding point between a client (scene loader / game layer) and PeregrineV.
 //
 //   startup:   SetPeregrineV -> CreateShaders -> (CreatePipelines) -> placeholder textures
-//   load:      CreateTexture* -> CreateMaterial / UploadMaterials -> UploadScene (vertex path) or UploadMeshlets (mesh path)
+//   load:      CreateTexture -> CreateMaterial / UploadMaterials -> UploadScene (vertex path) or UploadMeshlets (mesh path)
 //   frame:     Tick(frame) -> camera / Instances via Paint -> Make*DrawItem per material run -> Paint::SetDraws
 //   runtime:   SetSceneObjectVisible / SetSceneObjectInstances / SetMeshletObjectVisible / SetMeshletRecordVisible
 //   unload:    remove the draw items from Paint, then UnloadScene / UnloadMeshlets / UnloadMesh (freed after the frames in flight)
@@ -96,13 +97,6 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         std::vector<std::uint32_t> groups{};                        // what a visible record dispatches
         std::vector<std::uint32_t> first_record{};                  // per scene command, plus one end entry
         std::uint32_t dirty{0};
-        bool alive{false};
-    };
-
-    struct Ir77PVTextureSlot {
-        VkImage image{VK_NULL_HANDLE};
-        VmaAllocation allocation{VK_NULL_HANDLE};
-        VkImageView view{VK_NULL_HANDLE};
         bool alive{false};
     };
 
@@ -165,17 +159,9 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
                 pending->second.clear();
             }
 
+            // textures release their own image / view / sampler -- the device is idle and the allocator still alive here
             auto const textures = m_textures.find(device_id);
-            if (textures != m_textures.end()) {
-                for (auto& t : textures->second) {
-                    if (t.view != VK_NULL_HANDLE) vkDestroyImageView(vk_device, t.view, nullptr);
-                    if (t.image != VK_NULL_HANDLE && allocator != VK_NULL_HANDLE) vmaDestroyImage(allocator, t.image, t.allocation);
-                }
-                textures->second.clear();
-            }
-
-            auto const sampler = m_samplers.find(device_id);
-            if (sampler != m_samplers.end()) vkDestroySampler(vk_device, sampler->second, nullptr);
+            if (textures != m_textures.end()) textures->second.clear();
 
             auto const pool = m_upload_pools.find(device_id);
             if (pool != m_upload_pools.end()) vkDestroyCommandPool(vk_device, pool->second, nullptr);
@@ -236,12 +222,13 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
     // Camera for set 0 binding 0. Vulkan clip space is Y-down, so the projection is flipped.
-    static Ir77PVCamera MakeCamera(glm::vec3 const& eye, glm::vec3 const& target, float const& fov_degrees, float const& aspect) {
+    static Ir77PVCamera MakeCamera(glm::vec3 const& eye, glm::vec3 const& target, float const& fov_degrees, float const& aspect, float const& znear = 0.1f,
+                                   float const& zfar = 100.0f) {
         Ir77PVCamera camera{};
 
         camera.eye = glm::vec4(eye, 1.0f);
         camera.view = glm::lookAtRH(eye, target, glm::vec3(0.0f, 1.0f, 0.0f));
-        camera.proj = glm::perspectiveRH_ZO(glm::radians(fov_degrees), aspect, 0.1f, 100.0f);
+        camera.proj = glm::perspectiveRH_ZO(glm::radians(fov_degrees), aspect, znear, zfar);
         camera.proj[1][1] *= -1.0f;
         camera.view_proj = camera.proj * camera.view;
 
@@ -354,11 +341,13 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             if (!std::filesystem::exists(path)) {
                 if (entry.required) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: required shader missing.");
+                std::printf("[WARN] optional shader missing: %s\n", path.string().c_str());
                 continue;
             }
 
             if (shader->LoadShader(path.string(), entry.id, entry.stage)->ID() != GUIDIr77OperationSucceeded) {
                 if (entry.required) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: required shader failed to load.");
+                std::printf("[WARN] optional shader failed to load: %s\n", path.string().c_str());
                 continue;
             }
 
@@ -366,9 +355,14 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         }
 
         // pipeline kinds whose every stage loaded
-        std::vector<Ir77PVPipelineKind> kinds{Ir77PVPipelineKind::Static, Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::CEF};
+        std::vector<Ir77PVPipelineKind> kinds{Ir77PVPipelineKind::Static, Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::TransparentBack,
+                                              Ir77PVPipelineKind::CEF};
 
-        if (loaded.count(ID_SHADER_SKINNED_VERT)) kinds.push_back(Ir77PVPipelineKind::Skinned);
+        if (loaded.count(ID_SHADER_SKINNED_VERT)) {
+            kinds.push_back(Ir77PVPipelineKind::Skinned);
+            kinds.push_back(Ir77PVPipelineKind::SkinnedTransparent);
+            kinds.push_back(Ir77PVPipelineKind::SkinnedTransparentBack);
+        }
         if (loaded.count(ID_SHADER_SHADOW_VERT)) kinds.push_back(Ir77PVPipelineKind::Shadow);
         if (loaded.count(ID_SHADER_SHADOW_SKINNED_VERT)) kinds.push_back(Ir77PVPipelineKind::ShadowSkinned);
         if (loaded.count(ID_SHADER_MESH_TASK) && loaded.count(ID_SHADER_MESH)) kinds.push_back(Ir77PVPipelineKind::Mesh);
@@ -385,6 +379,16 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (found == m_pipeline_kinds.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreateShaders not called.");
 
         kinds = found->second;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Name of the GPU this context renders on -- for stats / logs
+    std::shared_ptr<IIr77Return const> GetDeviceName(std::string& name) {
+        VkPhysicalDeviceProperties properties{};
+        m_context->m_devices.at(m_context->m_current_device)->GetDeviceProperties(properties);
+
+        name = properties.deviceName;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -414,8 +418,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         mesh.vertex->GetBuffer(0, &vertex_dst);
         mesh.index->GetBuffer(0, &index_dst);
 
-        if (UploadBatch(pool, queue, {{vertex_dst, input.vertex_data.data(), vertex_size}, {index_dst, input.index_data.data(), index_size}}, wait)
-                ->ID() != GUIDIr77OperationSucceeded) {
+        if (UploadBatch(pool, queue, {{vertex_dst, input.vertex_data.data(), vertex_size}, {index_dst, input.index_data.data(), index_size}}, wait)->ID() !=
+            GUIDIr77OperationSucceeded) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: mesh upload failed.");
         }
 
@@ -688,8 +692,9 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             float const* positions = &vertices[0].position.x;
 
-            std::size_t const count = meshopt_buildMeshlets(built.data(), local_vertices.data(), local_triangles.data(), indices, cmd.indexCount, positions,
-                                                            local_count, sizeof(Ir77PVVertex), MESHLET_MAX_VERTICES, MESHLET_MAX_TRIANGLES, MESHLET_CONE_WEIGHT);
+            std::size_t const count =
+                meshopt_buildMeshlets(built.data(), local_vertices.data(), local_triangles.data(), indices, cmd.indexCount, positions, local_count,
+                                      sizeof(Ir77PVVertex), MESHLET_MAX_VERTICES, MESHLET_MAX_TRIANGLES, MESHLET_CONE_WEIGHT);
             if (count == 0) continue;
             built.resize(count);
 
@@ -722,8 +727,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             std::size_t const used_vertices = last.vertex_offset + last.vertex_count;
             std::size_t const used_triangles = last.triangle_offset + ((last.triangle_count * 3 + 3) & ~3u);
 
-            for (std::size_t j = 0; j < used_vertices; j++)
-                meshlet_vertices.push_back(local_vertices[j] + static_cast<std::uint32_t>(cmd.vertexOffset));
+            for (std::size_t j = 0; j < used_vertices; j++) meshlet_vertices.push_back(local_vertices[j] + static_cast<std::uint32_t>(cmd.vertexOffset));
 
             meshlet_triangles.insert(meshlet_triangles.end(), local_triangles.begin(), local_triangles.begin() + used_triangles);
 
@@ -962,11 +966,12 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
     // =========================================================================================================================================
-    // textures -- RGBA8, one mip, sampled in the fragment stage. srgb = true for color data (albedo, emissive), false for data maps
-    // (normal, ORM, AO). One shared linear / repeat sampler per device.
+    // textures -- built on Ir77PVTexture (the same class as the placeholders), so they get its kinds, mip chain and sampler handling.
+    // srgb = true for color data (albedo, emissive) -> Color kind (sRGB); false for data maps (normal, ORM, AO) -> Data kind (UNORM).
+    // Blocking: Ir77PVTexture uploads and waits on its own.
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> CreateTexture(std::uint8_t const* rgba, std::uint32_t const& width, std::uint32_t const& height, bool const& srgb,
-                                                     std::uint32_t& texture_id, bool const& wait = true) {
+                                                     std::uint32_t& texture_id) {
         if (rgba == nullptr || width == 0 || height == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: empty texture.");
 
         VkCommandPool pool{VK_NULL_HANDLE};
@@ -975,110 +980,15 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         std::uint64_t const device_id = m_context->m_current_device;
 
-        VkDevice device{VK_NULL_HANDLE};
-        m_context->m_devices.at(device_id)->GetDevice(&device);
-        VmaAllocator const allocator = m_context->m_allocators.at(device_id);
+        auto texture = std::static_pointer_cast<IIr77PVTexture>(std::make_shared<Ir77PVTexture>());
 
-        if (EnsureSampler() == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: sampler creation failed.");
+        texture->SetDevice(m_context->m_devices.at(device_id));
+        texture->SetAllocator(m_context->m_allocators.at(device_id));
+        texture->SetKind(srgb ? Ir77PVTextureKind::Color : Ir77PVTextureKind::Data);  // first -- resets format and sampler to the kind's defaults
+        texture->SetSampler(Ir77PVSamplerDesc{});                                     // linear / repeat; anisotropy needs samplerAnisotropy on the device
 
-        VkFormat const format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        VkDeviceSize const size = static_cast<VkDeviceSize>(width) * height * 4;
-
-        // image
-        VkImageCreateInfo image_info{};
-        image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        image_info.imageType = VK_IMAGE_TYPE_2D;
-        image_info.format = format;
-        image_info.extent = {width, height, 1};
-        image_info.mipLevels = 1;
-        image_info.arrayLayers = 1;
-        image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-        image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-        VmaAllocationCreateInfo image_alloc{};
-        image_alloc.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-
-        Ir77PVTextureSlot texture{};
-
-        if (vmaCreateImage(allocator, &image_info, &image_alloc, &texture.image, &texture.allocation, nullptr) != VK_SUCCESS)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: texture image creation failed.");
-
-        VkImageSubresourceRange const range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-
-        VkImageViewCreateInfo view_info{};
-        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_info.image = texture.image;
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = format;
-        view_info.subresourceRange = range;
-
-        if (vkCreateImageView(device, &view_info, nullptr, &texture.view) != VK_SUCCESS) {
-            vmaDestroyImage(allocator, texture.image, texture.allocation);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: texture view creation failed.");
-        }
-
-        // staging
-        VkBuffer staging{VK_NULL_HANDLE};
-        VmaAllocation staging_allocation{VK_NULL_HANDLE};
-        void* mapped{nullptr};
-
-        if (!CreateStaging(size, staging, staging_allocation, mapped)) {
-            vkDestroyImageView(device, texture.view, nullptr);
-            vmaDestroyImage(allocator, texture.image, texture.allocation);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: texture staging creation failed.");
-        }
-
-        std::memcpy(mapped, rgba, static_cast<std::size_t>(size));
-        vmaFlushAllocation(allocator, staging_allocation, 0, size);
-
-        VkCommandBuffer cmd{VK_NULL_HANDLE};
-        if (!BeginOneShot(pool, cmd)) {
-            vmaDestroyBuffer(allocator, staging, staging_allocation);
-            vkDestroyImageView(device, texture.view, nullptr);
-            vmaDestroyImage(allocator, texture.image, texture.allocation);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: texture command buffer failed.");
-        }
-
-        // UNDEFINED -> TRANSFER_DST
-        VkImageMemoryBarrier to_dst{};
-        to_dst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        to_dst.srcAccessMask = 0;
-        to_dst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        to_dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        to_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        to_dst.image = texture.image;
-        to_dst.subresourceRange = range;
-
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_dst);
-
-        VkBufferImageCopy region{};
-        region.bufferOffset = 0;
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {width, height, 1};
-
-        vkCmdCopyBufferToImage(cmd, staging, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-        // TRANSFER_DST -> SHADER_READ_ONLY
-        VkImageMemoryBarrier to_read = to_dst;
-        to_read.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        to_read.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        to_read.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        to_read.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_read);
-
-        if (SubmitOneShot(pool, queue, cmd, staging, staging_allocation, wait)->ID() != GUIDIr77OperationSucceeded) {
-            vkDestroyImageView(device, texture.view, nullptr);
-            vmaDestroyImage(allocator, texture.image, texture.allocation);
+        if (texture->CreateFromPixels(pool, queue, rgba, width, height, true)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: texture upload failed.");
-        }
-
-        texture.alive = true;
 
         auto& textures = m_textures[device_id];
         texture_id = static_cast<std::uint32_t>(textures.size());
@@ -1089,15 +999,12 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
     std::shared_ptr<IIr77Return const> GetTextureInfo(std::uint32_t const& texture_id, VkDescriptorImageInfo& info) {
         auto const found = m_textures.find(m_context->m_current_device);
-        if (found == m_textures.end() || texture_id >= found->second.size() || !found->second[texture_id].alive)
+        if (found == m_textures.end() || texture_id >= found->second.size() || !found->second[texture_id])
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown texture.");
 
         info = VkDescriptorImageInfo{};
-        info.sampler = EnsureSampler();
-        info.imageView = found->second[texture_id].view;
-        info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        return Ir77RETURN<Ir77OperationSucceeded>();
+        return found->second[texture_id]->GetImageInfo(&info);
     }
 
     // =========================================================================================================================================
@@ -1123,8 +1030,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
     // One staging copy for every material's constants; one buffer + one set per material (each binds its own textures).
-    std::shared_ptr<IIr77Return const> UploadMaterials(std::vector<Ir77PVMaterialConstants> const& constants, std::vector<Ir77PVMaterialTextures> const& textures,
-                                                       std::vector<std::uint32_t>& material_ids) {
+    std::shared_ptr<IIr77Return const> UploadMaterials(std::vector<Ir77PVMaterialConstants> const& constants,
+                                                       std::vector<Ir77PVMaterialTextures> const& textures, std::vector<std::uint32_t>& material_ids) {
         if (constants.size() != textures.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: constants / textures count mismatch.");
 
         VkCommandPool pool{VK_NULL_HANDLE};
@@ -1252,8 +1159,6 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         m_testbed.use_indirect = mesh ? use_indirect : indirect;  // mesh has its indirect buffer from UploadMeshlets already
         m_testbed.ready = true;
 
-        std::printf("[DEBUG] testbed path = %s%s\n", mesh ? "mesh shading" : "vertex", m_testbed.use_indirect ? " indirect" : "");
-
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Testbed.");
     }
 
@@ -1262,6 +1167,18 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (!m_testbed.ready) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreateTestbed not called.");
 
         std::size_t const windows = m_context->m_windows.at(m_context->m_current_device).size();
+
+        // set 0 binding 1 -- one directional sun; header (16) + light (64) packs exactly as the shader reads it
+        struct {
+            Ir77PVLightsHeader header{};
+            Ir77PVLight sun{};
+        } lights{};
+
+        lights.header.count = 1;
+        lights.sun.direction = glm::normalize(glm::vec3(-0.4f, -1.0f, -0.3f));
+        lights.sun.color = glm::vec3(1.0f);
+        lights.sun.intensity = 1.0f;
+        lights.sun.type = 0;  // directional
 
         for (std::size_t w = 0; w < windows; w++) {
             // camera -- orbits the grid; each window offset a little so multi-window setups are distinguishable
@@ -1277,6 +1194,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             Ir77PVCamera const camera = MakeCamera(eye, glm::vec3(0.0f), 60.0f, aspect);
 
             paint->SetFrameData(w, Ir77PVBufferSlot::Camera, &camera, sizeof(camera));
+            paint->SetFrameData(w, Ir77PVBufferSlot::Lights, &lights, sizeof(lights));
 
             // cubes
             Ir77PVDrawItem base{};
@@ -1331,9 +1249,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
    private:
-    // Outward-facing CCW cube by construction: each face's winding is verified against its own normal
-    // rather than assumed, so the Y-flipped projection + frontFace=CLOCKWISE pairing is correct on
-    // every face regardless of per-face handedness.
+    // Outward-facing counter-clockwise cube -- the glTF convention, drawn with frontFace = COUNTER_CLOCKWISE under the
+    // Y-flipped projection. Each face's winding is checked against its own normal rather than assumed.
     static Ir77PVInputBuffer BuildCube(float const& h) {
         struct Face {
             glm::vec3 normal;
@@ -1375,9 +1292,9 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             bool const correct_winding = glm::dot(computed_normal, face.normal) > 0.0f;
 
             if (correct_winding) {
-                for (std::uint32_t const i : {0u, 1u, 2u, 0u, 2u, 3u}) out.index_data.push_back(base + i);
-            } else {
                 for (std::uint32_t const i : {0u, 2u, 1u, 0u, 3u, 2u}) out.index_data.push_back(base + i);
+            } else {
+                for (std::uint32_t const i : {0u, 1u, 2u, 0u, 2u, 3u}) out.index_data.push_back(base + i);
             }
         }
 
@@ -1387,6 +1304,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     static Ir77PVLayoutKind LayoutKindFor(Ir77PVPipelineKind const& kind) {
         switch (kind) {
             case Ir77PVPipelineKind::Skinned:
+            case Ir77PVPipelineKind::SkinnedTransparent:
+            case Ir77PVPipelineKind::SkinnedTransparentBack:
                 return Ir77PVLayoutKind::Skinned;
             case Ir77PVPipelineKind::Shadow:
                 return Ir77PVLayoutKind::Shadow;
@@ -1504,36 +1423,6 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         m_context->m_buffers_vertex[m_context->m_current_device].push_back(material.constants);  // teardown order
 
         return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // One linear / repeat sampler per device, created on first use
-    VkSampler EnsureSampler() {
-        std::uint64_t const device_id = m_context->m_current_device;
-
-        auto const found = m_samplers.find(device_id);
-        if (found != m_samplers.end()) return found->second;
-
-        VkDevice device{VK_NULL_HANDLE};
-        m_context->m_devices.at(device_id)->GetDevice(&device);
-
-        VkSamplerCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        info.magFilter = VK_FILTER_LINEAR;
-        info.minFilter = VK_FILTER_LINEAR;
-        info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        info.anisotropyEnable = VK_FALSE;
-        info.maxLod = VK_LOD_CLAMP_NONE;
-        info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-
-        VkSampler sampler{VK_NULL_HANDLE};
-        if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS) return VK_NULL_HANDLE;
-
-        m_samplers[device_id] = sampler;
-
-        return sampler;
     }
 
     // Asset's own transient pool on the presentation family, created on first upload per device
@@ -1688,7 +1577,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         VkDeviceSize total{0};
         for (auto const& e : entries) {
             if (e.size == 0) continue;
-            if (e.dst == VK_NULL_HANDLE || e.data == nullptr) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: upload entry has no destination or data.");
+            if (e.dst == VK_NULL_HANDLE || e.data == nullptr)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: upload entry has no destination or data.");
             total += e.size;
         }
         if (total == 0) return Ir77RETURN<Ir77OperationSucceeded>();
@@ -1758,9 +1648,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
     std::map<std::uint64_t, std::vector<Ir77PVMaterial>> m_materials{};
 
-    std::map<std::uint64_t, std::vector<Ir77PVTextureSlot>> m_textures{};
-
-    std::map<std::uint64_t, VkSampler> m_samplers{};
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVTexture>>> m_textures{};
 
     std::map<std::uint64_t, VkCommandPool> m_upload_pools{};
 

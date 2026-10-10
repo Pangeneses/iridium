@@ -286,6 +286,7 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
             {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},                      // lights
             {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, m_geometry_stages, nullptr},                                 // instances
             {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},              // env / IBL
+            {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, m_geometry_stages, nullptr},                                 // bones: bases[8192] + palettes
         };
     }
 

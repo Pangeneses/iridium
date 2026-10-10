@@ -11,7 +11,7 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "../PeregrineV/server/Ir77PVTypes.hpp"
+#include "../PeregrineV/types//Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -34,6 +34,20 @@ typedef struct IIr77Mesh : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> GetInstanceBuffer(std::vector<glm::mat4>& instance_buffer) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetMeshRanges(std::vector<Ir77MeshRange>& mesh_ranges) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetRangeMaterials(std::vector<std::uint32_t>& materials) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetBounds(glm::vec3& min, glm::vec3& max) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetMeshFirstInstance(std::uint32_t const& mesh_index, std::uint32_t& first) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetSkinnedVertexBuffer(std::vector<Ir77PVVertexSkinned>& vertex_buffer) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetSkinnedIndexBuffer(std::vector<std::uint32_t>& index_buffer) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetSkinnedMeshRanges(std::vector<Ir77MeshRange>& mesh_ranges) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetSkinnedRangeMaterials(std::vector<std::uint32_t>& materials) = 0;
 
     virtual ~IIr77Mesh() = default;
 }* pIIr77Mesh;

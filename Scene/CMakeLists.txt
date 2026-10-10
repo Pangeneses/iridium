@@ -62,6 +62,23 @@ FetchContent_MakeAvailable(fastgltf)
 
 target_link_libraries(Ir77Scene PUBLIC fastgltf::fastgltf)
 
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG        master          # stb has no release tags; pin a commit hash once it works
+    GIT_SHALLOW    TRUE
+)
+
+FetchContent_MakeAvailable(stb)
+
+# stb is header-only: the implementation has to be compiled in exactly one translation unit
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/stb_image_impl.cpp
+     "#define STB_IMAGE_IMPLEMENTATION\n#include <stb_image.h>\n")
+
+add_library(stb_image STATIC ${CMAKE_CURRENT_BINARY_DIR}/stb_image_impl.cpp)
+target_include_directories(stb_image PUBLIC ${stb_SOURCE_DIR})
+target_link_libraries(Ir77Scene PUBLIC stb_image)
+
 # SDL3
 find_package(SDL3 REQUIRED)
 target_link_libraries(Ir77Scene PRIVATE SDL3::SDL3)

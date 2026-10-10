@@ -24,7 +24,7 @@
 #include "../interface/IIr77PVLayout.hpp"
 #include "../interface/IIr77PVDescriptorSet.hpp"
 
-#include "Ir77PVTypes.hpp"
+#include "../types/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 

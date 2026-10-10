@@ -42,10 +42,11 @@
 #include "../runtime/Ir77PVDescriptorSet.hpp"
 #include "../runtime/Ir77PVTexture.hpp"
 
-#include "../server/Ir77PVTypes.hpp"
+#include "../types/Ir77PVTypes.hpp"
 
 #include "IDIr77PVContext.hpp"
-#include "Ir77PVTypes.hpp"
+
+#include "../types/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
@@ -501,6 +502,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             global->BindBuffer(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slots.at(Ir77PVBufferSlot::Lights));
             global->BindBuffer(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slots.at(Ir77PVBufferSlot::Instances));
             global->BindImage(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // env / IBL
+            global->BindBuffer(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slots.at(Ir77PVBufferSlot::Bones));
 
             if (global->Write()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: global set write failed.");
 
@@ -534,7 +536,6 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     // Only request kinds whose shaders are loaded (Skinned / Shadow shaders don't exist yet).
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreatePipelines(std::vector<Ir77PVPipelineKind> const& kinds) {
-
         std::size_t const windows = m_windows.at(m_current_device).size();
 
         if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: too many windows.");

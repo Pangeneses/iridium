@@ -195,7 +195,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         VmaAllocationInfo staging_result{};
 
         if (vmaCreateBuffer(allocator, &staging_info, &staging_alloc_info, &staging, &staging_allocation, &staging_result) != VK_SUCCESS)
-            return Ir77RETURN<Ir77NotConfigured>(nullptr, "Ir77PVBuffer: batch staging buffer creation failed.");
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: batch staging buffer creation failed.");
 
         std::vector<VkDeviceSize> offsets(entries.size());
         VkDeviceSize cursor{0};
@@ -215,7 +215,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         VkCommandBuffer cmd{VK_NULL_HANDLE};
         if (vkAllocateCommandBuffers(device, &cmd_alloc, &cmd) != VK_SUCCESS) {
             vmaDestroyBuffer(allocator, staging, staging_allocation);
-            return Ir77RETURN<Ir77NotConfigured>(nullptr, "Ir77PVBuffer: batch upload command buffer allocation failed.");
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: batch upload command buffer allocation failed.");
         }
 
         VkCommandBufferBeginInfo begin_info{};
@@ -244,7 +244,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         vkFreeCommandBuffers(device, pool, 1, &cmd);
         vmaDestroyBuffer(allocator, staging, staging_allocation);
 
-        if (result != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(nullptr, "Ir77PVBuffer: batch upload submit failed.");
+        if (result != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: batch upload submit failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

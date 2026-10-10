@@ -9,7 +9,7 @@
 
 #include "IIr77PVInstance.hpp"
 
-#include "../server/Ir77PVTypes.hpp"
+#include "../types/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 

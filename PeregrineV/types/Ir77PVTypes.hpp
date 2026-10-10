@@ -81,7 +81,7 @@ enum class Ir77PVLayoutKind : std::uint8_t { Static, Skinned, Shadow, ShadowSkin
 // Transparent   -> Ir77PVLayoutKind::Static
 // CEF           -> Ir77PVLayoutKind::CEF
 // Mesh          -> Ir77PVLayoutKind::Mesh           (task / mesh / fragment, no vertex input)
-enum class Ir77PVPipelineKind : std::uint8_t { Static, Skinned, Shadow, ShadowSkinned, Transparent, Mesh, CEF };
+enum class Ir77PVPipelineKind : std::uint8_t { Static, Skinned, Shadow, ShadowSkinned, Transparent, CEF, Mesh, SkinnedTransparent, TransparentBack, SkinnedTransparentBack };
 
 // Compute passes -- graphics-adjacent, dispatched before or alongside the render pass
 enum class Ir77PVComputeKind : std::uint8_t { Culling, SkinningUpdate, MorphUpdate, ClothSim, ParticleSim, TerrainLOD, GPUOcclusion, IndirectPrep };
@@ -189,10 +189,10 @@ enum class Ir77PVPlaceholderKind : std::uint8_t { White, Normal };
 
 typedef struct Ir77PVFrameSizes {
     VkDeviceSize camera{256};              // view, proj, view_proj, eye position
-    VkDeviceSize lights{64 * 64};          // 64 lights x 64 bytes
+    VkDeviceSize lights{16 + 64 * 64};          // 64 lights x 64 bytes + 16 bytes header
     VkDeviceSize instances{8192 * 64};     // 8192 instances x mat4
     VkDeviceSize shadow_matrices{4 * 64};  // 4 cascades / lights x mat4
-    VkDeviceSize bones{256 * 128 * 64};    // 256 skeletons x 128 joints x mat4
+    VkDeviceSize bones{8192 * 4 + 256 * 128 * 64};  // bone_base per instance slot + 256 skeletons x 128 joints x mat4
     VkDeviceSize indirect{8192 * sizeof(VkDrawIndexedIndirectCommand)};
 }* pIr77PVFrameSizes;
 
@@ -268,6 +268,16 @@ typedef struct Ir77PVLight {
     float outerConeAngle{};
     int type{};
 }* pIr77PVLight;
+
+static_assert(sizeof(Ir77PVLight) == 64, "lights buffer is read as 64-byte std430 structs");
+
+// Set 0 binding 1 header -- the light count, padded to 16 bytes; the Ir77PVLight array follows it
+typedef struct Ir77PVLightsHeader {
+    std::uint32_t count{0};
+    std::uint32_t _pad[3]{};
+}* pIr77PVLightsHeader;
+
+static_assert(sizeof(Ir77PVLightsHeader) == 16, "lights header must stay 16 bytes so the array stays aligned");
 
 // Set 2 binding 0. std140-safe: vec4, then 4 floats packed into a vec4.
 typedef struct Ir77PVMaterialConstants {

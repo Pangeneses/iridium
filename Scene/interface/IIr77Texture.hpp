@@ -20,6 +20,11 @@ typedef struct IIr77Texture : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> LoadTexturesFromAsset(fastgltf::Asset const& textures) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> GetTextureCount(std::uint32_t& count) = 0;
+    
+    virtual std::shared_ptr<IIr77Return const> GetTexture(std::uint32_t const& index, std::uint32_t& width, std::uint32_t& height, bool& srgb,
+                                                          std::vector<std::uint8_t>& rgba) = 0;
+
     virtual ~IIr77Texture() = default;
 }* pIIr77Texture;
 }  // namespace NSIr77Scene

@@ -10,7 +10,7 @@
 #include <memory>
 #include <vector>
 
-#include "../server/Ir77PVTypes.hpp"
+#include "../types/Ir77PVTypes.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -199,6 +199,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         switch (m_kind) {
             case Ir77PVPipelineKind::Static:
             case Ir77PVPipelineKind::Transparent:
+            case Ir77PVPipelineKind::TransparentBack:
                 m_binding_description.stride = sizeof(Ir77PVVertex);
                 m_attribute_descriptions = {Attribute(0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertex, position)),
                                             Attribute(1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertex, normal)),
@@ -211,6 +212,8 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
                 break;
 
             case Ir77PVPipelineKind::Skinned:
+            case Ir77PVPipelineKind::SkinnedTransparent:
+            case Ir77PVPipelineKind::SkinnedTransparentBack:
                 m_binding_description.stride = sizeof(Ir77PVVertexSkinned);
                 m_attribute_descriptions = {Attribute(0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertexSkinned, position)),
                                             Attribute(1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertexSkinned, normal)),
@@ -286,7 +289,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         m_rasterizer_state_info.rasterizerDiscardEnable = VK_FALSE;
         m_rasterizer_state_info.polygonMode = VK_POLYGON_MODE_FILL;
         m_rasterizer_state_info.lineWidth = 1.0f;
-        m_rasterizer_state_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        m_rasterizer_state_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         m_rasterizer_state_info.cullMode = VK_CULL_MODE_BACK_BIT;
         m_rasterizer_state_info.depthBiasEnable = VK_FALSE;
 
@@ -299,6 +302,15 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
                 m_rasterizer_state_info.depthBiasConstantFactor = 1.25f;
                 m_rasterizer_state_info.depthBiasSlopeFactor = 1.75f;
                 m_rasterizer_state_info.depthBiasClamp = 0.0f;
+
+            case Ir77PVPipelineKind::TransparentBack:
+            case Ir77PVPipelineKind::SkinnedTransparentBack:
+                m_rasterizer_state_info.cullMode = VK_CULL_MODE_FRONT_BIT;
+                break;
+
+            case Ir77PVPipelineKind::Transparent:
+            case Ir77PVPipelineKind::SkinnedTransparent:
+                m_rasterizer_state_info.cullMode = VK_CULL_MODE_BACK_BIT;
                 break;
 
             case Ir77PVPipelineKind::CEF:
@@ -346,6 +358,9 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
                 break;
 
             case Ir77PVPipelineKind::Transparent:
+            case Ir77PVPipelineKind::SkinnedTransparent:
+            case Ir77PVPipelineKind::TransparentBack:
+            case Ir77PVPipelineKind::SkinnedTransparentBack:
                 // test against opaque depth, don't occlude other transparents
                 m_depth_stencil_info.depthTestEnable = VK_TRUE;
                 m_depth_stencil_info.depthWriteEnable = VK_FALSE;
@@ -370,7 +385,11 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
         switch (m_kind) {
             case Ir77PVPipelineKind::Transparent:
+            case Ir77PVPipelineKind::SkinnedTransparent:
+            case Ir77PVPipelineKind::TransparentBack:
+            case Ir77PVPipelineKind::SkinnedTransparentBack:
             case Ir77PVPipelineKind::CEF:
+                m_color_blend_attachment.blendEnable = VK_TRUE;
                 m_color_blend_attachment.blendEnable = VK_TRUE;
                 m_color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
                 m_color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -405,10 +424,13 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         switch (m_kind) {
             case Ir77PVPipelineKind::Static:
             case Ir77PVPipelineKind::Transparent:
+            case Ir77PVPipelineKind::TransparentBack:
                 m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_VERT, ID_SHADER_FRAG});
                 break;
 
             case Ir77PVPipelineKind::Skinned:
+            case Ir77PVPipelineKind::SkinnedTransparent:
+            case Ir77PVPipelineKind::SkinnedTransparentBack:
                 m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_SKINNED_VERT, ID_SHADER_FRAG});
                 break;
 
@@ -431,6 +453,19 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
             default:
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: unknown pipeline kind.");
+        }
+
+        // frag.frag constant_id 0 (FLIP_BACK_FACES) -- off for transparent kinds, shader default (on) for everything else
+        bool const transparent = m_kind == Ir77PVPipelineKind::Transparent || m_kind == Ir77PVPipelineKind::TransparentBack ||
+                                 m_kind == Ir77PVPipelineKind::SkinnedTransparent || m_kind == Ir77PVPipelineKind::SkinnedTransparentBack;
+
+        if (transparent) {
+            m_flip_back_faces = VK_FALSE;
+            m_spec_entry = VkSpecializationMapEntry{0, 0, sizeof(VkBool32)};
+            m_spec_info = VkSpecializationInfo{1, &m_spec_entry, sizeof(VkBool32), &m_flip_back_faces};
+
+            for (auto& stage : shader_stages)
+                if (stage.stage == VK_SHADER_STAGE_FRAGMENT_BIT) stage.pSpecializationInfo = &m_spec_info;
         }
 
         if (shader_stages.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: no shader stages.");
@@ -526,5 +561,11 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     VkGraphicsPipelineCreateInfo m_pipeline_info{};
 
     VkPipeline m_pipeline{VK_NULL_HANDLE};
+
+    VkBool32 m_flip_back_faces{VK_TRUE};
+
+    VkSpecializationMapEntry m_spec_entry{};
+
+    VkSpecializationInfo m_spec_info{};
 };
 }  // namespace NSIr77PeregrineV

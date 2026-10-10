@@ -8,7 +8,7 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "../PeregrineV/server/Ir77PVTypes.hpp"
+#include "../PeregrineV/types//Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;

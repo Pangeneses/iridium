@@ -58,6 +58,7 @@ taskPayloadSharedEXT TaskPayload payload;
 
 layout(location = 0) out vec3 fragNormal[];
 layout(location = 1) out vec2 fragUV[];
+layout(location = 2) out vec3 fragWorldPos[];
 
 uint TriangleByte(uint byte_index) {
     return (meshlet_triangles[byte_index >> 2] >> ((byte_index & 3u) * 8u)) & 0xFFu;
@@ -81,7 +82,9 @@ void main() {
         vec3 normal = vec3(vertices[base + 3], vertices[base + 4], vertices[base + 5]);
         vec2 uv = vec2(vertices[base + 6], vertices[base + 7]);
 
-        gl_MeshVerticesEXT[i].gl_Position = mvp * vec4(position, 1.0);
+        vec4 world = model * vec4(position, 1.0);
+        fragWorldPos[i] = world.xyz;
+        gl_MeshVerticesEXT[i].gl_Position = camera.view_proj * world;
         fragNormal[i] = normal_matrix * normal;
         fragUV[i] = uv;
     }

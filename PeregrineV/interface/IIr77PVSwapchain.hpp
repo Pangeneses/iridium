@@ -15,7 +15,7 @@
 #include "IIr77PVDevice.hpp"
 #include "IIr77PVRenderPass.hpp"
 
-#include "../server/Ir77PVTypes.hpp"
+#include "../types/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
