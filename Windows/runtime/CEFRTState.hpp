@@ -41,6 +41,7 @@ class CEFRTState {
         std::cerr << "[DEBUG] resources_dir_path will be = " << exe_dir.string() << std::endl;
 
         CefSettings settings{};
+        settings.remote_debugging_port = 9222;
         settings.multi_threaded_message_loop = false;
         settings.no_sandbox = true;
         settings.windowless_rendering_enabled = true;

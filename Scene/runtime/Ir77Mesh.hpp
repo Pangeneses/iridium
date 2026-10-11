@@ -47,24 +47,6 @@ namespace NSIr77Scene {
 // =============================================================================================================================================
 class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_shared_from_this<Ir77Mesh> {
    public:
-    static constexpr std::uint32_t NO_MATERIAL = UINT32_MAX;  // primitive without a material -> the default material
-
-   private:
-    struct Ir77MeshStream {
-        std::vector<glm::vec3> positions{};
-        std::vector<glm::vec3> normals{};
-        std::vector<glm::vec2> uvs{};
-        std::vector<glm::uvec4> joints{};   // skinned stream only
-        std::vector<glm::vec4> weights{};   // skinned stream only
-        std::vector<std::uint32_t> indices{};
-
-        std::vector<Ir77MeshRange> ranges{};                   // one per primitive
-        std::vector<std::uint32_t> range_materials{};
-        std::vector<std::uint32_t> range_vertex_counts{};
-        std::map<std::uint32_t, std::vector<std::size_t>> ranges_of_mesh{};  // glTF mesh -> its ranges in this stream
-    };
-
-   public:
     Ir77Mesh() {
         try {
             m_enlisted_uuid.Generate();
@@ -337,6 +319,24 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
+
+   public:
+    static constexpr std::uint32_t NO_MATERIAL = UINT32_MAX;  // primitive without a material -> the default material
+
+   private:
+    struct Ir77MeshStream {
+        std::vector<glm::vec3> positions{};
+        std::vector<glm::vec3> normals{};
+        std::vector<glm::vec2> uvs{};
+        std::vector<glm::uvec4> joints{};  // skinned stream only
+        std::vector<glm::vec4> weights{};  // skinned stream only
+        std::vector<std::uint32_t> indices{};
+
+        std::vector<Ir77MeshRange> ranges{};  // one per primitive
+        std::vector<std::uint32_t> range_materials{};
+        std::vector<std::uint32_t> range_vertex_counts{};
+        std::map<std::uint32_t, std::vector<std::size_t>> ranges_of_mesh{};  // glTF mesh -> its ranges in this stream
+    };
 
    private:
     void AccumulateBounds(Ir77MeshStream const& stream) {
