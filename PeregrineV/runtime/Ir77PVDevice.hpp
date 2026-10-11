@@ -181,6 +181,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
         // optional -- kept only if DefineDeviceInfo also finds the features it needs
         if (HasExtension(VK_EXT_MESH_SHADER_EXTENSION_NAME)) m_extensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+        if (HasExtension(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)) m_extensions.push_back(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -196,6 +197,10 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         VkPhysicalDeviceMeshShaderFeaturesEXT mesh_supported{};
         mesh_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
         mesh_supported.pNext = &v11_supported;
+
+        VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance_supported{};
+        maintenance_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+        v11_supported.pNext = &maintenance_supported;  // query: features2 -> mesh -> vulkan11 -> maintenance
 
         VkPhysicalDeviceFeatures2 supported{};
         supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -225,11 +230,32 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_mesh_features.taskShader = m_mesh_shading ? VK_TRUE : VK_FALSE;
         m_mesh_features.meshShader = m_mesh_shading ? VK_TRUE : VK_FALSE;
 
-        // enable: create info -> features2 -> vulkan11 -> [mesh]
+        // swapchain maintenance -- extension present AND feature supported; otherwise dropped
+        auto const maintenance_ext = FindRequested(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+
+        m_swapchain_maintenance = maintenance_ext != m_extensions.end() && maintenance_supported.swapchainMaintenance1 == VK_TRUE;
+
+        if (!m_swapchain_maintenance && maintenance_ext != m_extensions.end()) m_extensions.erase(maintenance_ext);
+
+        m_maintenance_features = VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT{};
+        m_maintenance_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+        m_maintenance_features.swapchainMaintenance1 = VK_TRUE;
+
+        // enable: create info -> features2 -> vulkan11 -> [mesh] -> [maintenance]
+        void* tail = nullptr;
+        if (m_swapchain_maintenance) {
+            m_maintenance_features.pNext = tail;
+            tail = &m_maintenance_features;
+        }
+        if (m_mesh_shading) {
+            m_mesh_features.pNext = tail;
+            tail = &m_mesh_features;
+        }
+
         m_vulkan11 = VkPhysicalDeviceVulkan11Features{};
         m_vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         m_vulkan11.shaderDrawParameters = v11_supported.shaderDrawParameters;
-        m_vulkan11.pNext = m_mesh_shading ? &m_mesh_features : nullptr;
+        m_vulkan11.pNext = tail;
 
         m_features2 = VkPhysicalDeviceFeatures2{};
         m_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -283,6 +309,12 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     // Core features that were enabled (not merely supported)
     std::shared_ptr<IIr77Return const> GetDeviceFeatures(VkPhysicalDeviceFeatures& phys_device_features) {
         phys_device_features = m_phys_device_features;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetSwapchainMaintenance(bool& enabled) {
+        enabled = m_swapchain_maintenance;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -344,6 +376,10 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     VkPhysicalDeviceMeshShaderFeaturesEXT m_mesh_features{};
 
     bool m_mesh_shading{false};
+
+    bool m_swapchain_maintenance{false};
+
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT m_maintenance_features{};
 
     VkDeviceCreateInfo m_device_create_info{};
 

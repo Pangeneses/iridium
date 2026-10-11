@@ -4,6 +4,8 @@
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan_core.h>
 
+#include <algorithm>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -107,6 +109,25 @@ class Ir77PVInstance : public Ir77Enlisted, public IIr77PVInstance, public std::
         m_extensions = std::vector<const char*>(sdl_exts, sdl_exts + m_sdl_ext_count);
 
         if (ENABLE_VALIDATION) m_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+        // optional -- needed by VK_EXT_swapchain_maintenance1 so resized frames can be presented 1:1 instead of stretched
+        std::uint32_t available_count{0};
+        vkEnumerateInstanceExtensionProperties(nullptr, &available_count, nullptr);
+
+        std::vector<VkExtensionProperties> available(available_count);
+        vkEnumerateInstanceExtensionProperties(nullptr, &available_count, available.data());
+
+        auto const has = [&](char const* name) {
+            return std::any_of(available.begin(), available.end(), [&](VkExtensionProperties const& e) { return std::strcmp(e.extensionName, name) == 0; });
+        };
+        auto const add = [&](char const* name) {
+            if (std::none_of(m_extensions.begin(), m_extensions.end(), [&](char const* e) { return std::strcmp(e, name) == 0; })) m_extensions.push_back(name);
+        };
+
+        if (has(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME) && has(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME)) {
+            add(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+            add(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
+        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

@@ -632,6 +632,8 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     static Ir77PVLayoutKind LayoutKindFor(Ir77PVPipelineKind const& kind) {
         switch (kind) {
             case Ir77PVPipelineKind::Skinned:
+            case Ir77PVPipelineKind::SkinnedTransparent:
+            case Ir77PVPipelineKind::SkinnedTransparentBack:
                 return Ir77PVLayoutKind::Skinned;
 
             case Ir77PVPipelineKind::Shadow:

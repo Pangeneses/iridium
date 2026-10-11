@@ -5,6 +5,7 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -192,16 +193,21 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         VkDevice device;
         m_device->GetDevice(&device);
 
-        // CEF size drives the texture size here, not the swapchain -- rebuild at the painted size
-        if (static_cast<std::uint32_t>(cef_width) != m_swapchain_extent.width || static_cast<std::uint32_t>(cef_height) != m_swapchain_extent.height) {
+        std::uint32_t const frame_width = static_cast<std::uint32_t>(cef_width);
+        std::uint32_t const frame_height = static_cast<std::uint32_t>(cef_height);
+
+        // grow-only -- the image is reallocated only when a frame doesn't fit, with headroom, so a window drag never
+        // idles the GPU; smaller frames are copied into the top-left and the rest is cleared to transparent
+        if (frame_width > m_swapchain_extent.width || frame_height > m_swapchain_extent.height) {
             vkDeviceWaitIdle(device);
 
             m_resizing = true;
 
             DestroyResources(device);
 
-            m_swapchain_extent.width = static_cast<std::uint32_t>(cef_width);
-            m_swapchain_extent.height = static_cast<std::uint32_t>(cef_height);
+            auto const headroom = [](std::uint32_t const& v) { return (v + 511u) & ~511u; };  // round up to 512
+            m_swapchain_extent.width = std::max(m_swapchain_extent.width, headroom(frame_width));
+            m_swapchain_extent.height = std::max(m_swapchain_extent.height, headroom(frame_height));
 
             auto const result = RebuildExtentResources(device);
 
@@ -216,7 +222,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         vkWaitForFences(device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX);
         vkResetFences(device, 1, &m_upload_fence);
 
-        std::memcpy(m_staging_mapped, buffer, static_cast<std::size_t>(cef_width) * static_cast<std::size_t>(cef_height) * 4);
+        std::memcpy(m_staging_mapped, buffer, static_cast<std::size_t>(frame_width) * static_cast<std::size_t>(frame_height) * 4);
         vmaFlushAllocation(m_allocator, m_staging_allocation, 0, VK_WHOLE_SIZE);
 
         vkResetCommandBuffer(m_upload_cmd_buf, 0);
@@ -245,13 +251,25 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
 
         vkCmdPipelineBarrier(m_upload_cmd_buf, src_stage, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer);
 
+        // clear the whole image, so the area outside this frame is transparent when the frame is smaller than the image
+        VkClearColorValue const transparent{{0.0f, 0.0f, 0.0f, 0.0f}};
+        VkImageSubresourceRange const whole{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(m_upload_cmd_buf, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &transparent, 1, &whole);
+
+        VkMemoryBarrier clear_then_copy{};
+        clear_then_copy.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        clear_then_copy.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        clear_then_copy.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(m_upload_cmd_buf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &clear_then_copy, 0, nullptr, 0,
+                             nullptr);
+
         VkBufferImageCopy region{};
         region.bufferOffset = 0;
-        region.bufferRowLength = 0;
-        region.bufferImageHeight = 0;
+        region.bufferRowLength = frame_width;  // staging holds a tightly packed frame_width x frame_height frame
+        region.bufferImageHeight = frame_height;
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.imageOffset = {0, 0, 0};
-        region.imageExtent = {m_swapchain_extent.width, m_swapchain_extent.height, 1};
+        region.imageExtent = {frame_width, frame_height, 1};
 
         vkCmdCopyBufferToImage(m_upload_cmd_buf, m_staging_buffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 

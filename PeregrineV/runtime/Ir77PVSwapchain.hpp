@@ -275,6 +275,25 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         // add VK_SHARING_MODE_CONCURRENT when necessary
         m_swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
+        // resized frames are presented 1:1 at the top-left instead of stretched -- when the driver supports it
+        m_swapchain_info.pNext = nullptr;
+        m_scaling_info = VkSwapchainPresentScalingCreateInfoEXT{};
+
+        bool const one_to_one = SupportsOneToOne();
+        if (one_to_one) {
+            m_scaling_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_SCALING_CREATE_INFO_EXT;
+            m_scaling_info.scalingBehavior = VK_PRESENT_SCALING_ONE_TO_ONE_BIT_EXT;
+            m_scaling_info.presentGravityX = VK_PRESENT_GRAVITY_MIN_BIT_EXT;
+            m_scaling_info.presentGravityY = VK_PRESENT_GRAVITY_MIN_BIT_EXT;
+            m_swapchain_info.pNext = &m_scaling_info;
+        }
+
+        static bool logged{false};
+        if (!logged) {
+            std::cerr << "[DEBUG] swapchain present scaling: " << (one_to_one ? "1:1 top-left" : "driver default (may stretch)") << "\n";
+            logged = true;
+        }
+
         if (vkCreateSwapchainKHR(device, &m_swapchain_info, nullptr, &m_swapchain) != VK_SUCCESS)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkCreateSwapchainKHR failed.");
 
@@ -390,6 +409,44 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     }
 
    private:
+       // Device has VK_EXT_swapchain_maintenance1 and this surface supports 1:1 scaling with top-left gravity
+    bool SupportsOneToOne() {
+        bool enabled{false};
+        m_device->GetSwapchainMaintenance(enabled);
+        if (!enabled) return false;
+
+        VkInstance instance;
+        m_instance->GetInstance(&instance);
+
+        auto const get_caps2 =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
+        if (!get_caps2) return false;
+
+        VkPhysicalDevice phys_device;
+        m_device->GetPhysicalDevice(&phys_device);
+
+        VkSurfacePresentModeEXT present_mode{};
+        present_mode.sType = VK_STRUCTURE_TYPE_SURFACE_PRESENT_MODE_EXT;
+        present_mode.presentMode = m_present_mode;
+
+        VkPhysicalDeviceSurfaceInfo2KHR surface_info{};
+        surface_info.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR;
+        surface_info.pNext = &present_mode;
+        surface_info.surface = m_surface;
+
+        VkSurfacePresentScalingCapabilitiesEXT scaling{};
+        scaling.sType = VK_STRUCTURE_TYPE_SURFACE_PRESENT_SCALING_CAPABILITIES_EXT;
+
+        VkSurfaceCapabilities2KHR caps{};
+        caps.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR;
+        caps.pNext = &scaling;
+
+        if (get_caps2(phys_device, &surface_info, &caps) != VK_SUCCESS) return false;
+
+        return (scaling.supportedPresentScaling & VK_PRESENT_SCALING_ONE_TO_ONE_BIT_EXT) &&
+               (scaling.supportedPresentGravityX & VK_PRESENT_GRAVITY_MIN_BIT_EXT) && (scaling.supportedPresentGravityY & VK_PRESENT_GRAVITY_MIN_BIT_EXT);
+    }
+
     // One depth image per swapchain, sized to the current extent
     bool DefineDepth(VkDevice device) {
         DestroyDepth(device);
@@ -467,6 +524,8 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     VkExtent2D m_swapchain_extent{};
 
     VkSwapchainCreateInfoKHR m_swapchain_info{};
+
+    VkSwapchainPresentScalingCreateInfoEXT m_scaling_info{};
 
     VkSwapchainKHR m_swapchain{VK_NULL_HANDLE};
 

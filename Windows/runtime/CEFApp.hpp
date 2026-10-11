@@ -20,8 +20,9 @@ class CEFApp : public CefApp {
         // command_line->AppendSwitch("disable-dev-shm-usage");
         // command_line->AppendSwitchWithValue("disable-features", "Vulkan");
         command_line->AppendSwitchWithValue("ozone-platform", "headless");
-        command_line->AppendSwitch("disable-crash-reporter");
         command_line->AppendSwitch("disable-gpu-process-crash-limit");
+        command_line->AppendSwitch("ignore-gpu-blocklist");
+        command_line->AppendSwitch("enable-gpu-rasterization");
     }
 
     void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {}

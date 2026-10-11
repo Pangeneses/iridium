@@ -57,6 +57,8 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> GetSwapchainMaintenance(bool& enabled) = 0;
+
     virtual std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVQueueFamily>& queue_family) = 0;

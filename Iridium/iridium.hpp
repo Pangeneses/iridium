@@ -1,3 +1,5 @@
+#pragma once
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -41,7 +43,7 @@
 
 #include "../PeregrineV/types/Ir77PVTypes.hpp"
 
-#include "../Scene/server/Ir77Scene.hpp"  // adjust if Ir77Scene.hpp lives elsewhere
+#include "../Scene/server/Ir77Scene.hpp"
 
 #include "./types/Ir77Stats.hpp"
 
@@ -120,8 +122,25 @@ class iridium {
 
         std::weak_ptr<IIr77PVOverlay> weak_overlay = overlay;
 
-        m_rt_state->GetRenderHandler()->SetPaintCallback([weak_overlay](const void* buffer, int w, int h) {
+        // CEF paint -> overlay. During a resize only the paint at the requested size is shown, and it is presented right here,
+        // inside the paint, rather than on the next loop iteration.
+        m_rt_state->GetRenderHandler()->SetPaintCallback([this, weak_overlay](const void* buffer, int w, int h) {
+            // while a resize is in flight, a paint at any other size is stale -- drop it and keep showing the last good frame
+            // std::cerr << "in flight: " << m_cef_in_flight << " cef w x h: " << m_cef_width << " x " << m_cef_height << " vs w x h: " << w << "x" << h << "\n";
+
+            if (m_cef_in_flight) {
+                if (w != m_cef_width || h != m_cef_height) return;
+
+                m_cef_in_flight = false;  // CEF has caught up -- WindowStep may send the next size
+            }
+
             if (auto const locked = weak_overlay.lock()) locked->UploadFrame(buffer, w, h);
+
+            if (!m_render_ready) return;
+
+            auto const since_resize = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_resize_event).count();
+
+            if (since_resize < PRESENT_ON_PAINT_MS) VulkanFrameStart();
         });
 
         // pipelines need shaders, layouts and the Main pass
@@ -142,6 +161,8 @@ class iridium {
 
         // command buffers wire the overlay, so they come after CreateBufferCEF and CreatePipelines
         Require(m_paint->CreateCommandBuffers());
+
+        m_render_ready = true;  // from here on a CEF paint may present a frame directly
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
     }
@@ -203,18 +224,24 @@ class iridium {
         }
 
         if (m_resize_pending) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_resize_event).count();
+            auto const now = std::chrono::steady_clock::now();
+            auto const since_applied = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_cef_resize).count();
 
-            if (elapsed > 0) {
+            // handshake -- the next size goes to CEF only after CEF has painted the last one (or it timed out)
+            if (!m_cef_in_flight || since_applied >= CEF_RESIZE_TIMEOUT_MS) {
                 m_resize_pending = false;
 
-                m_cef_width = m_pending_width;
-                m_cef_height = m_pending_height;
+                if (m_pending_width != m_cef_width || m_pending_height != m_cef_height) {
+                    m_last_cef_resize = now;
 
-                m_rt_state->GetRenderHandler()->SetViewSize(m_cef_width, m_cef_height);
-                m_rt_state->GetBrowser()->GetHost()->WasResized();
-                m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
+                    m_cef_width = m_pending_width;
+                    m_cef_height = m_pending_height;
+                    m_cef_in_flight = true;
+
+                    m_rt_state->GetRenderHandler()->SetViewSize(m_cef_width, m_cef_height);
+                    m_rt_state->GetBrowser()->GetHost()->WasResized();
+                    m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
+                }
             }
         }
     }
@@ -478,8 +505,7 @@ class iridium {
         }
 
         // materials -- glTF material index -> Asset material id, uploaded in one batch
-        std::shared_ptr<IIr77Material> materials_in{};
-        m_scene->GetMaterials(materials_in);
+        std::shared_ptr<IIr77Material> const& materials_in = blend_source;
 
         std::uint32_t material_count{0};
         materials_in->GetMaterialCount(material_count);
@@ -828,7 +854,7 @@ class iridium {
     float m_last_seconds{0.0f};  // previous frame's clock, for the scene's dt
 
     // scene
-    std::string m_scene_path{"/home/alpha/workspace/iridium/Public/Flower 003.glb"};  // set to your model
+    std::string m_scene_path{"/home/alpha/workspace/iridium/Public/Bend.glb"};  // set to your model
 
     std::shared_ptr<Ir77Scene> m_scene{};
 
@@ -900,7 +926,13 @@ class iridium {
 
     bool m_resize_pending = false;
 
-    std::chrono::steady_clock::time_point m_last_cef_pump{};
+    bool m_cef_in_flight{false};  // a size was sent to CEF and its paint at that size hasn't arrived yet
+
+    static constexpr long long CEF_RESIZE_TIMEOUT_MS{100};  // give up waiting for CEF's paint at the requested size after this long
+
+    static constexpr long long PRESENT_ON_PAINT_MS{250};  // for this long after a resize event, each CEF paint presents a frame immediately
+
+    bool m_render_ready{false};  // Vulkan + Paint fully set up
 
     std::chrono::steady_clock::time_point m_last_cef_resize{};
 

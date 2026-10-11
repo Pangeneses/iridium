@@ -36,6 +36,19 @@ class CEFRenderHandler : public CefRenderHandler {
         }
     }
 
+    // Same as cefclient's off-screen client: 1:1 pixels, and the "screen" is the view itself, so CEF never
+    // lays out against a guessed screen size or scale factor during a resize
+    bool GetScreenInfo(CefRefPtr<CefBrowser> browser, CefScreenInfo& screen_info) override {
+        CefRect view{};
+        GetViewRect(browser, view);
+
+        screen_info.device_scale_factor = 1.0f;
+        screen_info.rect = view;
+        screen_info.available_rect = view;
+
+        return true;
+    }
+
     CefRefPtr<CefAccessibilityHandler> GetAccessibilityHandler() override { return nullptr; }
 
     bool GetRootScreenRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override { return false; }
