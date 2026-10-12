@@ -33,8 +33,10 @@ typedef struct IIr77PVBuffer : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> Update(std::uint32_t const& copy, void const* data, VkDeviceSize const& size,
                                                       VkDeviceSize const& offset = 0) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> UploadBatch(VkDevice device, VmaAllocator allocator, VkCommandPool pool, VkQueue queue,
-                                                           std::vector<Ir77PVUploadEntry> const& entries) = 0;
+    virtual std::shared_ptr<IIr77Return const> UploadBatch(VkCommandPool const& pool, VkQueue const& queue, std::vector<Ir77PVUploadEntry> const& entries,
+                                                           bool const& wait) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> IsUploadFinished(bool& finished) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetBuffer(std::uint32_t const& copy, VkBuffer* buffer) = 0;
 

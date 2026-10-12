@@ -3,21 +3,15 @@
 #include <iostream>
 #include <limits.h>
 #include <stdlib.h>
-#include <chrono>
-#include <thread>
 
-#include "include/internal/cef_linux.h"
-#include "include/cef_app.h"
-
-#include "./iridium.hpp"
-
-#include "../Ir77RT/runtime/Ir77Return.hpp"
-
-/******************************************************************************/
 #include <execinfo.h>
 #include <csignal>
 #include <cstdlib>
 #include <unistd.h>
+
+#include "./iridium.hpp"
+
+#include "../Ir77RT/runtime/Ir77Return.hpp"
 
 void crash_handler(int sig) {
     void* array[32];
@@ -89,17 +83,10 @@ int main(int argc, char* argv[]) {
     IridiumArgs args = ParseArgs(argc, argv);
 
     while (iridium.IsRunning()) {
-        auto frame_start = std::chrono::steady_clock::now();
-
         iridium.WindowStep();
         iridium.ChromeStep();
         iridium.IridiumStep();
         iridium.VulkanStep();
-
-        iridium.VulkanFrameStart();
-        iridium.HUD();
-        iridium.Composition();
-        iridium.VulkanFrameEnd();
     }
 
     iridium.Shutdown();

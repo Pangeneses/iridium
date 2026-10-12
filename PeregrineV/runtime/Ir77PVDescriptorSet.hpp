@@ -143,6 +143,34 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // set 0 -- camera, lights, instances, env, bones. Binding numbers must match BindingsGlobal() and set 0 in the shaders.
+    std::shared_ptr<IIr77Return const> BindGlobal(std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>> const& slots, VkDescriptorImageInfo const& env) {
+        auto const bind = [&](std::uint32_t const binding, VkDescriptorType const type, Ir77PVBufferSlot const slot) {
+            auto const found = slots.find(slot);
+            return found != slots.end() && BindBuffer(binding, type, found->second)->ID() == GUIDIr77OperationSucceeded;
+        };
+
+        if (!bind(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, Ir77PVBufferSlot::Camera) || !bind(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Ir77PVBufferSlot::Lights) ||
+            !bind(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Ir77PVBufferSlot::Instances) || !bind(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Ir77PVBufferSlot::Bones))
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: global set is missing a frame buffer.");
+
+        BindImage(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, env);
+
+        return Write();
+    }
+
+    // set 1 -- shadow map, shadow matrices. Binding numbers must match BindingsPass() and set 1 in the shaders.
+    std::shared_ptr<IIr77Return const> BindPass(std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>> const& slots,
+                                                VkDescriptorImageInfo const& shadow_map) {
+        auto const matrices = slots.find(Ir77PVBufferSlot::ShadowMatrices);
+        if (matrices == slots.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: pass set is missing ShadowMatrices.");
+
+        BindImage(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, shadow_map);
+        BindBuffer(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, matrices->second);
+
+        return Write();
+    }
+
     // Writes every binding into every copy. Call after all Bind* calls, and again after a rebind.
     // Don't call while any copy may still be in use by the GPU -- use WriteCopy for the current frame instead.
     std::shared_ptr<IIr77Return const> Write() {

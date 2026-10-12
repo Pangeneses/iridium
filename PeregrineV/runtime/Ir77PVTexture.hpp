@@ -189,6 +189,19 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return CreateSampled(pool, queue, {&rgba}, 1, 1, false);
     }
 
+    // 1x1 solid colour through the device's upload pool -- the caller needs no Vulkan objects
+    std::shared_ptr<IIr77Return const> CreatePlaceholder(std::uint32_t const& rgba) {
+        if (!Ready()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: device or allocator not set.");
+
+        VkCommandPool pool{VK_NULL_HANDLE};
+        VkQueue queue{VK_NULL_HANDLE};
+
+        auto const result = m_device->GetUploadPool(pool, queue);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return CreateSolid(pool, queue, rgba);
+    }
+
     // Cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL, so it is valid to sample before any shadow pass has run
     // (reads as "fully lit"). The shadow render pass can use initialLayout UNDEFINED or DEPTH_STENCIL_READ_ONLY_OPTIMAL and
     // must use finalLayout DEPTH_STENCIL_READ_ONLY_OPTIMAL. A 1x1 Depth texture doubles as the shadow-map placeholder.

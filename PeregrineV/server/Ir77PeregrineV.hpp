@@ -184,6 +184,57 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Enumerate Devices.");
     }
 
+    // picks and creates the device that drives the display. Candidates need VK_KHR_swapchain and a graphics queue that can present
+    // to an SDL window; they're tried discrete > integrated > virtual > other > CPU, and the first whose logical device is created wins.
+    // Multi-device allocation comes with in-app setup.
+    std::shared_ptr<IIr77Return const> CreateDisplayDevice(std::vector<SDL_Window*> const& windows, std::uint64_t& device_id) {
+        if (windows.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "CreateDisplayDevice: no window.");
+
+        struct Candidate {
+            std::uint64_t id{0};
+            int rank{-1};
+            std::string name{};
+        };
+
+        std::vector<Candidate> candidates{};
+
+        for (auto const& [id, device] : m_devices) {
+            Candidate c{};
+            c.id = id;
+
+            if (device->QueryDisplaySupport(c.rank, c.name)->ID() == GUIDIr77OperationSucceeded) candidates.push_back(c);
+        }
+
+        std::stable_sort(candidates.begin(), candidates.end(), [](Candidate const& a, Candidate const& b) { return a.rank > b.rank; });
+
+        std::string skipped{};
+
+        for (Candidate const& c : candidates) {
+            m_current_device = c.id;
+            m_windows[c.id] = windows;  // EnumerateDeviceQueues reads the device's first window
+
+            auto result = EnumerateDeviceQueues();
+            if (result->ID() == GUIDIr77OperationSucceeded) result = CreateLogicalDevices();
+
+            if (result->ID() == GUIDIr77OperationSucceeded) {
+                device_id = c.id;
+
+                if (c.rank == 0)
+                    return Ir77RETURN<Ir77OperationSucceeded>(
+                        this, "CreateDisplayDevice: only a CPU device (" + c.name + ") -- software rendering, check the GPU driver." + skipped);
+
+                return Ir77RETURN<Ir77OperationSucceeded>(this, "CreateDisplayDevice: " + c.name + skipped);
+            }
+
+            m_windows.erase(c.id);
+            skipped += " [skipped " + c.name + "]";
+        }
+
+        m_current_device = 0;
+
+        return Ir77RETURN<Ir77NotConfigured>(this, "CreateDisplayDevice: no device could drive the display." + skipped);
+    }
+
     std::shared_ptr<IIr77Return const> CreateSurfaces(std::map<std::uint64_t, std::vector<SDL_Window*>> const& windows) {
         m_windows = windows;
 
@@ -210,19 +261,28 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     }
 
     std::shared_ptr<IIr77Return const> EnumerateDeviceQueues() {
-        m_devices.at(m_current_device)->DefineQueueFamilyProps(m_windows.at(m_current_device).at(0));
+        auto const& device = m_devices.at(m_current_device);
 
-        m_devices.at(m_current_device)->DefineQueueCreateInfos();
+        auto result = device->DefineQueueFamilyProps(m_windows.at(m_current_device).at(0));
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        result = device->DefineQueueCreateInfos();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Enumerate Device Queue.");
     }
 
     std::shared_ptr<IIr77Return const> CreateLogicalDevices() {
-        m_devices.at(m_current_device)->CheckDeviceExtensionSupport();
+        auto const& device = m_devices.at(m_current_device);
 
-        m_devices.at(m_current_device)->DefineDeviceInfo();
+        auto result = device->CheckDeviceExtensionSupport();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        m_devices.at(m_current_device)->DefineDevice();
+        result = device->DefineDeviceInfo();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        result = device->DefineDevice();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Logical Devices.");
     }
@@ -377,22 +437,6 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     // placeholder texture -- lets every image binding be written before real textures exist
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreatePlaceholderTexture() {
-        VkDevice device;
-        m_devices.at(m_current_device)->GetDevice(&device);
-
-        VkQueue queue{VK_NULL_HANDLE};
-        std::uint32_t family{0};
-        if (!FindPresentQueue(&queue, &family)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: no presentation queue for placeholder.");
-
-        VkCommandPoolCreateInfo pool_info{};
-        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-        pool_info.queueFamilyIndex = family;
-
-        VkCommandPool pool{VK_NULL_HANDLE};
-        if (vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: placeholder command pool failed.");
-
         // white: albedo / ORM / AO / emissive / env / shadow -- neutral for multiply and "fully lit"
         // flat normal: tangent-space (0, 0, 1) encoded as (128, 128, 255)
         std::map<Ir77PVPlaceholderKind, std::uint32_t> const values{
@@ -409,15 +453,11 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             texture->SetAllocator(m_allocators.at(m_current_device));
             texture->SetKind(Ir77PVTextureKind::Data);
 
-            if (texture->CreateSolid(pool, queue, rgba)->ID() != GUIDIr77OperationSucceeded) {
-                vkDestroyCommandPool(device, pool, nullptr);
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: placeholder texture failed.");
-            }
+            auto const result = texture->CreatePlaceholder(rgba);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
             placeholders.emplace(kind, texture);
         }
-
-        vkDestroyCommandPool(device, pool, nullptr);
 
         m_placeholders[m_current_device] = placeholders;
 
@@ -498,13 +538,8 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: global set allocation failed.");
             }
 
-            global->BindBuffer(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, slots.at(Ir77PVBufferSlot::Camera));
-            global->BindBuffer(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slots.at(Ir77PVBufferSlot::Lights));
-            global->BindBuffer(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slots.at(Ir77PVBufferSlot::Instances));
-            global->BindImage(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // env / IBL
-            global->BindBuffer(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slots.at(Ir77PVBufferSlot::Bones));
-
-            if (global->Write()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: global set write failed.");
+            auto result = global->BindGlobal(slots, placeholder);  // env / IBL = placeholder until a real one exists
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
             // set 1 -- shadow map, shadow matrices
             auto pass = std::static_pointer_cast<IIr77PVDescriptorSet>(std::make_shared<Ir77PVDescriptorSet>());
@@ -516,10 +551,8 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: pass set allocation failed.");
             }
 
-            pass->BindImage(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, placeholder);  // shadow map
-            pass->BindBuffer(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, slots.at(Ir77PVBufferSlot::ShadowMatrices));
-
-            if (pass->Write()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: pass set write failed.");
+            result = pass->BindPass(slots, placeholder);  // shadow map = placeholder until the Shadow pass exists
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
             globals.push_back(global);
             passes.push_back(pass);
@@ -665,21 +698,6 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             default:
                 return Ir77PVRenderPassKind::Main;
         }
-    }
-
-    bool FindPresentQueue(VkQueue* queue, std::uint32_t* family) {
-        std::vector<Ir77PVQueueFamily> queue_families{};
-        m_devices.at(m_current_device)->GetQueueFamilies(queue_families);
-
-        for (std::size_t i = 0; i < queue_families.size(); i++) {
-            if (queue_families[i].presentation == VK_TRUE) {
-                *queue = queue_families[i].queue;
-                *family = static_cast<std::uint32_t>(i);
-                return true;
-            }
-        }
-
-        return false;
     }
 
    private:

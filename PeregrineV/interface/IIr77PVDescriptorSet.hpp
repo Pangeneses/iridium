@@ -3,6 +3,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -29,6 +30,12 @@ typedef struct IIr77PVDescriptorSet : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> BindBuffer(std::uint32_t const& binding, VkDescriptorType const& type,
                                                           std::shared_ptr<IIr77PVBuffer> buffer) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> BindGlobal(std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>> const& slots,
+                                                          VkDescriptorImageInfo const& env) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> BindPass(std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>> const& slots,
+                                                        VkDescriptorImageInfo const& shadow_map) = 0;
 
     virtual std::shared_ptr<IIr77Return const> BindImage(std::uint32_t const& binding, VkDescriptorType const& type, VkDescriptorImageInfo const& image) = 0;
 

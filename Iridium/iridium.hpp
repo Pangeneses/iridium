@@ -84,8 +84,6 @@ class iridium {
 
         std::vector<SDL_Window*> windows{m_window};
 
-        m_windows.emplace(m_device_id, windows);
-
         m_vulkan = std::make_shared<Ir77PeregrineV>();
         m_cef = std::make_shared<Ir77PVCEF>();
         m_paint = std::make_shared<Ir77PVPaint>();
@@ -97,11 +95,11 @@ class iridium {
 
         // instance / device
         m_vulkan->CreateInstance();
+
         m_vulkan->EnumeratePhysicalDevices();
-        m_vulkan->SetCurrentDevice(m_device_id);
-        m_vulkan->CreateSurfaces(m_windows);
-        m_vulkan->EnumerateDeviceQueues();
-        m_vulkan->CreateLogicalDevices();
+        Require(m_vulkan->CreateDisplayDevice(windows, m_device_id), "Create display device.");
+        m_windows.emplace(m_device_id, windows);
+        Require(m_vulkan->CreateSurfaces(m_windows), "Create surfaces.");
         m_vulkan->CreateAllocator();
 
         // layouts + passes (Main only; Shadow pipelines are skipped until CreateRenderPass(Shadow) is called)
@@ -126,21 +124,51 @@ class iridium {
         // inside the paint, rather than on the next loop iteration.
         m_rt_state->GetRenderHandler()->SetPaintCallback([this, weak_overlay](const void* buffer, int w, int h) {
             // while a resize is in flight, a paint at any other size is stale -- drop it and keep showing the last good frame
-            // std::cerr << "in flight: " << m_cef_in_flight << " cef w x h: " << m_cef_width << " x " << m_cef_height << " vs w x h: " << w << "x" << h << "\n";
+            // std::cerr << "in flight: " << m_cef_in_flight << " cef w x h: " << m_cef_width << " x " << m_cef_height << " vs w x h: " << w << "x" << h <<
+            // "\n";
+
+            m_ui_paints++;
+
+            auto const locked = weak_overlay.lock();
+            if (!locked) return;
+
+            // overlay mid-rebuild -- this paint is lost; WindowStep asks CEF for another
+            bool resizing{false};
+            locked->IsResizing(resizing);
+            if (resizing) {
+                m_cef_repaint = true;
+                m_ui_dropped_resizing++;
+                return;
+            }
 
             if (m_cef_in_flight) {
-                if (w != m_cef_width || h != m_cef_height) return;
+                auto const waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_cef_resize).count();
+
+                // stale size -- drop it, unless CEF has had long enough and still hasn't painted the requested size
+                if ((w != m_cef_width || h != m_cef_height) && waited < CEF_RESIZE_TIMEOUT_MS) {
+                    m_cef_repaint = true;
+                    m_ui_dropped_stale++;
+                    return;
+                }
 
                 m_cef_in_flight = false;  // CEF has caught up -- WindowStep may send the next size
             }
 
-            if (auto const locked = weak_overlay.lock()) locked->UploadFrame(buffer, w, h);
+            if (locked->UploadFrame(buffer, w, h)->ID() == GUIDIr77OperationSucceeded) {
+                if (m_ui_uploads == 0)
+                    std::printf("[UI] first frame %dx%d after %lld ms\n", w, h,
+                                static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_start_time).count()));
+                m_ui_uploads++;
+            }
+            else
+                m_ui_upload_failed++;
+
+            m_ui_last_paint = std::to_string(w) + "x" + std::to_string(h);
+            m_cef_repaint = false;
 
             if (!m_render_ready) return;
 
             auto const since_resize = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_resize_event).count();
-
-            if (since_resize < PRESENT_ON_PAINT_MS) VulkanFrameStart();
         });
 
         // pipelines need shaders, layouts and the Main pass
@@ -151,12 +179,12 @@ class iridium {
 
         Require(m_vulkan->CreatePipelines(kinds));
 
-        // content -- the glTF scene, or the cube testbed when it doesn't load
+        // content -- the glTF scene
         m_scene_ready = LoadScene(m_scene_path, true)->ID() == GUIDIr77OperationSucceeded;
 
         if (!m_scene_ready) {
-            std::cerr << "Iridium: scene '" << m_scene_path << "' failed to load -- falling back to the testbed\n";
-            Require(m_asset->CreateTestbed(3, true, true), "Create testbed.");
+            std::cerr << "Iridium: scene '" << m_scene_path << "' failed to load \n";
+            throw std::runtime_error{"LoadScene failed"};
         }
 
         // command buffers wire the overlay, so they come after CreateBufferCEF and CreatePipelines
@@ -244,15 +272,48 @@ class iridium {
                 }
             }
         }
+
+        // a dropped paint on a static page is never repeated -- once nothing is in flight, ask CEF to paint again
+        if (m_cef_in_flight) {
+            auto const waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_cef_resize).count();
+
+            if (waited >= CEF_RESIZE_TIMEOUT_MS) {
+                m_cef_in_flight = false;
+                m_cef_repaint = true;
+            }
+        }
+
+        if (m_cef_repaint && !m_cef_in_flight) {
+            m_cef_repaint = false;
+            m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
+        }
+
+        // [UI] status until the first upload -- tells which stage a blank UI is stuck at
+        if (m_ui_uploads == 0) {
+            auto const now = std::chrono::steady_clock::now();
+            if (now - m_ui_last_status >= std::chrono::seconds(1)) {
+                m_ui_last_status = now;
+                // nothing painted yet -- poke CEF once; if the UI appears after this line, it was a missed first paint, not a load failure
+                if (m_ui_paints == 0 && !m_ui_kicked && now - m_start_time >= std::chrono::seconds(5)) {
+                    m_ui_kicked = true;
+                    std::printf("[UI] no paint after 2 s -- WasResized + Invalidate\n");
+                    m_rt_state->GetBrowser()->GetHost()->WasResized();
+                    m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
+                }
+                std::printf(
+                    "[UI] paints %u, uploads %u, upload failed %u, dropped stale %u, dropped resizing %u, in flight %d, repaint %d, "
+                    "cef %dx%d, window %dx%d, last paint %s\n",
+                    m_ui_paints, m_ui_uploads, m_ui_upload_failed, m_ui_dropped_stale, m_ui_dropped_resizing, m_cef_in_flight, m_cef_repaint, m_cef_width,
+                    m_cef_height, m_window_width, m_window_height, m_ui_last_paint.c_str());
+            }
+        }
     }
 
     void ChromeStep() { m_message_loop->CEFDoMessageLoop(m_rt_state->GetBrowser()); }
 
     void IridiumStep() {}
 
-    void VulkanStep() {}
-
-    void VulkanFrameStart() {
+    void VulkanStep() {
         auto const frame_start = std::chrono::steady_clock::now();
         float const seconds = std::chrono::duration<float>(frame_start - m_start_time).count();
 
@@ -272,7 +333,7 @@ class iridium {
                 m_upload_error_logged = true;
             }
         } else {
-            m_asset->UpdateTestbed(m_paint, seconds);
+            throw std::runtime_error{"LoadScene failed"};
         }
 
         auto const draw_start = std::chrono::steady_clock::now();
@@ -285,15 +346,12 @@ class iridium {
         m_frame = (m_frame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
-    void HUD() {}
-
-    void Composition() {}
-
-    void VulkanFrameEnd() {}
-
     void Shutdown() {
-        m_rt_state->GetRenderHandler()->SetPaintCallback(nullptr);
-        m_rt_state->DestroyRTState();
+        m_scene.reset();
+        m_paint.reset();
+        m_asset.reset();
+        m_cef.reset();
+        m_vulkan.reset();
 
         if (m_window) {
             SDL_DestroyWindow(m_window);
@@ -819,6 +877,16 @@ class iridium {
     }
 
    private:
+    // [UI] diagnostics -- remove once the blank-UI case is found
+    std::uint32_t m_ui_paints{0};
+    std::uint32_t m_ui_uploads{0};
+    std::uint32_t m_ui_upload_failed{0};
+    std::uint32_t m_ui_dropped_stale{0};
+    std::uint32_t m_ui_dropped_resizing{0};
+    std::string m_ui_last_paint{"none"};
+    std::chrono::steady_clock::time_point m_ui_last_status{};
+    bool m_ui_kicked{false};
+
     // one material run -- contiguous indirect commands sharing a glTF material
     struct Ir77SceneRun {
         std::uint32_t gltf_material{UINT32_MAX};
@@ -847,7 +915,7 @@ class iridium {
     std::shared_ptr<Ir77PVAsset> m_asset;
 
     // one id for both the window map and SetCurrentDevice -- they must match
-    std::uint64_t const m_device_id{ID_DEVICE_002};
+    std::uint64_t m_device_id{0};
 
     std::uint32_t m_frame{0};  // frame in flight, for Asset::Tick
 
@@ -928,9 +996,9 @@ class iridium {
 
     bool m_cef_in_flight{false};  // a size was sent to CEF and its paint at that size hasn't arrived yet
 
-    static constexpr long long CEF_RESIZE_TIMEOUT_MS{100};  // give up waiting for CEF's paint at the requested size after this long
+    bool m_cef_repaint{false};
 
-    static constexpr long long PRESENT_ON_PAINT_MS{250};  // for this long after a resize event, each CEF paint presents a frame immediately
+    static constexpr long long CEF_RESIZE_TIMEOUT_MS{100};  // give up waiting for CEF's paint at the requested size after this long
 
     bool m_render_ready{false};  // Vulkan + Paint fully set up
 

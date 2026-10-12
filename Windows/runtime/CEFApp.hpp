@@ -23,6 +23,8 @@ class CEFApp : public CefApp {
         command_line->AppendSwitch("disable-gpu-process-crash-limit");
         command_line->AppendSwitch("ignore-gpu-blocklist");
         command_line->AppendSwitch("enable-gpu-rasterization");
+       // command_line->AppendSwitchWithValue("disable-features", "OptimizationGuideOnDeviceModel,OnDeviceModelService");
+       command_line->AppendSwitchWithValue("disable-features", "webgpu");
     }
 
     void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {}

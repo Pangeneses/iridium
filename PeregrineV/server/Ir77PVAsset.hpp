@@ -48,21 +48,6 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 // =============================================================================================================================================
-// Client-facing types -- move to Ir77PVTypes.hpp when convenient
-// =============================================================================================================================================
-
-inline constexpr std::uint32_t IR77PV_NO_TEXTURE = UINT32_MAX;
-
-// Texture ids for set 2 bindings 1..5. IR77PV_NO_TEXTURE = placeholder (flat normal for the normal slot).
-typedef struct Ir77PVMaterialTextures {
-    std::uint32_t albedo{IR77PV_NO_TEXTURE};
-    std::uint32_t normal{IR77PV_NO_TEXTURE};
-    std::uint32_t orm{IR77PV_NO_TEXTURE};
-    std::uint32_t emissive{IR77PV_NO_TEXTURE};
-    std::uint32_t ao{IR77PV_NO_TEXTURE};
-}* pIr77PVMaterialTextures;
-
-// =============================================================================================================================================
 // Ir77PVAsset -- the data binding point between a client (scene loader / game layer) and PeregrineV.
 //
 //   startup:   SetPeregrineV -> CreateShaders -> (CreatePipelines) -> placeholder textures
@@ -75,58 +60,6 @@ typedef struct Ir77PVMaterialTextures {
 // order ahead of later frames, and Tick frees its staging when the GPU is finished with it.
 // =============================================================================================================================================
 class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir77PVAsset> {
-   private:
-    // vertex path scene -- one buffer per channel for every stacked object
-    struct Ir77PVSceneSlot {
-        std::shared_ptr<IIr77PVBuffer> vertex{};
-        std::shared_ptr<IIr77PVBuffer> index{};
-        std::shared_ptr<IIr77PVBuffer> vertex_skinned{};
-        std::shared_ptr<IIr77PVBuffer> index_skinned{};
-        std::shared_ptr<IIr77PVBuffer> indirect{};             // Dynamic -- rewritten by Tick when dirty
-        std::vector<VkDrawIndexedIndirectCommand> commands{};  // live values -- instanceCount 0 = hidden
-        std::vector<std::uint32_t> instance_counts{};          // what a visible command draws
-        std::vector<std::uint8_t> visible{};
-        std::uint32_t dirty{0};  // frame copies still to rewrite
-        bool alive{false};
-    };
-
-    // mesh path scene -- set 3 buffers plus the per-record command state
-    struct Ir77PVMeshletSlot {
-        Ir77PVMeshletMesh mesh{};
-        std::vector<VkDrawMeshTasksIndirectCommandEXT> commands{};  // live, one per record -- groupCountX 0 = hidden
-        std::vector<std::uint32_t> groups{};                        // what a visible record dispatches
-        std::vector<std::uint32_t> first_record{};                  // per scene command, plus one end entry
-        std::uint32_t dirty{0};
-        bool alive{false};
-    };
-
-    // an upload submitted with wait = false -- released by Tick once its fence signals
-    struct Ir77PVPending {
-        VkFence fence{VK_NULL_HANDLE};
-        VkCommandBuffer cmd{VK_NULL_HANDLE};
-        VkCommandPool pool{VK_NULL_HANDLE};
-        VkBuffer staging{VK_NULL_HANDLE};
-        VmaAllocation staging_allocation{VK_NULL_HANDLE};
-    };
-
-    // unloaded resources -- held until every frame that could still read them has finished
-    struct Ir77PVGrave {
-        std::vector<std::shared_ptr<IIr77PVBuffer>> buffers{};
-        std::shared_ptr<IIr77PVDescriptorSet> set{};
-        std::uint32_t frames_left{0};
-    };
-
-    struct Ir77PVTestbed {
-        std::uint32_t mesh{0};
-        std::uint32_t scene{0};
-        std::uint32_t meshlets{0};
-        std::uint32_t material{0};
-        std::uint32_t grid{3};
-        bool use_mesh{false};
-        bool use_indirect{false};
-        bool ready{false};
-    };
-
    public:
     Ir77PVAsset() {
         try {
@@ -149,22 +82,13 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             vkDeviceWaitIdle(vk_device);
 
-            auto const allocator_found = m_context->m_allocators.find(device_id);
-            VmaAllocator const allocator = allocator_found != m_context->m_allocators.end() ? allocator_found->second : VK_NULL_HANDLE;
-
-            // uploads still pending -- finished after the wait
+            // uploads still pending -- finished after the wait; each staging buffer frees itself
             auto const pending = m_pending.find(device_id);
-            if (pending != m_pending.end()) {
-                for (auto const& p : pending->second) ReleasePending(vk_device, allocator, p);
-                pending->second.clear();
-            }
+            if (pending != m_pending.end()) pending->second.clear();
 
             // textures release their own image / view / sampler -- the device is idle and the allocator still alive here
             auto const textures = m_textures.find(device_id);
             if (textures != m_textures.end()) textures->second.clear();
-
-            auto const pool = m_upload_pools.find(device_id);
-            if (pool != m_upload_pools.end()) vkDestroyCommandPool(vk_device, pool->second, nullptr);
         }
 
         m_graveyard.clear();  // buffers are still listed in the context slots, which tear them down
@@ -237,7 +161,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
     // =========================================================================================================================================
     // per frame -- call once per frame, before Paint records, with the frame-in-flight index Paint is about to record.
-    //   1. frees staging / command buffers of uploads whose fence has signalled
+    //   1. drops the staging buffers of uploads whose fence has signalled
     //   2. writes this frame's copy of every dirty indirect buffer (visibility / instance changes)
     //   3. ages the graveyard and releases anything no frame in flight can still read
     // =========================================================================================================================================
@@ -246,20 +170,12 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         std::uint64_t const device_id = m_context->m_current_device;
 
-        VkDevice device{VK_NULL_HANDLE};
-        m_context->m_devices.at(device_id)->GetDevice(&device);
-        VmaAllocator const allocator = m_context->m_allocators.at(device_id);
-
-        // 1. finished uploads
-        auto& pending = m_pending[device_id];
-        std::size_t keep{0};
-        for (std::size_t i = 0; i < pending.size(); i++) {
-            if (vkGetFenceStatus(device, pending[i].fence) == VK_SUCCESS)
-                ReleasePending(device, allocator, pending[i]);
-            else
-                pending[keep++] = pending[i];
-        }
-        pending.resize(keep);
+        // 1. finished uploads -- dropping the staging buffer frees its memory, command buffer and fence
+        std::erase_if(m_pending[device_id], [](std::shared_ptr<IIr77PVBuffer> const& staging) {
+            bool finished{true};
+            staging->IsUploadFinished(finished);
+            return finished;
+        });
 
         // 2. dirty indirect copies -- one frame copy per Tick until every copy matches
         for (auto& scene : m_scenes[device_id]) {
@@ -287,7 +203,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         auto& vertex_slot = m_context->m_buffers_vertex[device_id];
         auto& index_slot = m_context->m_buffers_index[device_id];
 
-        keep = 0;
+        std::size_t keep{0};
         for (std::size_t i = 0; i < graves.size(); i++) {
             if (graves[i].frames_left > 0) {
                 graves[i].frames_left--;
@@ -394,14 +310,10 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
     // =========================================================================================================================================
-    // single-mesh path -- one Static vertex + index buffer pair per mesh. Testbed, procedural / debug geometry, one-off loads.
+    // single-mesh path -- one Static vertex + index buffer pair per mesh. procedural / debug geometry, one-off loads.
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> UploadMesh(Ir77PVInputBuffer const& input, std::uint32_t& mesh_id, bool const& wait = true) {
         if (input.vertex_data.empty() || input.index_data.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: empty mesh.");
-
-        VkCommandPool pool{VK_NULL_HANDLE};
-        VkQueue queue{VK_NULL_HANDLE};
-        if (!UploadQueue(&pool, &queue)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: no upload queue.");
 
         VkDeviceSize const vertex_size = static_cast<VkDeviceSize>(input.vertex_data.size() * sizeof(Ir77PVVertex));
         VkDeviceSize const index_size = static_cast<VkDeviceSize>(input.index_data.size() * sizeof(std::uint32_t));
@@ -418,7 +330,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         mesh.vertex->GetBuffer(0, &vertex_dst);
         mesh.index->GetBuffer(0, &index_dst);
 
-        if (UploadBatch(pool, queue, {{vertex_dst, input.vertex_data.data(), vertex_size}, {index_dst, input.index_data.data(), index_size}}, wait)->ID() !=
+        if (Upload({{vertex_dst, input.vertex_data.data(), vertex_size}, {index_dst, input.index_data.data(), index_size}}, wait)->ID() !=
             GUIDIr77OperationSucceeded) {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: mesh upload failed.");
         }
@@ -470,10 +382,6 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> UploadScene(Ir77PVSceneUpload const& data, std::uint32_t& scene_id, bool const& wait = true) {
         if (data.vertices.empty() && data.vertices_skinned.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: empty scene.");
-
-        VkCommandPool pool{VK_NULL_HANDLE};
-        VkQueue queue{VK_NULL_HANDLE};
-        if (!UploadQueue(&pool, &queue)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: no upload queue.");
 
         Ir77PVSceneSlot scene{};
         std::vector<Ir77PVUploadEntry> entries{};
@@ -535,7 +443,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             scene.visible.assign(scene.commands.size(), 1);
         }
 
-        if (UploadBatch(pool, queue, entries, wait)->ID() != GUIDIr77OperationSucceeded)
+        if (Upload(entries, wait)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: scene upload failed.");
 
         scene.alive = true;
@@ -581,7 +489,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline kind not created for window.");
 
-        if (m_context->GetLayout(LayoutKindFor(kind), item.layout)->ID() != GUIDIr77OperationSucceeded)
+        if (m_context->GetLayout(m_context->LayoutKindFor(kind), item.layout)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: layout not created.");
 
         item.material = material.set;
@@ -645,10 +553,6 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         std::shared_ptr<IIr77PVLayout> layout{};
         if (m_context->GetLayout(Ir77PVLayoutKind::Mesh, layout)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: Mesh layout not created -- mesh shading unsupported.");
-
-        VkCommandPool pool{VK_NULL_HANDLE};
-        VkQueue queue{VK_NULL_HANDLE};
-        if (!UploadQueue(&pool, &queue)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: no upload queue.");
 
         // shared results -- every object appended here
         std::vector<Ir77PVMeshlet> meshlets{};
@@ -790,7 +694,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         mesh.vertices->GetBuffer(0, &vertices_dst);
         mesh.draws->GetBuffer(0, &draws_dst);
 
-        if (UploadBatch(pool, queue,
+        if (Upload(
                         {{meshlets_dst, meshlets.data(), meshlets_size},
                          {indices_dst, meshlet_vertices.data(), indices_size},
                          {triangles_dst, meshlet_triangles.data(), triangles_size},
@@ -974,11 +878,13 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
                                                      std::uint32_t& texture_id) {
         if (rgba == nullptr || width == 0 || height == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: empty texture.");
 
+        std::uint64_t const device_id = m_context->m_current_device;
+
         VkCommandPool pool{VK_NULL_HANDLE};
         VkQueue queue{VK_NULL_HANDLE};
-        if (!UploadQueue(&pool, &queue)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: no upload queue.");
 
-        std::uint64_t const device_id = m_context->m_current_device;
+        auto const pool_result = m_context->m_devices.at(device_id)->GetUploadPool(pool, queue);
+        if (pool_result->ID() != GUIDIr77OperationSucceeded) return pool_result;
 
         auto texture = std::static_pointer_cast<IIr77PVTexture>(std::make_shared<Ir77PVTexture>());
 
@@ -1034,10 +940,6 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
                                                        std::vector<Ir77PVMaterialTextures> const& textures, std::vector<std::uint32_t>& material_ids) {
         if (constants.size() != textures.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: constants / textures count mismatch.");
 
-        VkCommandPool pool{VK_NULL_HANDLE};
-        VkQueue queue{VK_NULL_HANDLE};
-        if (!UploadQueue(&pool, &queue)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: no upload queue.");
-
         std::vector<Ir77PVMaterial> built(constants.size());
         std::vector<Ir77PVUploadEntry> entries{};
         entries.reserve(constants.size());
@@ -1051,7 +953,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             entries.push_back({dst, &constants[i], sizeof(Ir77PVMaterialConstants)});
         }
 
-        if (UploadBatch(pool, queue, entries)->ID() != GUIDIr77OperationSucceeded)
+        if (Upload(entries)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material upload failed.");
 
         auto& materials = m_materials[m_context->m_current_device];
@@ -1094,7 +996,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline kind not created for window.");
 
-        if (m_context->GetLayout(LayoutKindFor(kind), item.layout)->ID() != GUIDIr77OperationSucceeded)
+        if (m_context->GetLayout(m_context->LayoutKindFor(kind), item.layout)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: layout not created.");
 
         item.material = material.set;
@@ -1107,219 +1009,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // =========================================================================================================================================
-    // TESTBED -- a lit-by-normals grid of spinning cubes. Development only; nothing in the engine depends on it. It is a client:
-    // it uses exactly the calls a scene loader would.
-    //
-    //   asset->CreateTestbed(grid, use_mesh, use_indirect);   // after CreatePipelines
-    //   loop: asset->Tick(frame); asset->UpdateTestbed(paint, seconds);   // before paint->Draw()
-    //
-    // Three paths, all reading each cube's model from the Instances buffer (set 0 binding 2):
-    //   default       -- one direct draw per cube (UploadMesh / MakeDrawItem), firstInstance = cube slot
-    //   use_mesh      -- task / mesh shaders (UploadMeshlets / MakeMeshletDrawItem), draw_base = cube slot;
-    //                    falls back to the default when the device has no mesh shading
-    //   use_indirect  -- one indirect call for every cube: UploadScene / MakeIndirectDrawItem on the vertex path,
-    //                    UploadMeshlets / MakeMeshletSceneDrawItem on the mesh path
-    // =========================================================================================================================================
-    std::shared_ptr<IIr77Return const> CreateTestbed(std::uint32_t const& grid = 3, bool const& use_mesh = false, bool const& use_indirect = false) {
-        auto const cube = BuildCube(0.5f);
-
-        std::uint32_t const side = std::max<std::uint32_t>(grid, 1);
-        std::uint32_t const cubes = side * side;
-
-        // vertex path always exists -- it's the fallback
-        auto result = UploadMesh(cube, m_testbed.mesh);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        // one scene, both paths: the cube as one object, `cubes` instances.
-        // vertex indirect: gl_InstanceIndex 0..cubes-1 -> models[0..cubes-1]
-        // mesh: one draw record per instance, record i -> models[i]
-        Ir77PVSceneUpload scene{};
-        scene.vertices = cube.vertex_data;
-        scene.indices = cube.index_data;
-        scene.indirect_commands.push_back(VkDrawIndexedIndirectCommand{static_cast<std::uint32_t>(cube.index_data.size()), cubes, 0, 0, 0});
-
-        // mesh path -- falls back when the device has no mesh shading
-        bool mesh = false;
-        std::uint32_t records{0};
-        if (use_mesh) mesh = UploadMeshlets(scene, m_testbed.meshlets, records)->ID() == GUIDIr77OperationSucceeded;
-
-        // vertex indirect -- only when mesh isn't taking over
-        bool indirect = false;
-        if (use_indirect && !mesh) indirect = UploadScene(scene, m_testbed.scene)->ID() == GUIDIr77OperationSucceeded;
-
-        Ir77PVMaterialConstants constants{};
-        constants.base_color = {0.8f, 0.8f, 0.8f, 1.0f};
-
-        result = CreateMaterial(constants, m_testbed.material);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        m_testbed.grid = side;
-        m_testbed.use_mesh = mesh;
-        m_testbed.use_indirect = mesh ? use_indirect : indirect;  // mesh has its indirect buffer from UploadMeshlets already
-        m_testbed.ready = true;
-
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Testbed.");
-    }
-
-    // Writes the camera, the instance models and the cube draw list for every window
-    std::shared_ptr<IIr77Return const> UpdateTestbed(std::shared_ptr<Ir77PVPaint> const& paint, float const& seconds) {
-        if (!m_testbed.ready) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreateTestbed not called.");
-
-        std::size_t const windows = m_context->m_windows.at(m_context->m_current_device).size();
-
-        // set 0 binding 1 -- one directional sun; header (16) + light (64) packs exactly as the shader reads it
-        struct {
-            Ir77PVLightsHeader header{};
-            Ir77PVLight sun{};
-        } lights{};
-
-        lights.header.count = 1;
-        lights.sun.direction = glm::normalize(glm::vec3(-0.4f, -1.0f, -0.3f));
-        lights.sun.color = glm::vec3(1.0f);
-        lights.sun.intensity = 1.0f;
-        lights.sun.type = 0;  // directional
-
-        for (std::size_t w = 0; w < windows; w++) {
-            // camera -- orbits the grid; each window offset a little so multi-window setups are distinguishable
-            VkExtent2D extent{};
-            m_context->m_swapchains.at(m_context->m_current_device).at(w)->GetSwapchainExtents(extent);
-
-            float const aspect = extent.height > 0 ? static_cast<float>(extent.width) / static_cast<float>(extent.height) : 1.78f;
-            float const orbit = seconds * 0.25f + static_cast<float>(w) * 0.5f;
-            float const radius = 2.5f + static_cast<float>(m_testbed.grid);
-
-            glm::vec3 const eye(std::sin(orbit) * radius, radius * 0.6f, std::cos(orbit) * radius);
-
-            Ir77PVCamera const camera = MakeCamera(eye, glm::vec3(0.0f), 60.0f, aspect);
-
-            paint->SetFrameData(w, Ir77PVBufferSlot::Camera, &camera, sizeof(camera));
-            paint->SetFrameData(w, Ir77PVBufferSlot::Lights, &lights, sizeof(lights));
-
-            // cubes
-            Ir77PVDrawItem base{};
-            auto const made = m_testbed.use_mesh ? MakeMeshletDrawItem(w, m_testbed.meshlets, m_testbed.material, base)
-                                                 : MakeDrawItem(w, Ir77PVPipelineKind::Static, m_testbed.mesh, m_testbed.material, base);
-            if (made->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: testbed draw item failed.");
-
-            std::vector<Ir77PVDrawItem> draws{};
-            std::vector<glm::mat4> models{};
-            float const half = static_cast<float>(m_testbed.grid - 1) * 0.5f;
-
-            for (std::uint32_t x = 0; x < m_testbed.grid; x++) {
-                for (std::uint32_t z = 0; z < m_testbed.grid; z++) {
-                    float const phase = static_cast<float>(x * m_testbed.grid + z);
-
-                    glm::mat4 model(1.0f);
-                    model = glm::translate(model, glm::vec3((static_cast<float>(x) - half) * 1.5f, 0.0f, (static_cast<float>(z) - half) * 1.5f));
-                    model = glm::rotate(model, seconds * (0.6f + phase * 0.1f), glm::normalize(glm::vec3(0.3f, 1.0f, 0.2f)));
-
-                    std::uint32_t const slot = static_cast<std::uint32_t>(models.size());
-
-                    Ir77PVDrawItem item = base;
-                    std::memcpy(item.model.data(), glm::value_ptr(model), sizeof(float) * 16);  // push constant -- unused by the current shaders
-                    item.first_instance = slot;                                                 // vertex path -- gl_InstanceIndex -> models[slot]
-                    item.draw_base = slot;                                                      // mesh path -- record slot -> models[slot]
-
-                    models.push_back(model);
-                    draws.push_back(item);
-                }
-            }
-
-            // set 0 binding 2 -- every path reads its model from here
-            paint->SetFrameData(w, Ir77PVBufferSlot::Instances, models.data(), models.size() * sizeof(glm::mat4));
-
-            // one indirect draw replaces the per-cube items -- the whole scene is one object, so one run: command 0
-            if (m_testbed.use_indirect) {
-                Ir77PVDrawItem item{};
-
-                auto const made_indirect = m_testbed.use_mesh
-                                               ? MakeMeshletSceneDrawItem(w, m_testbed.meshlets, m_testbed.material, 0, 1, item)
-                                               : MakeIndirectDrawItem(w, Ir77PVPipelineKind::Static, m_testbed.scene, m_testbed.material, 0, 1, false, item);
-                if (made_indirect->ID() != GUIDIr77OperationSucceeded)
-                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: testbed indirect draw item failed.");
-
-                draws = {item};
-            }
-
-            paint->SetDraws(w, Ir77PVPass::Opaque, draws);
-        }
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
    private:
-    // Outward-facing counter-clockwise cube -- the glTF convention, drawn with frontFace = COUNTER_CLOCKWISE under the
-    // Y-flipped projection. Each face's winding is checked against its own normal rather than assumed.
-    static Ir77PVInputBuffer BuildCube(float const& h) {
-        struct Face {
-            glm::vec3 normal;
-            glm::vec3 u;
-            glm::vec3 v;
-        };
-
-        std::array<Face, 6> const faces{{
-            {{1, 0, 0}, {0, 0, -1}, {0, 1, 0}},
-            {{-1, 0, 0}, {0, 0, 1}, {0, 1, 0}},
-            {{0, 1, 0}, {1, 0, 0}, {0, 0, -1}},
-            {{0, -1, 0}, {1, 0, 0}, {0, 0, 1}},
-            {{0, 0, 1}, {1, 0, 0}, {0, 1, 0}},
-            {{0, 0, -1}, {-1, 0, 0}, {0, 1, 0}},
-        }};
-
-        std::array<glm::vec2, 4> const corners{{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}};
-
-        Ir77PVInputBuffer out{};
-
-        for (auto const& face : faces) {
-            std::uint32_t const base = static_cast<std::uint32_t>(out.vertex_data.size());
-
-            for (auto const& c : corners) {
-                Ir77PVVertex vertex{};
-                vertex.position = (face.normal + face.u * c.x + face.v * c.y) * h;
-                vertex.normal = face.normal;
-                vertex.uv = glm::vec2((c.x + 1.0f) * 0.5f, 1.0f - (c.y + 1.0f) * 0.5f);
-
-                out.vertex_data.push_back(vertex);
-            }
-
-            // Verify winding against the intended outward normal rather than assuming a fixed corner order
-            glm::vec3 const& p0 = out.vertex_data[base + 2].position;
-            glm::vec3 const& p1 = out.vertex_data[base + 1].position;
-            glm::vec3 const& p2 = out.vertex_data[base + 0].position;
-            glm::vec3 const computed_normal = glm::normalize(glm::cross(p1 - p0, p2 - p0));
-
-            bool const correct_winding = glm::dot(computed_normal, face.normal) > 0.0f;
-
-            if (correct_winding) {
-                for (std::uint32_t const i : {0u, 2u, 1u, 0u, 3u, 2u}) out.index_data.push_back(base + i);
-            } else {
-                for (std::uint32_t const i : {0u, 1u, 2u, 0u, 2u, 3u}) out.index_data.push_back(base + i);
-            }
-        }
-
-        return out;
-    }
-
-    static Ir77PVLayoutKind LayoutKindFor(Ir77PVPipelineKind const& kind) {
-        switch (kind) {
-            case Ir77PVPipelineKind::Skinned:
-            case Ir77PVPipelineKind::SkinnedTransparent:
-            case Ir77PVPipelineKind::SkinnedTransparentBack:
-                return Ir77PVLayoutKind::Skinned;
-            case Ir77PVPipelineKind::Shadow:
-                return Ir77PVLayoutKind::Shadow;
-            case Ir77PVPipelineKind::ShadowSkinned:
-                return Ir77PVLayoutKind::ShadowSkinned;
-            case Ir77PVPipelineKind::CEF:
-                return Ir77PVLayoutKind::CEF;
-            case Ir77PVPipelineKind::Mesh:
-                return Ir77PVLayoutKind::Mesh;
-            default:
-                return Ir77PVLayoutKind::Static;
-        }
-    }
-
     Ir77PVSceneSlot* FindScene(std::uint32_t const& scene_id) {
         auto const found = m_scenes.find(m_context->m_current_device);
         if (found == m_scenes.end() || scene_id >= found->second.size() || !found->second[scene_id].alive) return nullptr;
@@ -1425,211 +1115,28 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Asset's own transient pool on the presentation family, created on first upload per device
-    bool UploadQueue(VkCommandPool* pool, VkQueue* queue) {
+    // one Staging buffer per batch, on the device's upload pool. No-wait uploads stay in m_pending until Tick sees them finished.
+    std::shared_ptr<IIr77Return const> Upload(std::vector<Ir77PVUploadEntry> const& entries, bool const& wait = true) {
         std::uint64_t const device_id = m_context->m_current_device;
+        auto const& device = m_context->m_devices.at(device_id);
 
-        std::vector<Ir77PVQueueFamily> families{};
-        m_context->m_devices.at(device_id)->GetQueueFamilies(families);
+        VkCommandPool pool{VK_NULL_HANDLE};
+        VkQueue queue{VK_NULL_HANDLE};
 
-        std::uint32_t family{UINT32_MAX};
-        for (std::size_t i = 0; i < families.size(); i++) {
-            if (families[i].presentation == VK_TRUE) {
-                family = static_cast<std::uint32_t>(i);
-                *queue = families[i].queue;
-                break;
-            }
-        }
+        auto result = device->GetUploadPool(pool, queue);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        if (family == UINT32_MAX) return false;
+        auto staging = std::static_pointer_cast<IIr77PVBuffer>(std::make_shared<Ir77PVBuffer>());
 
-        auto const found = m_upload_pools.find(device_id);
-        if (found != m_upload_pools.end()) {
-            *pool = found->second;
-            return true;
-        }
+        staging->SetDevice(device);
+        staging->SetAllocator(m_context->m_allocators.at(device_id));
+        staging->SetMode(Ir77PVBufferMode::Staging);
 
-        VkDevice device;
-        m_context->m_devices.at(device_id)->GetDevice(&device);
+        result = staging->UploadBatch(pool, queue, entries, wait);
 
-        VkCommandPoolCreateInfo pool_info{};
-        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-        pool_info.queueFamilyIndex = family;
+        if (result->ID() == GUIDIr77OperationSucceeded && !wait) m_pending[device_id].push_back(staging);
 
-        if (vkCreateCommandPool(device, &pool_info, nullptr, pool) != VK_SUCCESS) return false;
-
-        m_upload_pools[device_id] = *pool;
-
-        return true;
-    }
-
-    // Host-visible, mapped, written once front to back
-    bool CreateStaging(VkDeviceSize const& size, VkBuffer& staging, VmaAllocation& allocation, void*& mapped) {
-        VmaAllocator const allocator = m_context->m_allocators.at(m_context->m_current_device);
-
-        VkBufferCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        info.size = size;
-        info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        VmaAllocationCreateInfo alloc_info{};
-        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-        VmaAllocationInfo result{};
-        if (vmaCreateBuffer(allocator, &info, &alloc_info, &staging, &allocation, &result) != VK_SUCCESS) return false;
-
-        mapped = result.pMappedData;
-
-        return true;
-    }
-
-    bool BeginOneShot(VkCommandPool const& pool, VkCommandBuffer& cmd) {
-        VkDevice device{VK_NULL_HANDLE};
-        m_context->m_devices.at(m_context->m_current_device)->GetDevice(&device);
-
-        VkCommandBufferAllocateInfo alloc{};
-        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc.commandPool = pool;
-        alloc.commandBufferCount = 1;
-
-        if (vkAllocateCommandBuffers(device, &alloc, &cmd) != VK_SUCCESS) return false;
-
-        VkCommandBufferBeginInfo begin{};
-        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-        if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS) {
-            vkFreeCommandBuffers(device, pool, 1, &cmd);
-            cmd = VK_NULL_HANDLE;
-            return false;
-        }
-
-        return true;
-    }
-
-    // Ends, submits with its own fence, then either waits and frees (wait) or hands everything to Tick (no wait).
-    // Takes ownership of cmd and the staging buffer on every path.
-    std::shared_ptr<IIr77Return const> SubmitOneShot(VkCommandPool const& pool, VkQueue const& queue, VkCommandBuffer const& cmd, VkBuffer const& staging,
-                                                     VmaAllocation const& staging_allocation, bool const& wait) {
-        std::uint64_t const device_id = m_context->m_current_device;
-
-        VkDevice device{VK_NULL_HANDLE};
-        m_context->m_devices.at(device_id)->GetDevice(&device);
-        VmaAllocator const allocator = m_context->m_allocators.at(device_id);
-
-        Ir77PVPending pending{};
-        pending.cmd = cmd;
-        pending.pool = pool;
-        pending.staging = staging;
-        pending.staging_allocation = staging_allocation;
-
-        VkResult result = vkEndCommandBuffer(cmd);
-
-        if (result == VK_SUCCESS) {
-            VkFenceCreateInfo fence_info{};
-            fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-
-            result = vkCreateFence(device, &fence_info, nullptr, &pending.fence);
-        }
-
-        if (result == VK_SUCCESS) {
-            VkSubmitInfo submit_info{};
-            submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            submit_info.commandBufferCount = 1;
-            submit_info.pCommandBuffers = &cmd;
-
-            result = vkQueueSubmit(queue, 1, &submit_info, pending.fence);
-        }
-
-        if (result != VK_SUCCESS) {
-            ReleasePending(device, allocator, pending);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: upload submit failed.");
-        }
-
-        if (!wait) {
-            m_pending[device_id].push_back(pending);
-            return Ir77RETURN<Ir77OperationSucceeded>();
-        }
-
-        result = vkWaitForFences(device, 1, &pending.fence, VK_TRUE, UINT64_MAX);
-        ReleasePending(device, allocator, pending);
-
-        if (result != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: upload wait failed.");
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    static void ReleasePending(VkDevice const& device, VmaAllocator const& allocator, Ir77PVPending const& pending) {
-        if (pending.fence != VK_NULL_HANDLE) vkDestroyFence(device, pending.fence, nullptr);
-        if (pending.cmd != VK_NULL_HANDLE) vkFreeCommandBuffers(device, pending.pool, 1, &pending.cmd);
-        if (pending.staging != VK_NULL_HANDLE && allocator != VK_NULL_HANDLE) vmaDestroyBuffer(allocator, pending.staging, pending.staging_allocation);
-    }
-
-    // One staging buffer, one command buffer, one submit for every entry. Each entry lands at its own dst_offset, so new data can go
-    // into a free range of an existing buffer. The barrier makes the copies visible to everything submitted after it on this queue,
-    // so wait = false is safe for data drawn by later frames.
-    std::shared_ptr<IIr77Return const> UploadBatch(VkCommandPool const& pool, VkQueue const& queue, std::vector<Ir77PVUploadEntry> const& entries,
-                                                   bool const& wait = true) {
-        VkDeviceSize total{0};
-        for (auto const& e : entries) {
-            if (e.size == 0) continue;
-            if (e.dst == VK_NULL_HANDLE || e.data == nullptr)
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: upload entry has no destination or data.");
-            total += e.size;
-        }
-        if (total == 0) return Ir77RETURN<Ir77OperationSucceeded>();
-
-        VmaAllocator const allocator = m_context->m_allocators.at(m_context->m_current_device);
-
-        VkBuffer staging{VK_NULL_HANDLE};
-        VmaAllocation staging_allocation{VK_NULL_HANDLE};
-        void* mapped{nullptr};
-
-        if (!CreateStaging(total, staging, staging_allocation, mapped))
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: batch staging buffer creation failed.");
-
-        // pack every entry back to back; one copy region per entry
-        std::vector<VkBufferCopy> regions(entries.size());
-        VkDeviceSize cursor{0};
-
-        for (std::size_t i = 0; i < entries.size(); i++) {
-            if (entries[i].size == 0) continue;
-
-            std::memcpy(static_cast<std::uint8_t*>(mapped) + cursor, entries[i].data, static_cast<std::size_t>(entries[i].size));
-
-            regions[i].srcOffset = cursor;
-            regions[i].dstOffset = entries[i].dst_offset;
-            regions[i].size = entries[i].size;
-
-            cursor += entries[i].size;
-        }
-
-        vmaFlushAllocation(allocator, staging_allocation, 0, total);  // no-op on coherent memory
-
-        VkCommandBuffer cmd{VK_NULL_HANDLE};
-        if (!BeginOneShot(pool, cmd)) {
-            vmaDestroyBuffer(allocator, staging, staging_allocation);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: batch upload command buffer failed.");
-        }
-
-        for (std::size_t i = 0; i < entries.size(); i++) {
-            if (entries[i].size == 0) continue;
-            vkCmdCopyBuffer(cmd, staging, entries[i].dst, 1, &regions[i]);
-        }
-
-        // make the copied data visible to whatever reads it next -- vertex fetch, index fetch, indirect, shaders, later copies
-        VkMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-        return SubmitOneShot(pool, queue, cmd, staging, staging_allocation, wait);
+        return result;
     }
 
    private:
@@ -1650,12 +1157,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVTexture>>> m_textures{};
 
-    std::map<std::uint64_t, VkCommandPool> m_upload_pools{};
-
-    std::map<std::uint64_t, std::vector<Ir77PVPending>> m_pending{};  // uploads submitted with wait = false
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVBuffer>>> m_pending{};  // Staging buffers of uploads submitted with wait = false
 
     std::map<std::uint64_t, std::vector<Ir77PVGrave>> m_graveyard{};  // unloaded, waiting out the frames in flight
-
-    Ir77PVTestbed m_testbed{};
 };
 }  // namespace NSIr77PeregrineV

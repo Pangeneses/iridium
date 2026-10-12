@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vk_mem_alloc.h>
+
 #include <vulkan/vulkan.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -172,7 +174,7 @@ typedef struct Ir77PVShaderFile {
 
 // Dynamic: host-mapped, one copy per frame in flight, written with Update() every frame
 // Static:  device-local, single copy, written once with Upload() through a staging buffer
-enum class Ir77PVBufferMode : std::uint8_t { Dynamic, Static };
+enum class Ir77PVBufferMode : std::uint8_t { Dynamic, Static, Staging };
 
 // Frame-level buffers every window owns, one Dynamic copy per frame in flight.
 // Mesh vertex/index buffers are per-asset and live in m_buffers_vertex / m_buffers_index (filled by Ir77PVAsset).
@@ -220,6 +222,17 @@ typedef struct Ir77PVDescriptorBinding {
     bool is_image{false};
 }* pIr77PVDescriptorBinding;
 
+inline constexpr std::uint32_t IR77PV_NO_TEXTURE = UINT32_MAX;
+
+// Texture ids for set 2 bindings 1..5. IR77PV_NO_TEXTURE = placeholder (flat normal for the normal slot).
+typedef struct Ir77PVMaterialTextures {
+    std::uint32_t albedo{IR77PV_NO_TEXTURE};
+    std::uint32_t normal{IR77PV_NO_TEXTURE};
+    std::uint32_t orm{IR77PV_NO_TEXTURE};
+    std::uint32_t emissive{IR77PV_NO_TEXTURE};
+    std::uint32_t ao{IR77PV_NO_TEXTURE};
+}* pIr77PVMaterialTextures;
+
 // =============================================================================================================================================
 // vertex formats -- CPU-side input. Ir77PVVertex is also read as a raw float[8] stream by the mesh shader (set 3 binding 3).
 // =============================================================================================================================================
@@ -238,11 +251,6 @@ typedef struct Ir77PVVertexSkinned {
     glm::uvec4 joints{};
     glm::vec4 weights{};
 }* pIr77PVVertexSkinned;
-
-typedef struct Ir77PVInputBuffer {
-    std::vector<Ir77PVVertex> vertex_data{};
-    std::vector<std::uint32_t> index_data{};
-}* pIr77PVInputBuffer;
 
 // =============================================================================================================================================
 // shader-visible data -- layouts must match the GLSL blocks
@@ -367,6 +375,43 @@ typedef struct Ir77PVMaterial {
     std::shared_ptr<IIr77PVBuffer> constants{};
     std::shared_ptr<IIr77PVDescriptorSet> set{};
 }* pIr77PVMaterial;
+
+
+typedef struct Ir77PVInputBuffer {
+    std::vector<Ir77PVVertex> vertex_data{};
+    std::vector<std::uint32_t> index_data{};
+}* pIr77PVInputBuffer;
+
+    // vertex path scene -- one buffer per channel for every stacked object
+    struct Ir77PVSceneSlot {
+        std::shared_ptr<IIr77PVBuffer> vertex{};
+        std::shared_ptr<IIr77PVBuffer> index{};
+        std::shared_ptr<IIr77PVBuffer> vertex_skinned{};
+        std::shared_ptr<IIr77PVBuffer> index_skinned{};
+        std::shared_ptr<IIr77PVBuffer> indirect{};             // Dynamic -- rewritten by Tick when dirty
+        std::vector<VkDrawIndexedIndirectCommand> commands{};  // live values -- instanceCount 0 = hidden
+        std::vector<std::uint32_t> instance_counts{};          // what a visible command draws
+        std::vector<std::uint8_t> visible{};
+        std::uint32_t dirty{0};  // frame copies still to rewrite
+        bool alive{false};
+    };
+
+    // mesh path scene -- set 3 buffers plus the per-record command state
+    struct Ir77PVMeshletSlot {
+        Ir77PVMeshletMesh mesh{};
+        std::vector<VkDrawMeshTasksIndirectCommandEXT> commands{};  // live, one per record -- groupCountX 0 = hidden
+        std::vector<std::uint32_t> groups{};                        // what a visible record dispatches
+        std::vector<std::uint32_t> first_record{};                  // per scene command, plus one end entry
+        std::uint32_t dirty{0};
+        bool alive{false};
+    };
+
+    // unloaded resources -- held until every frame that could still read them has finished
+    struct Ir77PVGrave {
+        std::vector<std::shared_ptr<IIr77PVBuffer>> buffers{};
+        std::shared_ptr<IIr77PVDescriptorSet> set{};
+        std::uint32_t frames_left{0};
+    };
 
 // =============================================================================================================================================
 // draw

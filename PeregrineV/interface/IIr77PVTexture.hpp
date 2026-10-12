@@ -45,6 +45,8 @@ typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
     // Color / Data: 1x1 of one RGBA8 value (bytes R,G,B,A packed little-endian: 0xAABBGGRR)
     virtual std::shared_ptr<IIr77Return const> CreateSolid(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& rgba) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> CreatePlaceholder(std::uint32_t const& rgba) = 0;
+
     // Depth: shadow-map target, cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL so it can be sampled before any
     // shadow pass runs. The shadow render pass must end in DEPTH_STENCIL_READ_ONLY_OPTIMAL. 1x1 doubles as the shadow placeholder.
     virtual std::shared_ptr<IIr77Return const> CreateDepth(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width,

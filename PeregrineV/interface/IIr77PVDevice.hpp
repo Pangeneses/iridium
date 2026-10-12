@@ -45,6 +45,8 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport() = 0;
 
+    virtual std::shared_ptr<IIr77Return const> QueryDisplaySupport(int& rank, std::string& name) = 0;
+
     virtual std::shared_ptr<IIr77Return const> DefineDeviceInfo() = 0;
 
     virtual std::shared_ptr<IIr77Return const> DefineDevice() = 0;
@@ -57,11 +59,13 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetSwapchainMaintenance(bool& enabled) = 0;
-
     virtual std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVQueueFamily>& queue_family) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetPresentQueue(VkQueue& queue, std::uint32_t& family) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetUploadPool(VkCommandPool& pool, VkQueue& queue) = 0;
 
     virtual ~IIr77PVDevice() = default;
 }* pIIr77PVDevice;

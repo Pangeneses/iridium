@@ -39,6 +39,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     }
 
     ~Ir77PVDevice() {
+        if (m_upload_pool != VK_NULL_HANDLE) vkDestroyCommandPool(m_device, m_upload_pool, nullptr);
         if (m_device != VK_NULL_HANDLE) vkDestroyDevice(m_device, nullptr);
     }
 
@@ -181,7 +182,60 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
         // optional -- kept only if DefineDeviceInfo also finds the features it needs
         if (HasExtension(VK_EXT_MESH_SHADER_EXTENSION_NAME)) m_extensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
-        if (HasExtension(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)) m_extensions.push_back(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // display suitability, before any logical device exists: VK_KHR_swapchain + a graphics family that can present to an SDL window.
+    // rank 4 discrete, 3 integrated, 2 virtual, 1 other, 0 CPU; fails (rank -1) when the device can't drive a display
+    std::shared_ptr<IIr77Return const> QueryDisplaySupport(int& rank, std::string& name) {
+        rank = -1;
+        name.clear();
+
+        if (m_phys_device == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: no physical device.");
+
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(m_phys_device, &props);
+        name = props.deviceName;
+
+        std::uint32_t count{0};
+        vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, nullptr);
+        m_available_extensions.resize(count);
+        vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, m_available_extensions.data());
+
+        if (!HasExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: " + name + " has no swapchain support.");
+
+        VkInstance instance{VK_NULL_HANDLE};
+        m_instance->GetInstance(&instance);
+
+        std::uint32_t family_count{0};
+        vkGetPhysicalDeviceQueueFamilyProperties(m_phys_device, &family_count, nullptr);
+        std::vector<VkQueueFamilyProperties> families(family_count);
+        vkGetPhysicalDeviceQueueFamilyProperties(m_phys_device, &family_count, families.data());
+
+        bool display{false};
+        for (std::uint32_t f = 0; f < family_count && !display; f++)
+            display = (families[f].queueFlags & VK_QUEUE_GRAPHICS_BIT) && SDL_Vulkan_GetPresentationSupport(instance, m_phys_device, f);
+
+        if (!display) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: " + name + " cannot present to a window.");
+
+        switch (props.deviceType) {
+            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+                rank = 4;
+                break;
+            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+                rank = 3;
+                break;
+            case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+                rank = 2;
+                break;
+            case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+                rank = 1;
+                break;
+            default:
+                rank = 0;
+                break;  // CPU (llvmpipe, lavapipe)
+        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -197,10 +251,6 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         VkPhysicalDeviceMeshShaderFeaturesEXT mesh_supported{};
         mesh_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
         mesh_supported.pNext = &v11_supported;
-
-        VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance_supported{};
-        maintenance_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
-        v11_supported.pNext = &maintenance_supported;  // query: features2 -> mesh -> vulkan11 -> maintenance
 
         VkPhysicalDeviceFeatures2 supported{};
         supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -229,33 +279,13 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_mesh_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
         m_mesh_features.taskShader = m_mesh_shading ? VK_TRUE : VK_FALSE;
         m_mesh_features.meshShader = m_mesh_shading ? VK_TRUE : VK_FALSE;
+        m_mesh_features.pNext = nullptr;
 
-        // swapchain maintenance -- extension present AND feature supported; otherwise dropped
-        auto const maintenance_ext = FindRequested(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
-
-        m_swapchain_maintenance = maintenance_ext != m_extensions.end() && maintenance_supported.swapchainMaintenance1 == VK_TRUE;
-
-        if (!m_swapchain_maintenance && maintenance_ext != m_extensions.end()) m_extensions.erase(maintenance_ext);
-
-        m_maintenance_features = VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT{};
-        m_maintenance_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
-        m_maintenance_features.swapchainMaintenance1 = VK_TRUE;
-
-        // enable: create info -> features2 -> vulkan11 -> [mesh] -> [maintenance]
-        void* tail = nullptr;
-        if (m_swapchain_maintenance) {
-            m_maintenance_features.pNext = tail;
-            tail = &m_maintenance_features;
-        }
-        if (m_mesh_shading) {
-            m_mesh_features.pNext = tail;
-            tail = &m_mesh_features;
-        }
-
+        // enable: create info -> features2 -> vulkan11 -> [mesh]
         m_vulkan11 = VkPhysicalDeviceVulkan11Features{};
         m_vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         m_vulkan11.shaderDrawParameters = v11_supported.shaderDrawParameters;
-        m_vulkan11.pNext = tail;
+        m_vulkan11.pNext = m_mesh_shading ? &m_mesh_features : nullptr;
 
         m_features2 = VkPhysicalDeviceFeatures2{};
         m_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -278,6 +308,8 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     }
 
     std::shared_ptr<IIr77Return const> DefineDevice() {
+        if (m_device != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: DefineDevice called twice -- device already exists.");
+
         if (vkCreateDevice(m_phys_device, &m_device_create_info, nullptr, &m_device) != VK_SUCCESS) {
             m_device = VK_NULL_HANDLE;
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: vkCreateDevice failed.");
@@ -313,12 +345,6 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetSwapchainMaintenance(bool& enabled) {
-        enabled = m_swapchain_maintenance;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // true only when VK_EXT_mesh_shader is enabled with task + mesh stages
     std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) {
         enabled = m_mesh_shading;
@@ -334,6 +360,41 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVQueueFamily>& queue_family) {
         queue_family = m_queue_families;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // first graphics family that can present -- valid after DefineDevice
+    std::shared_ptr<IIr77Return const> GetPresentQueue(VkQueue& queue, std::uint32_t& family) {
+        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
+            if (m_queue_families[i].presentation == VK_TRUE) {
+                queue = m_queue_families[i].queue;
+                family = static_cast<std::uint32_t>(i);
+                return Ir77RETURN<Ir77OperationSucceeded>();
+            }
+        }
+
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: no presentation queue.");
+    }
+
+    // transient pool on the present family for one-shot uploads -- created on first use, destroyed with the device
+    std::shared_ptr<IIr77Return const> GetUploadPool(VkCommandPool& pool, VkQueue& queue) {
+        std::uint32_t family{0};
+
+        auto const result = GetPresentQueue(queue, family);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        if (m_upload_pool == VK_NULL_HANDLE) {
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            pool_info.queueFamilyIndex = family;
+
+            if (vkCreateCommandPool(m_device, &pool_info, nullptr, &m_upload_pool) != VK_SUCCESS)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: upload pool creation failed.");
+        }
+
+        pool = m_upload_pool;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -365,6 +426,8 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     VkDevice m_device{VK_NULL_HANDLE};
 
+    VkCommandPool m_upload_pool{VK_NULL_HANDLE};
+
     std::vector<VkExtensionProperties> m_available_extensions;
 
     // requested extensions -- pointers into this list are handed to vkCreateDevice, so it must outlive DefineDevice
@@ -375,14 +438,10 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     VkPhysicalDeviceMeshShaderFeaturesEXT m_mesh_features{};
 
+    VkPhysicalDeviceVulkan11Features m_vulkan11{};
+
     bool m_mesh_shading{false};
 
-    bool m_swapchain_maintenance{false};
-
-    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT m_maintenance_features{};
-
     VkDeviceCreateInfo m_device_create_info{};
-
-    VkPhysicalDeviceVulkan11Features m_vulkan11{};
 };
 }  // namespace NSIr77PeregrineV
