@@ -1,15 +1,18 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include <vulkan/vulkan_core.h>
 
+#include <array>
+#include <chrono>
 #include <cstdint>
-#include <map>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
+#include "../types/Ir77PVTypes.hpp"
+
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
-#include "../../Ir77RT/dictionary/IDIr77RET.hpp"
 
 #include "../dictionary/IDIIr77PeregrineV.hpp"
 #include "../dictionary/IDIr77PeregrineV.hpp"
@@ -20,16 +23,23 @@
 #include "../../Ir77RT/runtime/Ir77GUID.hpp"
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "../interface/IIr77PVDevice.hpp"
-#include "../interface/IIr77PVLayout.hpp"
 #include "../interface/IIr77PVDescriptorSet.hpp"
-
-#include "../types/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// =============================================================================================================================================
+// Ir77PVDescriptorSet -- THE descriptor set. One per device: the bindless table every pipeline reads through Ir77PVLayout.
+//
+//   create:   SetDevice / SetLayout -> CreateDescriptorSet -> DefinePool -> DefineSet
+//   register: RegisterTexture / RegisterBuffer / RegisterStorageImage -> slot index for push constants or other buffers
+//   change:   UpdateTexture / UpdateBuffer / UpdateStorageImage -- same slot, new view or buffer (overlay resize, buffer regrow)
+//   free:     Release -> slot is retired, reused only after MAX_FRAMES_IN_FLIGHT Ticks (frames in flight may still read it)
+//   per frame Tick, then per command buffer Bind
+//
+// Slot 0 of the texture array is reserved for the placeholder texture, so an unset material index (0) samples something valid.
+// =============================================================================================================================================
 class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, public std::enable_shared_from_this<Ir77PVDescriptorSet> {
    public:
     Ir77PVDescriptorSet() {
@@ -42,7 +52,15 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    ~Ir77PVDescriptorSet() = default;
+    // the owner waits for the device to go idle before releasing the set; the pool frees it
+    ~Ir77PVDescriptorSet() {
+        if (!m_device || m_pool == VK_NULL_HANDLE) return;
+
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        vkDestroyDescriptorPool(device, m_pool, nullptr);
+    }
 
    public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
@@ -85,6 +103,9 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         return GUIDQuerySucceeded;
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // configuration
+    // -------------------------------------------------------------------------------------------------------------------------------------
    public:
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
         m_device = device;
@@ -92,175 +113,267 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout, std::uint32_t const& set_index) {
+    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout) {
         m_layout = layout;
-        m_set_index = set_index;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // copies = frames in flight for per-frame sets (global, pass, bones); 1 for static sets (material)
-    std::shared_ptr<IIr77Return const> CreateSets(std::uint32_t const& copies) {
-        if (!m_layout) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: layout not set.");
-        if (copies == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: copy count is zero.");
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // create
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    std::shared_ptr<IIr77Return const> CreateDescriptorSet() {
+        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: SetDevice not called.");
+        if (!m_layout) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: SetLayout not called.");
+        if (m_pool != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: descriptor set already created.");
 
-        m_sets.assign(copies, VK_NULL_HANDLE);
+        m_layout->GetCapacity(m_capacity);
 
-        for (std::uint32_t i = 0; i < copies; i++) {
-            if (m_layout->AllocateSet(m_set_index, &m_sets[i])->ID() != GUIDIr77OperationSucceeded) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: set allocation failed.");
+        auto result = DefinePool();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        result = DefineSet();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        m_slots[BINDLESS_BINDING_TEXTURES].capacity = m_capacity.textures;
+        m_slots[BINDLESS_BINDING_BUFFERS].capacity = m_capacity.buffers;
+        m_slots[BINDLESS_BINDING_STORAGE_IMAGES].capacity = m_capacity.storage_images;
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Bindless Descriptor Set.");
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // register -- returns the slot index shaders use
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    std::shared_ptr<IIr77Return const> RegisterTexture(VkImageView const& view, VkSampler const& sampler, std::uint32_t& index) {
+        auto const result = DefineSlot(BINDLESS_BINDING_TEXTURES, index);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return UpdateTexture(index, view, sampler);
+    }
+
+    std::shared_ptr<IIr77Return const> RegisterBuffer(VkBuffer const& buffer, VkDeviceSize const& offset, VkDeviceSize const& range,
+                                                      std::uint32_t& index) {
+        auto const result = DefineSlot(BINDLESS_BINDING_BUFFERS, index);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return UpdateBuffer(index, buffer, offset, range);
+    }
+
+    std::shared_ptr<IIr77Return const> RegisterStorageImage(VkImageView const& view, std::uint32_t& index) {
+        auto const result = DefineSlot(BINDLESS_BINDING_STORAGE_IMAGES, index);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return UpdateStorageImage(index, view);
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // update -- rewrite a slot in place. Safe while frames are in flight as long as none of them reads this slot (UPDATE_UNUSED_WHILE_PENDING);
+    // when they might, register a new slot and Release the old one instead.
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    std::shared_ptr<IIr77Return const> UpdateTexture(std::uint32_t const& index, VkImageView const& view, VkSampler const& sampler) {
+        if (index >= m_capacity.textures) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: texture slot out of range.");
+
+        VkDescriptorImageInfo image_info{};
+        image_info.sampler = sampler;
+        image_info.imageView = view;
+        image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        WriteSlot(BINDLESS_BINDING_TEXTURES, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, index, &image_info, nullptr);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> UpdateBuffer(std::uint32_t const& index, VkBuffer const& buffer, VkDeviceSize const& offset,
+                                                    VkDeviceSize const& range) {
+        if (index >= m_capacity.buffers) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: buffer slot out of range.");
+
+        VkDescriptorBufferInfo buffer_info{};
+        buffer_info.buffer = buffer;
+        buffer_info.offset = offset;
+        buffer_info.range = range;
+
+        WriteSlot(BINDLESS_BINDING_BUFFERS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, index, nullptr, &buffer_info);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> UpdateStorageImage(std::uint32_t const& index, VkImageView const& view) {
+        if (index >= m_capacity.storage_images) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: storage image slot out of range.");
+
+        VkDescriptorImageInfo image_info{};
+        image_info.imageView = view;
+        image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        WriteSlot(BINDLESS_BINDING_STORAGE_IMAGES, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, index, &image_info, nullptr);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // release / per frame
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // binding = BINDLESS_BINDING_TEXTURES / _BUFFERS / _STORAGE_IMAGES. The slot is reused only after MAX_FRAMES_IN_FLIGHT Ticks.
+    std::shared_ptr<IIr77Return const> Release(std::uint32_t const& binding, std::uint32_t const& index) {
+        if (binding >= BINDLESS_BINDING_COUNT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: unknown binding.");
+        if (index >= m_slots[binding].next) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: slot was never registered.");
+        if (binding == BINDLESS_BINDING_TEXTURES && index == BINDLESS_PLACEHOLDER_TEXTURE)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: the placeholder texture slot is permanent.");
+
+        m_retired.push_back(Ir77PVRetiredSlot{binding, index, MAX_FRAMES_IN_FLIGHT});
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Once per frame, before recording: returns retired slots no frame in flight can still read to their free lists
+    std::shared_ptr<IIr77Return const> Tick() {
+        std::size_t keep{0};
+
+        for (std::size_t i = 0; i < m_retired.size(); i++) {
+            if (m_retired[i].frames_left > 0) {
+                m_retired[i].frames_left--;
+                m_retired[keep++] = m_retired[i];
+                continue;
             }
+
+            m_slots[m_retired[i].binding].free.push_back(m_retired[i].index);
         }
 
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // UNIFORM_BUFFER / STORAGE_BUFFER -- resolves to the buffer's copy matching each set copy
-    std::shared_ptr<IIr77Return const> BindBuffer(std::uint32_t const& binding, VkDescriptorType const& type, std::shared_ptr<IIr77PVBuffer> buffer) {
-        if (!buffer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: buffer is empty.");
-
-        Ir77PVDescriptorBinding entry{};
-        entry.binding = binding;
-        entry.type = type;
-        entry.buffer = buffer;
-        entry.is_image = false;
-
-        m_bindings[binding] = entry;
+        m_retired.resize(keep);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // COMBINED_IMAGE_SAMPLER -- same image for every copy; fill from the texture class's GetImageInfo
-    std::shared_ptr<IIr77Return const> BindImage(std::uint32_t const& binding, VkDescriptorType const& type, VkDescriptorImageInfo const& image) {
-        Ir77PVDescriptorBinding entry{};
-        entry.binding = binding;
-        entry.type = type;
-        entry.image = image;
-        entry.is_image = true;
+    // Binds the one set at set 0 for a bind point (graphics / compute / ray tracing). Once per command buffer per bind point --
+    // pipeline changes don't disturb it, since every pipeline shares the layout.
+    std::shared_ptr<IIr77Return const> Bind(VkCommandBuffer const& cmd, VkPipelineBindPoint const& bind_point) {
+        VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
+        m_layout->GetPipelineLayout(&pipeline_layout);
 
-        m_bindings[binding] = entry;
+        vkCmdBindDescriptorSets(cmd, bind_point, pipeline_layout, 0, 1, &m_set, 0, nullptr);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // set 0 -- camera, lights, instances, env, bones. Binding numbers must match BindingsGlobal() and set 0 in the shaders.
-    std::shared_ptr<IIr77Return const> BindGlobal(std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>> const& slots, VkDescriptorImageInfo const& env) {
-        auto const bind = [&](std::uint32_t const binding, VkDescriptorType const type, Ir77PVBufferSlot const slot) {
-            auto const found = slots.find(slot);
-            return found != slots.end() && BindBuffer(binding, type, found->second)->ID() == GUIDIr77OperationSucceeded;
-        };
-
-        if (!bind(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, Ir77PVBufferSlot::Camera) || !bind(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Ir77PVBufferSlot::Lights) ||
-            !bind(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Ir77PVBufferSlot::Instances) || !bind(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Ir77PVBufferSlot::Bones))
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: global set is missing a frame buffer.");
-
-        BindImage(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, env);
-
-        return Write();
-    }
-
-    // set 1 -- shadow map, shadow matrices. Binding numbers must match BindingsPass() and set 1 in the shaders.
-    std::shared_ptr<IIr77Return const> BindPass(std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>> const& slots,
-                                                VkDescriptorImageInfo const& shadow_map) {
-        auto const matrices = slots.find(Ir77PVBufferSlot::ShadowMatrices);
-        if (matrices == slots.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: pass set is missing ShadowMatrices.");
-
-        BindImage(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, shadow_map);
-        BindBuffer(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, matrices->second);
-
-        return Write();
-    }
-
-    // Writes every binding into every copy. Call after all Bind* calls, and again after a rebind.
-    // Don't call while any copy may still be in use by the GPU -- use WriteCopy for the current frame instead.
-    std::shared_ptr<IIr77Return const> Write() {
-        for (std::uint32_t i = 0; i < m_sets.size(); i++) {
-            auto result = WriteCopy(i);
-            if (result->ID() != GUIDIr77OperationSucceeded) return result;
-        }
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // queries
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    std::shared_ptr<IIr77Return const> GetSet(VkDescriptorSet* set) {
+        *set = m_set;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Writes every binding into one copy -- safe for the frame whose fence has signalled
-    std::shared_ptr<IIr77Return const> WriteCopy(std::uint32_t const& copy) {
-        if (m_sets.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: CreateSets not called.");
-        if (copy >= m_sets.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: copy index out of range.");
-        if (m_bindings.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: no bindings.");
-
-        VkDevice device;
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // steps
+    // -------------------------------------------------------------------------------------------------------------------------------------
+   private:
+    std::shared_ptr<IIr77Return const> DefinePool() {
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
-        // reserved up front so the pointers in writes stay valid until vkUpdateDescriptorSets
-        std::vector<VkDescriptorBufferInfo> buffer_infos{};
-        std::vector<VkDescriptorImageInfo> image_infos{};
-        std::vector<VkWriteDescriptorSet> writes{};
+        std::array<VkDescriptorPoolSize, BINDLESS_BINDING_COUNT> pool_sizes{};
+        pool_sizes[BINDLESS_BINDING_TEXTURES] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, m_capacity.textures};
+        pool_sizes[BINDLESS_BINDING_BUFFERS] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, m_capacity.buffers};
+        pool_sizes[BINDLESS_BINDING_STORAGE_IMAGES] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, m_capacity.storage_images};
 
-        buffer_infos.reserve(m_bindings.size());
-        image_infos.reserve(m_bindings.size());
-        writes.reserve(m_bindings.size());
+        VkDescriptorPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+        pool_info.maxSets = 1;
+        pool_info.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
+        pool_info.pPoolSizes = pool_sizes.data();
 
-        for (auto const& [binding, entry] : m_bindings) {
-            VkWriteDescriptorSet write{};
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = m_sets[copy];
-            write.dstBinding = binding;
-            write.dstArrayElement = 0;
-            write.descriptorType = entry.type;
-            write.descriptorCount = 1;
+        if (vkCreateDescriptorPool(device, &pool_info, nullptr, &m_pool) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: vkCreateDescriptorPool failed.");
 
-            if (entry.is_image) {
-                image_infos.push_back(entry.image);
-                write.pImageInfo = &image_infos.back();
-            } else {
-                VkDescriptorBufferInfo info{};
-                if (entry.buffer->GetBufferInfo(copy, &info)->ID() != GUIDIr77OperationSucceeded) {
-                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: buffer info failed.");
-                }
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
 
-                buffer_infos.push_back(info);
-                write.pBufferInfo = &buffer_infos.back();
-            }
+    std::shared_ptr<IIr77Return const> DefineSet() {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
 
-            writes.push_back(write);
+        VkDescriptorSetLayout set_layout{VK_NULL_HANDLE};
+        m_layout->GetDescriptorSetLayout(&set_layout);
+
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = m_pool;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &set_layout;
+
+        if (vkAllocateDescriptorSets(device, &alloc_info, &m_set) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: vkAllocateDescriptorSets failed.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // A free (recycled) slot first, otherwise the next unused one
+    std::shared_ptr<IIr77Return const> DefineSlot(std::uint32_t const& binding, std::uint32_t& index) {
+        if (m_set == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: CreateDescriptorSet not called.");
+
+        auto& slots = m_slots[binding];
+
+        if (!slots.free.empty()) {
+            index = slots.free.back();
+            slots.free.pop_back();
+            return Ir77RETURN<Ir77OperationSucceeded>();
         }
 
-        vkUpdateDescriptorSets(device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        if (slots.next >= slots.capacity)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: bindless binding " + std::to_string(binding) + " is full.");
 
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // Single-copy sets ignore the index so callers can always pass the frame index
-    std::shared_ptr<IIr77Return const> GetSet(std::uint32_t const& copy, VkDescriptorSet* set) {
-        std::uint32_t const index = (m_sets.size() == 1) ? 0 : copy;
-        if (index >= m_sets.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: copy index out of range.");
-
-        *set = m_sets[index];
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetSetIndex(std::uint32_t* set_index) {
-        *set_index = m_set_index;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetCopies(std::uint32_t* copies) {
-        *copies = static_cast<std::uint32_t>(m_sets.size());
+        index = slots.next++;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
-    std::shared_ptr<IIr77PVDevice> m_device;
+    void WriteSlot(std::uint32_t const binding, VkDescriptorType const type, std::uint32_t const index, VkDescriptorImageInfo const* image_info,
+                   VkDescriptorBufferInfo const* buffer_info) {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
 
-    std::shared_ptr<IIr77PVLayout> m_layout;
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = m_set;
+        write.dstBinding = binding;
+        write.dstArrayElement = index;
+        write.descriptorCount = 1;
+        write.descriptorType = type;
+        write.pImageInfo = image_info;
+        write.pBufferInfo = buffer_info;
 
-    std::uint32_t m_set_index{0};
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
 
-    std::map<std::uint32_t, Ir77PVDescriptorBinding> m_bindings{};
+   private:
+    struct Ir77PVSlotAllocator {
+        std::uint32_t capacity{0};
+        std::uint32_t next{0};                // first never-used slot
+        std::vector<std::uint32_t> free{};    // released slots, past their frames-in-flight wait
+    };
 
-    std::vector<VkDescriptorSet> m_sets{};
+    struct Ir77PVRetiredSlot {
+        std::uint32_t binding{0};
+        std::uint32_t index{0};
+        std::uint32_t frames_left{0};
+    };
+
+    std::shared_ptr<IIr77PVDevice> m_device{};
+
+    std::shared_ptr<IIr77PVLayout> m_layout{};
+
+    Ir77PVBindlessCapacity m_capacity{};
+
+    VkDescriptorPool m_pool{VK_NULL_HANDLE};
+
+    VkDescriptorSet m_set{VK_NULL_HANDLE};
+
+    std::array<Ir77PVSlotAllocator, BINDLESS_BINDING_COUNT> m_slots{};
+
+    std::vector<Ir77PVRetiredSlot> m_retired{};
 };
+
 }  // namespace NSIr77PeregrineV

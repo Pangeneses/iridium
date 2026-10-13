@@ -82,17 +82,17 @@ class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77P
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // One overlay per window. Requires the context's CreateLayouts and CreateSwapchains;
-    // call before Ir77PVPaint::CreateCommandBuffers so Paint can wire the overlays in.
+    // One overlay per window, each with a texture slot in the device's bindless table. Requires the context's CreateLayouts and
+    // CreateSwapchains; call before Ir77PVPaint::CreateCommandBuffers so Paint can wire the overlays in.
     std::shared_ptr<IIr77Return const> CreateOverlays() {
         std::uint64_t const device_id = m_context->m_current_device;
         std::size_t const windows = m_context->m_windows.at(device_id).size();
 
         if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: too many windows.");
 
-        std::shared_ptr<IIr77PVLayout> layout_cef{};
-        if (m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: CEF layout not created -- call CreateLayouts first.");
+        std::shared_ptr<IIr77PVDescriptorSet> table{};
+        if (m_context->GetDescriptorSet(table)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: bindless table not created -- call CreateLayouts first.");
 
         std::vector<std::shared_ptr<IIr77PVOverlay>> overlays{};
 
@@ -105,7 +105,7 @@ class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77P
 
             overlay->SetSwapchain(m_context->m_swapchains.at(device_id).at(w));
 
-            overlay->SetLayout(layout_cef);
+            overlay->SetDescriptorSet(table);
 
             if (overlay->CreateResources()->ID() != GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCEF: overlay creation failed.");

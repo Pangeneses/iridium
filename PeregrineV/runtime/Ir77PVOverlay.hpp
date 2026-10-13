@@ -25,7 +25,7 @@
 
 #include "../interface/IIr77PVDevice.hpp"
 #include "../interface/IIr77PVSwapchain.hpp"
-#include "../interface/IIr77PVLayout.hpp"
+#include "../interface/IIr77PVDescriptorSet.hpp"
 #include "../interface/IIr77PVOverlay.hpp"
 
 using namespace NSIr77RT;
@@ -33,13 +33,13 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 // =============================================================================================================================================
-// Ir77PVOverlay -- one window's CEF texture: staging buffer, sampled image, view, sampler, descriptor set (CEF layout, set 0, binding 0)
+// Ir77PVOverlay -- one window's CEF texture: staging buffer, sampled image, view, sampler, one bindless texture slot
 // and its own upload command buffer + fence.
 //
-//   create:    SetDevice / SetAllocator / SetSwapchain / SetLayout -> CreateResources (image sized to the swapchain)
+//   create:    SetDevice / SetAllocator / SetSwapchain / SetDescriptorSet -> CreateResources (image sized to the swapchain)
 //   per paint: UploadFrame -- grow-only: the image is reallocated only when a frame doesn't fit (rounded up to 512, clamped to the
 //              device limit); smaller frames go to the top-left and the rest of the image is cleared to transparent
-//   draw:      GetDescriptorSet; skip while IsResizing or before HasEverUploaded
+//   draw:      GetTextureSlot -> pc.user[0] for the CEF shaders; skip while IsResizing or before HasEverUploaded
 // =============================================================================================================================================
 class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::enable_shared_from_this<Ir77PVOverlay> {
    public:
@@ -63,6 +63,9 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         vkDeviceWaitIdle(device);
 
         DestroyExtentResources(device);
+
+        // the slot goes back to the table; it is reused only after the frames in flight
+        if (m_descriptor_set && m_texture_slot != BINDLESS_NO_SLOT) m_descriptor_set->Release(BINDLESS_BINDING_TEXTURES, m_texture_slot);
 
         // extent-independent -- destroyed only here, never on resize
         if (m_sampler != VK_NULL_HANDLE) vkDestroySampler(device, m_sampler, nullptr);
@@ -133,8 +136,9 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout_cef) {
-        m_layout_cef = layout_cef;
+    // the device's bindless table -- the overlay image gets one texture slot in it
+    std::shared_ptr<IIr77Return const> SetDescriptorSet(std::shared_ptr<IIr77PVDescriptorSet> descriptor_set) {
+        m_descriptor_set = descriptor_set;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -152,19 +156,16 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
     std::shared_ptr<IIr77Return const> CreateResources() {
         if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: device not set.");
         if (!m_swapchain) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: swapchain not set.");
-        if (!m_layout_cef) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: CEF layout not set.");
+        if (!m_descriptor_set) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: SetDescriptorSet not called.");
         if (m_allocator == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: allocator not set.");
 
         m_swapchain->GetSwapchainExtents(m_image_extent);
 
-        // extent-independent first -- the descriptor write in DefineExtentResources needs the sampler and the set
+        // extent-independent first -- the slot write in DefineExtentResources needs the sampler
         auto result = DefineSampler();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         result = DefineUploadCommands();
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        result = DefineDescriptorSet();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         result = DefineExtentResources();
@@ -260,8 +261,9 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetDescriptorSet(VkDescriptorSet* descriptor_set) {
-        *descriptor_set = m_descriptor_set;
+    // bindless texture slot of the overlay image -- the same slot for the overlay's whole life, rewritten when the image grows
+    std::shared_ptr<IIr77Return const> GetTextureSlot(std::uint32_t& slot) {
+        slot = m_texture_slot;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -348,21 +350,11 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // CEF layout has a single set at index 0; it survives every resize -- only its image binding is rewritten
-    std::shared_ptr<IIr77Return const> DefineDescriptorSet() {
-        if (m_descriptor_set != VK_NULL_HANDLE) return Ir77RETURN<Ir77OperationSucceeded>();
-
-        if (m_layout_cef->AllocateSet(0, &m_descriptor_set)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: descriptor set allocation failed.");
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // -------------------------------------------------------------------------------------------------------------------------------------
     // define -- extent-dependent (rebuilt when the image grows or Resize runs)
     // -------------------------------------------------------------------------------------------------------------------------------------
 
-    // staging + image + view at m_image_extent, then the descriptor repointed at the new view
+    // staging + image + view at m_image_extent, then the texture slot pointed at the new view
     std::shared_ptr<IIr77Return const> DefineExtentResources() {
         auto result = DefineStagingBuffer();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
@@ -373,7 +365,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         result = DefineImageView();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        return DefineDescriptorImage();
+        return DefineTextureSlot();
     }
 
     // Grow-only: reallocates only when the frame doesn't fit -- rounded up to 512 so a window drag crosses few boundaries, clamped to the
@@ -470,27 +462,11 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // binding 0 -> the current view; the layout is what the image is in by the time any draw samples it
-    std::shared_ptr<IIr77Return const> DefineDescriptorImage() {
-        VkDevice device{VK_NULL_HANDLE};
-        m_device->GetDevice(&device);
+    // First call registers the slot; later ones (image grew / Resize) rewrite it in place -- safe, the device is idle on those paths
+    std::shared_ptr<IIr77Return const> DefineTextureSlot() {
+        if (m_texture_slot == BINDLESS_NO_SLOT) return m_descriptor_set->RegisterTexture(m_image_view, m_sampler, m_texture_slot);
 
-        VkDescriptorImageInfo image_info{};
-        image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        image_info.imageView = m_image_view;
-        image_info.sampler = m_sampler;
-
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = m_descriptor_set;
-        write.dstBinding = 0;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.descriptorCount = 1;
-        write.pImageInfo = &image_info;
-
-        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
+        return m_descriptor_set->UpdateTexture(m_texture_slot, m_image_view, m_sampler);
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -566,7 +542,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
     // destroy
     // -------------------------------------------------------------------------------------------------------------------------------------
 
-    // extent-dependent only -- sampler, pool, command buffer, fence and descriptor set survive a resize
+    // extent-dependent only -- sampler, pool, command buffer, fence and texture slot survive a resize
     void DestroyExtentResources(VkDevice device) {
         if (m_image_view != VK_NULL_HANDLE) vkDestroyImageView(device, m_image_view, nullptr);
         if (m_image != VK_NULL_HANDLE) vmaDestroyImage(m_allocator, m_image, m_image_allocation);
@@ -591,7 +567,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
 
     std::shared_ptr<IIr77PVSwapchain> m_swapchain{};
 
-    std::shared_ptr<IIr77PVLayout> m_layout_cef{};
+    std::shared_ptr<IIr77PVDescriptorSet> m_descriptor_set{};
 
     VmaAllocator m_allocator{VK_NULL_HANDLE};
 
@@ -625,6 +601,6 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
 
     VkFence m_upload_fence{VK_NULL_HANDLE};
 
-    VkDescriptorSet m_descriptor_set{VK_NULL_HANDLE};
+    std::uint32_t m_texture_slot{BINDLESS_NO_SLOT};
 };
 }  // namespace NSIr77PeregrineV

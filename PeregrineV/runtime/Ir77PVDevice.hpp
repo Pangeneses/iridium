@@ -240,15 +240,19 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-/******************************************************************************************************************************************************************************/
+    /******************************************************************************************************************************************************************************/
 
     // Features go through VkPhysicalDeviceFeatures2 in pNext, so extension feature structs can be chained after it
     std::shared_ptr<IIr77Return const> DefineDeviceInfo() {
         if (m_extensions.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: QueryDeviceExtensionSupport not called.");
 
         // query: features2 -> mesh -> vulkan11
+        VkPhysicalDeviceVulkan12Features v12_supported{};
+        v12_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+
         VkPhysicalDeviceVulkan11Features v11_supported{};
         v11_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        v11_supported.pNext = &v12_supported;
 
         VkPhysicalDeviceMeshShaderFeaturesEXT mesh_supported{};
         mesh_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
@@ -261,6 +265,15 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
         if (!supported.features.multiDrawIndirect) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: multiDrawIndirect not supported.");
         if (!supported.features.drawIndirectFirstInstance) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: drawIndirectFirstInstance not supported.");
+
+        // bindless -- one descriptor set of large, partially bound, update-after-bind arrays (Ir77PVLayout)
+        bool const bindless = v12_supported.runtimeDescriptorArray && v12_supported.descriptorBindingPartiallyBound &&
+                              v12_supported.descriptorBindingUpdateUnusedWhilePending && v12_supported.shaderSampledImageArrayNonUniformIndexing &&
+                              v12_supported.shaderStorageBufferArrayNonUniformIndexing && v12_supported.shaderStorageImageArrayNonUniformIndexing &&
+                              v12_supported.descriptorBindingSampledImageUpdateAfterBind && v12_supported.descriptorBindingStorageBufferUpdateAfterBind &&
+                              v12_supported.descriptorBindingStorageImageUpdateAfterBind;
+
+        if (!bindless) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: descriptor indexing (bindless) not supported.");
 
         m_phys_device_features = VkPhysicalDeviceFeatures{};
         m_phys_device_features.samplerAnisotropy = supported.features.samplerAnisotropy;
@@ -283,11 +296,24 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_mesh_features.meshShader = m_mesh_shading ? VK_TRUE : VK_FALSE;
         m_mesh_features.pNext = nullptr;
 
-        // enable: create info -> features2 -> vulkan11 -> [mesh]
+        // enable: create info -> features2 -> vulkan11 -> vulkan12 -> [mesh]
         m_vulkan11 = VkPhysicalDeviceVulkan11Features{};
         m_vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         m_vulkan11.shaderDrawParameters = v11_supported.shaderDrawParameters;
-        m_vulkan11.pNext = m_mesh_shading ? &m_mesh_features : nullptr;
+        m_vulkan11.pNext = &m_vulkan12;
+
+        m_vulkan12 = VkPhysicalDeviceVulkan12Features{};
+        m_vulkan12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        m_vulkan12.runtimeDescriptorArray = VK_TRUE;
+        m_vulkan12.descriptorBindingPartiallyBound = VK_TRUE;
+        m_vulkan12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+        m_vulkan12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        m_vulkan12.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
+        m_vulkan12.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
+        m_vulkan12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        m_vulkan12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+        m_vulkan12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+        m_vulkan12.pNext = m_mesh_shading ? &m_mesh_features : nullptr;
 
         m_features2 = VkPhysicalDeviceFeatures2{};
         m_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -321,7 +347,16 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
             vkGetDeviceQueue(m_device, m_queue_families[i].create_info.queueFamilyIndex, 0, &m_queue_families[i].queue);
         }
 
-        vkGetPhysicalDeviceProperties(m_phys_device, &m_phys_device_properties);
+        m_vulkan12_properties = VkPhysicalDeviceVulkan12Properties{};
+        m_vulkan12_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES;
+
+        VkPhysicalDeviceProperties2 properties2{};
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties2.pNext = &m_vulkan12_properties;
+
+        vkGetPhysicalDeviceProperties2(m_phys_device, &properties2);
+
+        m_phys_device_properties = properties2.properties;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -350,6 +385,13 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     // true only when VK_EXT_mesh_shader is enabled with task + mesh stages
     std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) {
         enabled = m_mesh_shading;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // descriptor-indexing limits -- Ir77PVLayout sizes the bindless arrays from these
+    std::shared_ptr<IIr77Return const> GetVulkan12Properties(VkPhysicalDeviceVulkan12Properties& properties) {
+        properties = m_vulkan12_properties;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -441,6 +483,10 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     VkPhysicalDeviceMeshShaderFeaturesEXT m_mesh_features{};
 
     VkPhysicalDeviceVulkan11Features m_vulkan11{};
+
+    VkPhysicalDeviceVulkan12Features m_vulkan12{};
+
+    VkPhysicalDeviceVulkan12Properties m_vulkan12_properties{};    
 
     bool m_mesh_shading{false};
 

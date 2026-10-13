@@ -20,7 +20,7 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
 #include "../interface/IIr77PVPipelineCPT.hpp"
-#include "../interface/IIr77PVLayoutCPT.hpp"
+#include "../interface/IIr77PVLayout.hpp"
 #include "../interface/IIr77PVShader.hpp"
 
 using namespace NSIr77RT;
@@ -106,7 +106,7 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayoutCPT> layout) {
+    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout) {
         m_layout = layout;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -225,7 +225,7 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
    private:
     std::shared_ptr<IIr77PVDevice> m_device{};
 
-    std::shared_ptr<IIr77PVLayoutCPT> m_layout{};
+    std::shared_ptr<IIr77PVLayout> m_layout{};
 
     std::shared_ptr<IIr77PVShader> m_shader_stack{};
 

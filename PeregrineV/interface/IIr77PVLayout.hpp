@@ -1,10 +1,7 @@
 #pragma once
-#include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
 
-#include <cstdint>
+#include <vulkan/vulkan.h>
+
 #include <memory>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -18,28 +15,22 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// THE pipeline layout -- one per device, shared by every graphics, compute and ray pipeline.
+// set 0: bindless textures / storage buffers / storage images. Push constants: Ir77PVPushConstants, every stage.
 typedef struct IIr77PVLayout : virtual public IIr77Enlisted {
     IIr77PVLayout() = default;
 
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVLayoutKind const& kind) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetMeshShading(bool const& enabled) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> CreateLayout(std::uint32_t const& pool_capacity) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> AllocateSet(std::uint32_t const& set_index, VkDescriptorSet* set) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetKind(Ir77PVLayoutKind* kind) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetSetCount(std::uint32_t* count) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetDescriptorSetLayout(std::uint32_t const& set_index, VkDescriptorSetLayout* layout) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> GetDescriptorPool(VkDescriptorPool* pool) = 0;
+    // Sizes the arrays from the device limits, then creates the set layout and the pipeline layout. Once per device.
+    virtual std::shared_ptr<IIr77Return const> CreateLayout() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipelineLayout(VkPipelineLayout* pipeline_layout) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetDescriptorSetLayout(VkDescriptorSetLayout* set_layout) = 0;
+
+    // Array sizes actually in use -- BINDLESS_* clamped to the device's update-after-bind limits. Valid after CreateLayout.
+    virtual std::shared_ptr<IIr77Return const> GetCapacity(Ir77PVBindlessCapacity& capacity) = 0;
 
     virtual ~IIr77PVLayout() = default;
 }* pIIr77PVLayout;

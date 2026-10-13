@@ -24,6 +24,7 @@
 
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
+#include "../interface/IIr77PVBuffer.hpp"
 #include "../interface/IIr77PVCmdBuffer.hpp"
 
 using namespace NSIr77RT;
@@ -33,7 +34,10 @@ namespace NSIr77PeregrineV {
 // =============================================================================================================================================
 // Ir77PVCmdBuffer -- one window's frame loop: command pool and buffers, sync objects, recording, submit and present.
 //
-//   configure: SetDevice / SetSwapchain / SetRenderPass / SetShadowTarget / SetGlobalSet / SetPassSet / SetOverlay / SetClearColor / SetCompute*
+//   configure: SetDevice / SetSwapchain / SetRenderPass / SetShadowTarget / SetLayout / SetDescriptorSet / SetFrameSlots / SetMaterialTable
+//              / SetOverlay / SetClearColor / SetCompute*
+//
+// Bindless: the one descriptor set is bound once per bind point per command buffer; every draw / dispatch gets Ir77PVPushConstants.
 //   create:    CreateCommandBuffer -> DefineExtensionFunctions -> DefineCommandPool -> DefineCommandBuffers -> DefineSyncObjects
 //   per frame: SetCurrentFrame -> WaitForFence -> AcquireNextImage -> ResetFence -> RecordCommandBuffer -> SubmitFrame -> PresentFrame
 //
@@ -146,25 +150,37 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Set 0 -- camera, lights, instances, env map. Bound once per pipeline-layout change.
-    std::shared_ptr<IIr77Return const> SetGlobalSet(std::shared_ptr<IIr77PVDescriptorSet> global_set) {
-        m_global_set = global_set;
+    // The device's one pipeline layout -- push constants and the set bind go through it
+    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout) {
+        m_layout = layout;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Set 1 -- shadow map + shadow matrices. Main-pass Static / Skinned / Mesh only.
-    std::shared_ptr<IIr77Return const> SetPassSet(std::shared_ptr<IIr77PVDescriptorSet> pass_set) {
-        m_pass_set = pass_set;
+    // The device's one bindless table
+    std::shared_ptr<IIr77Return const> SetDescriptorSet(std::shared_ptr<IIr77PVDescriptorSet> descriptor_set) {
+        m_descriptor_set = descriptor_set;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetOverlay(std::shared_ptr<IIr77PVOverlay> overlay, std::shared_ptr<IIr77PVPipeline> pipeline,
-                                                  std::shared_ptr<IIr77PVLayout> layout) {
+    // This window's frame table slot + the slots it lists, one entry per frame in flight (Ir77PeregrineV::GetFrameSlots)
+    std::shared_ptr<IIr77Return const> SetFrameSlots(std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT> const& frame_slots) {
+        m_frame_slots = frame_slots;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Buffer slot of the device's material table (Ir77PeregrineV::GetMaterialTableSlot)
+    std::shared_ptr<IIr77Return const> SetMaterialTable(std::uint32_t const& slot) {
+        m_material_table = slot;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetOverlay(std::shared_ptr<IIr77PVOverlay> overlay, std::shared_ptr<IIr77PVPipeline> pipeline) {
         m_overlay = overlay;
         m_overlay_pipeline = pipeline;
-        m_overlay_layout = layout;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -181,14 +197,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetComputeLayout(std::shared_ptr<IIr77PVLayoutCPT> layout) {
-        m_compute_layout = layout;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> SetComputeSets(std::vector<std::shared_ptr<IIr77PVDescriptorSet>> const& sets) {
-        m_compute_sets = sets;
+    // What the compute shader reads -- its buffer / image slots go in user[] or the other index fields. frame / materials are filled in.
+    std::shared_ptr<IIr77Return const> SetComputePush(Ir77PVPushConstants const& push) {
+        m_compute_push = push;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -204,17 +215,15 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     /*
     // -------------------------------------------------------------------------------------------------------------------------------------
     // ray tracing / acceleration structures
-    // Needs: IIr77PVPipelineRT (owns the SBT), IIr77PVLayoutRT, IIr77PVAccelStructure, and the device extensions
+    // Needs: IIr77PVPipelineRT (owns the SBT), IIr77PVAccelStructure, and the device extensions
     //   VK_KHR_acceleration_structure, VK_KHR_ray_tracing_pipeline, VK_KHR_deferred_host_operations, VK_KHR_buffer_device_address.
     // Resolve m_trace_rays / m_build_accel in DefineExtensionFunctions.
     // -------------------------------------------------------------------------------------------------------------------------------------
 
-    // Ray-tracing pipeline + layout + its sets (set 0 usually: TLAS, output image, camera)
-    std::shared_ptr<IIr77Return const> SetRayTracing(std::shared_ptr<IIr77PVPipelineRT> pipeline, std::shared_ptr<IIr77PVLayoutRT> layout,
-                                                     std::vector<std::shared_ptr<IIr77PVDescriptorSet>> const& sets) {
+    // Ray-tracing pipeline (built on the shared layout) + what its shaders read -- TLAS / output image / instance table slots in push.user[]
+    std::shared_ptr<IIr77Return const> SetRayTracing(std::shared_ptr<IIr77PVPipelineRT> pipeline, Ir77PVPushConstants const& push) {
         m_ray_pipeline = pipeline;
-        m_ray_layout = layout;
-        m_ray_sets = sets;
+        m_ray_push = push;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -340,6 +349,10 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         if (m_render_passes.count(Ir77PVRenderPassKind::Main) == 0 || !m_swapchain)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: main render pass or swapchain not set.");
 
+        if (!m_layout || !m_descriptor_set) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: SetLayout / SetDescriptorSet not called.");
+
+        if (m_frame_slots[m_current_frame].table == BINDLESS_NO_SLOT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: SetFrameSlots not called.");
+
         auto result = DefinePresentSemaphores();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
@@ -352,6 +365,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
         if (vkBeginCommandBuffer(cmd, &begin_info) != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: vkBeginCommandBuffer failed.");
+
+        // one set for everything -- bound once here, untouched by pipeline switches
+        m_descriptor_set->Bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
 
         // RecordCompute(cmd), RecordAccelBuild(cmd), RecordRayTrace(cmd) go here once those paths are enabled
 
@@ -560,26 +576,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // recording
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
-    struct Ir77PVPushShadow {
-        std::array<float, 16> model{};
-        std::uint32_t light_index{0};
-    };
-
-    struct Ir77PVPushMesh {
-        std::uint32_t draw_base{0};
-    };
-
-    // must match the push ranges in Ir77PVLayout::DefineBindings
-    static_assert(sizeof(Ir77PVPushShadow) == sizeof(float) * 16 + sizeof(std::uint32_t), "Shadow push range mismatch");
-    static_assert(sizeof(Ir77PVPushMesh) == sizeof(std::uint32_t), "Mesh push range mismatch");
-
     // What is currently bound, so consecutive draws sharing state skip the rebind
     struct Ir77PVBindState {
         VkPipeline pipeline{VK_NULL_HANDLE};
-        VkPipelineLayout layout{VK_NULL_HANDLE};
-        VkDescriptorSet material{VK_NULL_HANDLE};
-        VkDescriptorSet bones{VK_NULL_HANDLE};
-        VkDescriptorSet meshlets{VK_NULL_HANDLE};
         VkBuffer vertex{VK_NULL_HANDLE};
         VkBuffer index{VK_NULL_HANDLE};
         VkIndexType index_type{VK_INDEX_TYPE_UINT32};
@@ -660,27 +659,20 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     // Outside any render pass. The barrier covers what compute writes for the draws: indirect commands, vertex data, storage buffers.
     std::shared_ptr<IIr77Return const> RecordCompute(VkCommandBuffer cmd) {
-        if (!m_compute_pipeline || !m_compute_layout) return Ir77RETURN<Ir77OperationSucceeded>();  // no compute work -- not an error
+        if (!m_compute_pipeline) return Ir77RETURN<Ir77OperationSucceeded>();  // no compute work -- not an error
 
         VkPipeline pipeline{VK_NULL_HANDLE};
         m_compute_pipeline->GetPipeline(&pipeline);
 
-        VkPipelineLayout layout{VK_NULL_HANDLE};
-        m_compute_layout->GetPipelineLayout(&layout);
-
-        std::uint32_t set_count{0};
-        m_compute_layout->GetSetCount(&set_count);
-
-        if (m_compute_sets.size() < set_count) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: compute sets missing for the compute layout.");
-
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
-        for (std::uint32_t i = 0; i < set_count; i++) {
-            VkDescriptorSet set{VK_NULL_HANDLE};
-            m_compute_sets[i]->GetSet(m_current_frame, &set);
+        m_descriptor_set->Bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
 
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, i, 1, &set, 0, nullptr);
-        }
+        Ir77PVPushConstants push{m_compute_push};
+        push.frame = m_frame_slots[m_current_frame].table;
+        push.materials = m_material_table;
+
+        Push(cmd, push);
 
         vkCmdDispatch(cmd, m_compute_groups_x, m_compute_groups_y, m_compute_groups_z);
 
@@ -724,13 +716,10 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     // Raygen writes m_ray_target; the main pass samples it. Outside any render pass.
     std::shared_ptr<IIr77Return const> RecordRayTrace(VkCommandBuffer cmd) {
-        if (!m_ray_pipeline || !m_ray_layout || !m_trace_rays || m_ray_target == VK_NULL_HANDLE) return Ir77RETURN<Ir77OperationSucceeded>();
+        if (!m_ray_pipeline || !m_trace_rays || m_ray_target == VK_NULL_HANDLE) return Ir77RETURN<Ir77OperationSucceeded>();
 
         VkPipeline pipeline{VK_NULL_HANDLE};
         m_ray_pipeline->GetPipeline(&pipeline);
-
-        VkPipelineLayout layout{VK_NULL_HANDLE};
-        m_ray_layout->GetPipelineLayout(&layout);
 
         VkStridedDeviceAddressRegionKHR raygen{};
         VkStridedDeviceAddressRegionKHR miss{};
@@ -754,12 +743,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline);
 
-        for (std::uint32_t i = 0; i < m_ray_sets.size(); i++) {
-            VkDescriptorSet set{VK_NULL_HANDLE};
-            m_ray_sets[i]->GetSet(m_current_frame, &set);
+        m_descriptor_set->Bind(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR);
 
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, layout, i, 1, &set, 0, nullptr);
-        }
+        Push(cmd, m_ray_push);  // TLAS / output image / instance table slots in user[]
 
         m_trace_rays(cmd, &raygen, &miss, &hit, &callable, m_ray_extent.width, m_ray_extent.height, 1);
 
@@ -776,87 +762,43 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     }
     */
 
-    // Set 0 global and set 1 pass, rebound whenever the pipeline layout changes
-    void BindFrameSets(VkCommandBuffer cmd, VkPipelineLayout layout, Ir77PVLayoutKind const& kind) {
-        if (kind == Ir77PVLayoutKind::CEF) return;
-
-        if (m_global_set) {
-            VkDescriptorSet global{VK_NULL_HANDLE};
-            m_global_set->GetSet(m_current_frame, &global);
-
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &global, 0, nullptr);
-        }
-
-        if (UsesPassSet(kind) && m_pass_set) {
-            VkDescriptorSet pass{VK_NULL_HANDLE};
-            m_pass_set->GetSet(m_current_frame, &pass);
-
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &pass, 0, nullptr);
-        }
-    }
-
-    // Pipeline, layout and set binds are skipped when unchanged from the previous item.
-    // Mesh items pull geometry from set 3 and dispatch task groups; everything else binds vertex / index and draws.
+    // Pipeline and vertex / index binds are skipped when unchanged from the previous item; the set never changes.
+    // Mesh items read geometry from buffer slots and dispatch task groups; everything else binds vertex / index and draws.
     void RecordDraws(VkCommandBuffer cmd, std::vector<Ir77PVDrawItem> const& draws) {
         Ir77PVBindState state{};
 
         for (auto const& item : draws) {
-            if (!item.pipeline || !item.layout) continue;
+            if (!item.pipeline) continue;
 
             VkPipeline pipeline{VK_NULL_HANDLE};
             item.pipeline->GetPipeline(&pipeline);
 
-            VkPipelineLayout layout{VK_NULL_HANDLE};
-            item.layout->GetPipelineLayout(&layout);
+            if (pipeline == VK_NULL_HANDLE) continue;
 
-            if (pipeline == VK_NULL_HANDLE || layout == VK_NULL_HANDLE) continue;
+            Ir77PVPipelineKind kind{Ir77PVPipelineKind::Static};
+            item.pipeline->GetKind(&kind);
 
-            Ir77PVLayoutKind kind{Ir77PVLayoutKind::Static};
-            item.layout->GetKind(&kind);
+            bool const mesh{kind == Ir77PVPipelineKind::Mesh};
 
-            bool const mesh{IsMeshKind(kind)};
-
-            // mesh items need the extension loaded and a meshlet set; raster items need a vertex buffer
-            if (mesh ? (!m_draw_mesh_tasks || !item.meshlets) : !item.vertex) continue;
+            // mesh items need the extension loaded and their meshlet slots; raster items need a vertex buffer
+            if (mesh ? (!m_draw_mesh_tasks || item.meshlet_slots[0] == BINDLESS_NO_SLOT) : !item.vertex) continue;
 
             if (pipeline != state.pipeline) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 state.pipeline = pipeline;
             }
 
-            // a new layout invalidates every set bound above 0 / 1
-            if (layout != state.layout) {
-                BindFrameSets(cmd, layout, kind);
-                state.layout = layout;
-                state.material = VK_NULL_HANDLE;
-                state.bones = VK_NULL_HANDLE;
-                state.meshlets = VK_NULL_HANDLE;
-            }
+            Push(cmd, ItemPush(kind, item));
 
-            if (UsesMaterialSet(kind) && item.material) BindSetIfChanged(cmd, layout, 2, item.material, state.material);
-
-            // bones -- set 3 Skinned, set 1 ShadowSkinned
-            std::uint32_t const bones_index{BonesSetIndex(kind)};
-            if (bones_index != NO_SET && item.bones) BindSetIfChanged(cmd, layout, bones_index, item.bones, state.bones);
-
-            if (mesh) {
-                RecordMeshDraw(cmd, layout, item, state);
-                continue;
-            }
-
-            RecordRasterDraw(cmd, layout, kind, item, state);
+            if (mesh)
+                RecordMeshDraw(cmd, item);
+            else
+                RecordRasterDraw(cmd, item, state);
         }
     }
 
-    // Set 3 meshlets, task/mesh push constant, no vertex / index binding
-    void RecordMeshDraw(VkCommandBuffer cmd, VkPipelineLayout layout, Ir77PVDrawItem const& item, Ir77PVBindState& state) {
-        BindSetIfChanged(cmd, layout, 3, item.meshlets, state.meshlets);
-
-        Ir77PVPushMesh push{};
-        push.draw_base = item.draw_base;
-
-        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(Ir77PVPushMesh), &push);
-
+    // Task groups over the item's meshlets -- direct, or from its indirect buffer
+    void RecordMeshDraw(VkCommandBuffer cmd, Ir77PVDrawItem const& item) {
         if (item.indirect) {
             VkBuffer indirect{VK_NULL_HANDLE};
             item.indirect->GetBuffer(m_current_frame, &indirect);
@@ -867,18 +809,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         }
     }
 
-    // Model push constant, vertex / optional index binding, then direct or indirect draw. Without an index buffer, index_count is the vertex count.
-    void RecordRasterDraw(VkCommandBuffer cmd, VkPipelineLayout layout, Ir77PVLayoutKind const& kind, Ir77PVDrawItem const& item, Ir77PVBindState& state) {
-        if (IsShadowKind(kind)) {
-            Ir77PVPushShadow push{};
-            push.model = item.model;
-            push.light_index = item.light_index;
-
-            vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Ir77PVPushShadow), &push);
-        } else {
-            vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16, item.model.data());
-        }
-
+    // Vertex / optional index binding, then direct or indirect draw. Without an index buffer, index_count is the vertex count.
+    void RecordRasterDraw(VkCommandBuffer cmd, Ir77PVDrawItem const& item, Ir77PVBindState& state) {
         VkBuffer vertex{VK_NULL_HANDLE};
         item.vertex->GetBuffer(m_current_frame, &vertex);
 
@@ -917,8 +849,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     }
 
     // Browser composite, drawn last over the scene. Skipped while the overlay is resizing or before its first upload.
+    // The CEF shaders read the overlay texture slot from pc.user[0]
     void RecordOverlay(VkCommandBuffer cmd) {
-        if (!m_overlay || !m_overlay_pipeline || !m_overlay_layout) return;
+        if (!m_overlay || !m_overlay_pipeline) return;
 
         bool resizing{false};
         m_overlay->IsResizing(resizing);
@@ -931,14 +864,13 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         VkPipeline pipeline{VK_NULL_HANDLE};
         m_overlay_pipeline->GetPipeline(&pipeline);
 
-        VkPipelineLayout layout{VK_NULL_HANDLE};
-        m_overlay_layout->GetPipelineLayout(&layout);
-
-        VkDescriptorSet set{VK_NULL_HANDLE};
-        m_overlay->GetDescriptorSet(&set);
+        Ir77PVPushConstants push{BasePush()};
+        m_overlay->GetTextureSlot(push.user[0]);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &set, 0, nullptr);
+
+        Push(cmd, push);
+
         vkCmdDraw(cmd, OVERLAY_VERTICES, 1, 0, 0);
     }
 
@@ -955,15 +887,50 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return render_pass != VK_NULL_HANDLE;
     }
 
-    void BindSetIfChanged(VkCommandBuffer cmd, VkPipelineLayout layout, std::uint32_t const set_index, std::shared_ptr<IIr77PVDescriptorSet> const& source,
-                          VkDescriptorSet& bound) {
-        VkDescriptorSet set{VK_NULL_HANDLE};
-        source->GetSet(m_current_frame, &set);
+    // Per-frame fields every push shares: frame table, instances, frame bones, material table
+    Ir77PVPushConstants BasePush() const {
+        Ir77PVFrameSlots const& frame = m_frame_slots[m_current_frame];
 
-        if (set == bound) return;
+        Ir77PVPushConstants push{};
+        push.frame = frame.table;
+        push.instances = frame.values.instances;
+        push.bones = frame.values.bones;
+        push.materials = m_material_table;
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, set_index, 1, &set, 0, nullptr);
-        bound = set;
+        return push;
+    }
+
+    // BasePush + the item. Mesh: pc.vertices = vertices slot, pc.user[0..3] = meshlets, meshlet vertices, meshlet triangles, draw records.
+    // Shadow: pc.user[0] = light index.
+    Ir77PVPushConstants ItemPush(Ir77PVPipelineKind const& kind, Ir77PVDrawItem const& item) const {
+        Ir77PVPushConstants push{BasePush()};
+
+        push.model = item.model;
+        push.material = item.material;
+        push.mode = item.mode;
+        push.draw_base = item.draw_base;
+
+        if (item.bones != BINDLESS_NO_SLOT) push.bones = item.bones;
+
+        if (kind == Ir77PVPipelineKind::Mesh) {
+            push.vertices = item.meshlet_slots[3];
+            push.user[0] = item.meshlet_slots[0];
+            push.user[1] = item.meshlet_slots[1];
+            push.user[2] = item.meshlet_slots[2];
+            push.user[3] = item.meshlet_slots[4];
+        }
+
+        if (kind == Ir77PVPipelineKind::Shadow || kind == Ir77PVPipelineKind::ShadowSkinned) push.user[0] = item.light_index;
+
+        return push;
+    }
+
+    // One range, every stage -- the whole block each time
+    void Push(VkCommandBuffer cmd, Ir77PVPushConstants const& push) const {
+        VkPipelineLayout layout{VK_NULL_HANDLE};
+        m_layout->GetPipelineLayout(&layout);
+
+        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_ALL, 0, sizeof(Ir77PVPushConstants), &push);
     }
 
     void SetViewportScissor(VkCommandBuffer cmd, VkExtent2D const& extent) const {
@@ -984,31 +951,6 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         vkCmdSetScissor(cmd, 0, 1, &scissor);
     }
 
-    bool IsShadowKind(Ir77PVLayoutKind const& kind) const { return kind == Ir77PVLayoutKind::Shadow || kind == Ir77PVLayoutKind::ShadowSkinned; }
-
-    bool IsMeshKind(Ir77PVLayoutKind const& kind) const { return kind == Ir77PVLayoutKind::Mesh; }
-
-    // set 1 (pass) and set 2 (material) exist only in the main-pass lit layouts
-    bool UsesPassSet(Ir77PVLayoutKind const& kind) const {
-        return kind == Ir77PVLayoutKind::Static || kind == Ir77PVLayoutKind::Skinned || kind == Ir77PVLayoutKind::Mesh;
-    }
-
-    bool UsesMaterialSet(Ir77PVLayoutKind const& kind) const { return UsesPassSet(kind); }
-
-    // NO_SET = the layout has no bones set
-    std::uint32_t BonesSetIndex(Ir77PVLayoutKind const& kind) const {
-        switch (kind) {
-            case Ir77PVLayoutKind::Skinned:
-                return 3;
-
-            case Ir77PVLayoutKind::ShadowSkinned:
-                return 1;
-
-            default:
-                return NO_SET;
-        }
-    }
-
     void DestroySemaphores(VkDevice device, std::vector<VkSemaphore>& semaphores) {
         for (auto const semaphore : semaphores)
             if (semaphore != VK_NULL_HANDLE) vkDestroySemaphore(device, semaphore, nullptr);
@@ -1023,8 +965,6 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // overlay quad -- two triangles from gl_VertexIndex
     static constexpr std::uint32_t OVERLAY_VERTICES = 6;
 
-    static constexpr std::uint32_t NO_SET = UINT32_MAX;
-
     // one draw list per Ir77PVPass: Shadow, Opaque, Transparent
     static constexpr std::size_t PASS_COUNT = 3;
 
@@ -1038,15 +978,18 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
     VkExtent2D m_shadow_extent{};
 
-    std::shared_ptr<IIr77PVDescriptorSet> m_global_set{};
+    // bindless -- the device's layout and table, this window's frame slots, the material table slot
+    std::shared_ptr<IIr77PVLayout> m_layout{};
 
-    std::shared_ptr<IIr77PVDescriptorSet> m_pass_set{};
+    std::shared_ptr<IIr77PVDescriptorSet> m_descriptor_set{};
+
+    std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT> m_frame_slots{};
+
+    std::uint32_t m_material_table{BINDLESS_NO_SLOT};
 
     std::shared_ptr<IIr77PVOverlay> m_overlay{};
 
     std::shared_ptr<IIr77PVPipeline> m_overlay_pipeline{};
-
-    std::shared_ptr<IIr77PVLayout> m_overlay_layout{};
 
     VkClearColorValue m_clear_color{{0.0f, 0.0f, 0.0f, 1.0f}};
 
@@ -1055,9 +998,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // compute
     std::shared_ptr<IIr77PVPipelineCPT> m_compute_pipeline{};
 
-    std::shared_ptr<IIr77PVLayoutCPT> m_compute_layout{};
-
-    std::vector<std::shared_ptr<IIr77PVDescriptorSet>> m_compute_sets{};
+    Ir77PVPushConstants m_compute_push{};
 
     std::uint32_t m_compute_groups_x{1};
 
@@ -1098,9 +1039,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // ray tracing
     std::shared_ptr<IIr77PVPipelineRT> m_ray_pipeline{};
 
-    std::shared_ptr<IIr77PVLayoutRT> m_ray_layout{};
-
-    std::vector<std::shared_ptr<IIr77PVDescriptorSet>> m_ray_sets{};
+    Ir77PVPushConstants m_ray_push{};
 
     VkImage m_ray_target{VK_NULL_HANDLE};
 

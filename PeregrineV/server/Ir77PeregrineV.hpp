@@ -4,6 +4,7 @@
 #include <SDL3/SDL_video.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -75,17 +76,17 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         }
 
         m_command_buffers.clear();
-        m_descriptor_sets_global.clear();
-        m_descriptor_sets_pass.clear();
+        m_overlays.clear();
+        m_frame_tables.clear();
+        m_material_tables.clear();
         m_buffers_frame.clear();
         m_buffers_vertex.clear();
         m_buffers_index.clear();
-        m_overlays.clear();
         m_swapchains.clear();
         m_pipelines.clear();
-        m_layouts.clear();
-
         m_placeholders.clear();
+        m_descriptor_sets.clear();  // after everything that registered slots in it
+        m_layouts.clear();
 
         for (auto& [device_id, allocator] : m_allocators) vmaDestroyAllocator(allocator);
     }
@@ -315,45 +316,27 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // layouts -- one per kind, shared by every window on the device
+    // bindless layout + table -- one of each per device, shared by every window and every pipeline
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreateLayouts() {
-        std::uint32_t const windows = static_cast<std::uint32_t>(m_windows.at(m_current_device).size());
+        auto layout = std::static_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayout>());
 
-        // Every pool allocates `max_count` sets of each of its set layouts.
-        // Static also serves the per-window global + pass sets and every material; Skinned serves bones sets.
-        std::uint32_t const frame_sets = windows * MAX_FRAMES_IN_FLIGHT;
+        layout->SetDevice(m_devices.at(m_current_device));
 
-        std::map<Ir77PVLayoutKind, std::uint32_t> capacities{
-            {Ir77PVLayoutKind::Static, std::max(frame_sets, MATERIAL_CAPACITY)},
-            {Ir77PVLayoutKind::Skinned, std::max(frame_sets, SKELETON_CAPACITY)},
-            {Ir77PVLayoutKind::Shadow, frame_sets},
-            {Ir77PVLayoutKind::ShadowSkinned, frame_sets},
-            {Ir77PVLayoutKind::CEF, std::max<std::uint32_t>(windows, 1)},
-        };
+        auto result = layout->CreateLayout();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        bool mesh{false};
-        m_devices.at(m_current_device)->GetMeshShading(mesh);
+        auto table = std::static_pointer_cast<IIr77PVDescriptorSet>(std::make_shared<Ir77PVDescriptorSet>());
 
-        if (mesh) capacities.emplace(Ir77PVLayoutKind::Mesh, std::max(frame_sets, MATERIAL_CAPACITY));
+        table->SetDevice(m_devices.at(m_current_device));
 
-        std::map<Ir77PVLayoutKind, std::shared_ptr<IIr77PVLayout>> layouts{};
+        table->SetLayout(layout);
 
-        for (auto const& [kind, capacity] : capacities) {
-            auto layout = std::static_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayout>());
+        result = table->CreateDescriptorSet();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-            layout->SetDevice(m_devices.at(m_current_device));
-
-            layout->SetMeshShading(mesh);
-
-            if (layout->SetKind(kind)->ID() != GUIDIr77OperationSucceeded || layout->CreateLayout(capacity)->ID() != GUIDIr77OperationSucceeded) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: layout creation failed.");
-            }
-
-            layouts.emplace(kind, layout);
-        }
-
-        m_layouts[m_current_device] = layouts;
+        m_layouts[m_current_device] = layout;
+        m_descriptor_sets[m_current_device] = table;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Layouts.");
     }
@@ -457,10 +440,11 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         };
 
         std::vector<SlotSpec> const specs{
-            {Ir77PVBufferSlot::Camera, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizes.camera},
+            // every frame buffer is read through the bindless storage-buffer array
+            {Ir77PVBufferSlot::Camera, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizes.camera},
             {Ir77PVBufferSlot::Lights, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizes.lights},
             {Ir77PVBufferSlot::Instances, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizes.instances},
-            {Ir77PVBufferSlot::ShadowMatrices, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizes.shadow_matrices},
+            {Ir77PVBufferSlot::ShadowMatrices, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizes.shadow_matrices},
             {Ir77PVBufferSlot::Bones, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizes.bones},
             {Ir77PVBufferSlot::Indirect, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sizes.indirect},
         };
@@ -495,58 +479,23 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // descriptor sets -- set 0 global and set 1 pass per window, allocated from the Static layout.
-    // Identical BindingsGlobal() / BindingsPass() keep them compatible with Skinned and Shadow layouts.
-    // Requires CreateLayouts, CreatePlaceholderTexture, CreateFrameBuffers.
+    // bindless registration -- placeholders (White = texture slot 0), the material table, and per window per frame the frame buffers
+    // plus a frame table listing their slots. Requires CreateLayouts, CreatePlaceholderTexture, CreateFrameBuffers.
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreateDescriptorSets() {
-        auto const& layout = m_layouts.at(m_current_device).at(Ir77PVLayoutKind::Static);
-        auto const& frame_buffers = m_buffers_frame.at(m_current_device);
+        auto result = RegisterPlaceholders();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        VkDescriptorImageInfo const placeholder = GetPlaceholderImageInfo();
-        if (placeholder.imageView == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreatePlaceholderTexture not called.");
+        result = CreateMaterialTable();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        std::vector<std::shared_ptr<IIr77PVDescriptorSet>> globals{};
-        std::vector<std::shared_ptr<IIr77PVDescriptorSet>> passes{};
-
-        for (auto const& slots : frame_buffers) {
-            // set 0 -- camera, lights, instances, env map
-            auto global = std::static_pointer_cast<IIr77PVDescriptorSet>(std::make_shared<Ir77PVDescriptorSet>());
-
-            global->SetDevice(m_devices.at(m_current_device));
-            global->SetLayout(layout, 0);
-
-            if (global->CreateSets(MAX_FRAMES_IN_FLIGHT)->ID() != GUIDIr77OperationSucceeded) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: global set allocation failed.");
-            }
-
-            auto result = global->BindGlobal(slots, placeholder);  // env / IBL = placeholder until a real one exists
-            if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-            // set 1 -- shadow map, shadow matrices
-            auto pass = std::static_pointer_cast<IIr77PVDescriptorSet>(std::make_shared<Ir77PVDescriptorSet>());
-
-            pass->SetDevice(m_devices.at(m_current_device));
-            pass->SetLayout(layout, 1);
-
-            if (pass->CreateSets(MAX_FRAMES_IN_FLIGHT)->ID() != GUIDIr77OperationSucceeded) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: pass set allocation failed.");
-            }
-
-            result = pass->BindPass(slots, placeholder);  // shadow map = placeholder until the Shadow pass exists
-            if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-            globals.push_back(global);
-            passes.push_back(pass);
-        }
-
-        m_descriptor_sets_global[m_current_device] = globals;
-        m_descriptor_sets_pass[m_current_device] = passes;
+        result = RegisterFrameBuffers();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Descriptor Sets.");
     }
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // pipelines -- per window, per kind. Each kind resolves its own render pass and layout via RenderPassKindFor / LayoutKindFor.
+    // pipelines -- per window, per kind. Each kind resolves its render pass via RenderPassKindFor; every kind shares the one bindless layout.
     // Kinds whose render pass hasn't been created yet (e.g. Shadow) are skipped.
     // Only request kinds whose shaders are loaded (Skinned / Shadow shaders don't exist yet).
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -556,7 +505,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: too many windows.");
 
         auto const& render_passes = m_render_passes.at(m_current_device);
-        auto const& layouts = m_layouts.at(m_current_device);
+        auto const& layout = m_layouts.at(m_current_device);
 
         std::vector<std::map<Ir77PVPipelineKind, std::shared_ptr<IIr77PVPipeline>>> per_window(windows);
 
@@ -565,14 +514,11 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
                 auto const pass = render_passes.find(RenderPassKindFor(kind));
                 if (pass == render_passes.end()) continue;  // that render pass kind doesn't exist
 
-                auto const layout = layouts.find(LayoutKindFor(kind));
-                if (layout == layouts.end()) continue;  // that layout kind wasn't built
-
                 auto ipipeline = std::static_pointer_cast<IIr77PVPipeline>(std::make_shared<Ir77PVPipeline>());
 
                 ipipeline->SetDevice(m_devices.at(m_current_device));
                 ipipeline->SetRenderPass(pass->second);
-                ipipeline->SetLayout(layout->second);
+                ipipeline->SetLayout(layout);
                 ipipeline->SetShader(m_shaders.at(m_current_device));
                 ipipeline->SetKind(kind);
 
@@ -592,14 +538,52 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     // -------------------------------------------------------------------------------------------------------------------------------------
     // lookups for Paint / Asset / CEF
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> GetLayout(Ir77PVLayoutKind const& kind, std::shared_ptr<IIr77PVLayout>& layout) {
-        auto const device = m_layouts.find(m_current_device);
-        if (device == m_layouts.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: no layouts for device.");
-
-        auto const found = device->second.find(kind);
-        if (found == device->second.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: layout kind not created.");
+    std::shared_ptr<IIr77Return const> GetLayout(std::shared_ptr<IIr77PVLayout>& layout) {
+        auto const found = m_layouts.find(m_current_device);
+        if (found == m_layouts.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreateLayouts not called.");
 
         layout = found->second;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetDescriptorSet(std::shared_ptr<IIr77PVDescriptorSet>& table) {
+        auto const found = m_descriptor_sets.find(m_current_device);
+        if (found == m_descriptor_sets.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreateLayouts not called.");
+
+        table = found->second;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Frame slots of one window, one entry per frame in flight -- for its command buffer
+    std::shared_ptr<IIr77Return const> GetFrameSlots(std::size_t const& window, std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT>& slots) {
+        auto const device = m_frame_slots.find(m_current_device);
+        if (device == m_frame_slots.end() || window >= device->second.size())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreateDescriptorSets not called.");
+
+        slots = device->second[window];
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetMaterialTableSlot(std::uint32_t& slot) {
+        auto const found = m_material_table_slots.find(m_current_device);
+        if (found == m_material_table_slots.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreateDescriptorSets not called.");
+
+        slot = found->second;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetPlaceholderSlot(Ir77PVPlaceholderKind const& kind, std::uint32_t& slot) {
+        auto const device = m_placeholder_slots.find(m_current_device);
+        if (device == m_placeholder_slots.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreateDescriptorSets not called.");
+
+        auto const found = device->second.find(kind);
+        if (found == device->second.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: placeholder kind not registered.");
+
+        slot = found->second;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -642,33 +626,135 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     }
 
    private:
-    static Ir77PVLayoutKind LayoutKindFor(Ir77PVPipelineKind const& kind) {
-        switch (kind) {
-            case Ir77PVPipelineKind::Skinned:
-            case Ir77PVPipelineKind::SkinnedTransparent:
-            case Ir77PVPipelineKind::SkinnedTransparentBack:
-                return Ir77PVLayoutKind::Skinned;
+    // White first -- it must land in texture slot 0 (BINDLESS_PLACEHOLDER_TEXTURE), so unset texture slots sample white
+    std::shared_ptr<IIr77Return const> RegisterPlaceholders() {
+        auto const& table = m_descriptor_sets.at(m_current_device);
 
-            case Ir77PVPipelineKind::Shadow:
-                return Ir77PVLayoutKind::Shadow;
+        auto const device = m_placeholders.find(m_current_device);
+        if (device == m_placeholders.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreatePlaceholderTexture not called.");
 
-            case Ir77PVPipelineKind::ShadowSkinned:
-                return Ir77PVLayoutKind::ShadowSkinned;
+        std::map<Ir77PVPlaceholderKind, std::uint32_t> slots{};
 
-            case Ir77PVPipelineKind::Mesh:
-                return Ir77PVLayoutKind::Mesh;
+        for (auto const kind : {Ir77PVPlaceholderKind::White, Ir77PVPlaceholderKind::Normal}) {
+            auto const found = device->second.find(kind);
+            if (found == device->second.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: placeholder texture missing.");
 
-            case Ir77PVPipelineKind::CEF:
-                return Ir77PVLayoutKind::CEF;
+            VkDescriptorImageInfo info{};
+            found->second->GetImageInfo(&info);
 
-            case Ir77PVPipelineKind::Static:
-            case Ir77PVPipelineKind::Transparent:
-            default:
-                return Ir77PVLayoutKind::Static;
+            std::uint32_t slot{BINDLESS_NO_SLOT};
+
+            auto const result = table->RegisterTexture(info.imageView, info.sampler, slot);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+            slots.emplace(kind, slot);
         }
+
+        if (slots.at(Ir77PVPlaceholderKind::White) != BINDLESS_PLACEHOLDER_TEXTURE)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: white placeholder must be the first texture registered.");
+
+        m_placeholder_slots[m_current_device] = slots;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    static Ir77PVRenderPassKind RenderPassKindFor(Ir77PVPipelineKind const kind) {
+    // MATERIAL_CAPACITY rows of Ir77PVMaterialRow in one Static buffer -- Ir77PVAsset writes rows into it
+    std::shared_ptr<IIr77Return const> CreateMaterialTable() {
+        auto buffer = std::static_pointer_cast<IIr77PVBuffer>(std::make_shared<Ir77PVBuffer>());
+
+        buffer->SetDevice(m_devices.at(m_current_device));
+
+        buffer->SetAllocator(m_allocators.at(m_current_device));
+
+        buffer->SetUsage(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+        buffer->SetMode(Ir77PVBufferMode::Static);
+
+        auto result = buffer->CreateResources(static_cast<VkDeviceSize>(MATERIAL_CAPACITY) * sizeof(Ir77PVMaterialRow), 1);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        VkDescriptorBufferInfo info{};
+        buffer->GetBufferInfo(0, &info);
+
+        std::uint32_t slot{BINDLESS_NO_SLOT};
+
+        result = m_descriptor_sets.at(m_current_device)->RegisterBuffer(info.buffer, info.offset, info.range, slot);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        m_material_tables[m_current_device] = buffer;
+        m_material_table_slots[m_current_device] = slot;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Per window, per frame in flight: every frame buffer's copy gets a slot, then a frame table row listing them gets its own slot
+    std::shared_ptr<IIr77Return const> RegisterFrameBuffers() {
+        auto const& table = m_descriptor_sets.at(m_current_device);
+        auto const& frame_buffers = m_buffers_frame.at(m_current_device);
+
+        std::uint32_t const white{m_placeholder_slots.at(m_current_device).at(Ir77PVPlaceholderKind::White)};
+
+        std::vector<std::shared_ptr<IIr77PVBuffer>> frame_tables{};
+        std::vector<std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT>> frame_slots(frame_buffers.size());
+
+        for (std::size_t w = 0; w < frame_buffers.size(); w++) {
+            auto frame_table = std::static_pointer_cast<IIr77PVBuffer>(std::make_shared<Ir77PVBuffer>());
+
+            frame_table->SetDevice(m_devices.at(m_current_device));
+
+            frame_table->SetAllocator(m_allocators.at(m_current_device));
+
+            frame_table->SetUsage(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+            frame_table->SetMode(Ir77PVBufferMode::Dynamic);
+
+            auto result = frame_table->CreateResources(sizeof(Ir77PVFrameTable), MAX_FRAMES_IN_FLIGHT);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+            for (std::uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
+                Ir77PVFrameSlots& slots = frame_slots[w][frame];
+
+                slots.values.camera = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Camera), frame);
+                slots.values.lights = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Lights), frame);
+                slots.values.instances = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Instances), frame);
+                slots.values.shadow_matrices = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::ShadowMatrices), frame);
+                slots.values.bones = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Bones), frame);
+                slots.values.env = white;         // until a real environment exists
+                slots.values.shadow_map = white;  // until the Shadow pass exists
+
+                if (slots.values.camera == BINDLESS_NO_SLOT || slots.values.lights == BINDLESS_NO_SLOT || slots.values.instances == BINDLESS_NO_SLOT ||
+                    slots.values.shadow_matrices == BINDLESS_NO_SLOT || slots.values.bones == BINDLESS_NO_SLOT)
+                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: frame buffer registration failed.");
+
+                result = frame_table->Update(frame, &slots.values, sizeof(Ir77PVFrameTable));
+                if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+                slots.table = RegisterFrameCopy(table, frame_table, frame);
+                if (slots.table == BINDLESS_NO_SLOT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: frame table registration failed.");
+            }
+
+            frame_tables.push_back(frame_table);
+        }
+
+        m_frame_tables[m_current_device] = frame_tables;
+        m_frame_slots[m_current_device] = frame_slots;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // One frame copy of a Dynamic buffer -> its bindless slot; BINDLESS_NO_SLOT on failure
+    std::uint32_t RegisterFrameCopy(std::shared_ptr<IIr77PVDescriptorSet> const& table, std::shared_ptr<IIr77PVBuffer> const& buffer,
+                                    std::uint32_t const& frame) {
+        VkDescriptorBufferInfo info{};
+        if (buffer->GetBufferInfo(frame, &info)->ID() != GUIDIr77OperationSucceeded) return BINDLESS_NO_SLOT;
+
+        std::uint32_t slot{BINDLESS_NO_SLOT};
+        if (table->RegisterBuffer(info.buffer, info.offset, info.range, slot)->ID() != GUIDIr77OperationSucceeded) return BINDLESS_NO_SLOT;
+
+        return slot;
+    }
+
+    Ir77PVRenderPassKind RenderPassKindFor(Ir77PVPipelineKind const kind) const {
         switch (kind) {
             case Ir77PVPipelineKind::Shadow:
 
@@ -712,21 +798,31 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
     std::map<std::size_t, std::map<Ir77PVRenderPassKind, std::shared_ptr<IIr77PVRenderPass>>> m_render_passes;
 
-    /*************************** layouts / pipelines ********************/
-    // [device][kind]
-    std::map<std::uint64_t, std::map<Ir77PVLayoutKind, std::shared_ptr<IIr77PVLayout>>> m_layouts;
+    /*************************** layout / pipelines *********************/
+    // [device] -- the one bindless layout and the one bindless table
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVLayout>> m_layouts;
+
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVDescriptorSet>> m_descriptor_sets;
 
     // [device][window][kind]
     std::map<std::uint64_t, std::vector<std::map<Ir77PVPipelineKind, std::shared_ptr<IIr77PVPipeline>>>> m_pipelines;
 
-    /*************************** buffers / sets *************************/
+    /*************************** buffers / slots ************************/
     // [device][window][slot]
     std::map<std::uint64_t, std::vector<std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>>>> m_buffers_frame;
 
-    // [device][window]
-    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVDescriptorSet>>> m_descriptor_sets_global;
+    // [device][window] -- frame table buffer (Dynamic) and, per frame in flight, its slot + the slots it lists
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVBuffer>>> m_frame_tables;
 
-    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVDescriptorSet>>> m_descriptor_sets_pass;
+    std::map<std::uint64_t, std::vector<std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT>>> m_frame_slots;
+
+    // [device] -- material table (Static, MATERIAL_CAPACITY rows) and its slot
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVBuffer>> m_material_tables;
+
+    std::map<std::uint64_t, std::uint32_t> m_material_table_slots;
+
+    // [device][kind] -- texture slots of the placeholders (White is always BINDLESS_PLACEHOLDER_TEXTURE)
+    std::map<std::uint64_t, std::map<Ir77PVPlaceholderKind, std::uint32_t>> m_placeholder_slots;
 
     // [device][mesh] -- Static buffers, filled by Ir77PVAsset
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVBuffer>>> m_buffers_vertex;

@@ -1,19 +1,13 @@
 #pragma once
-#include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
 
-#include <cstdint>
+#include <vulkan/vulkan.h>
+
 #include <memory>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "IIr77PVInstance.hpp"
 #include "IIr77PVDevice.hpp"
-#include "IIr77PVSwapchain.hpp"
-#include "IIr77PVRenderPass.hpp"
 #include "IIr77PVLayout.hpp"
 #include "IIr77PVShader.hpp"
 
@@ -23,19 +17,20 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// One compute pipeline for one Ir77PVComputeKind, built on the device's shared bindless layout
 typedef struct IIr77PVPipelineCPT : virtual public IIr77Enlisted {
     IIr77PVPipelineCPT() = default;
 
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> pipeline_layout) = 0;
+    // The device's one bindless layout (Ir77PeregrineV::GetLayout)
+    virtual std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetShader(std::shared_ptr<IIr77PVShader> shader_stack) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVComputeKind const& kind) = 0;
 
+    // Exactly one compute stage per kind
     virtual std::shared_ptr<IIr77Return const> CreatePipeline() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) = 0;

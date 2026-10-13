@@ -49,8 +49,11 @@ namespace NSIr77PeregrineV {
 // =============================================================================================================================================
 // Ir77PVAsset -- the data binding point between a client (scene loader / game layer) and PeregrineV.
 //
-//   startup:   SetPeregrineV -> CreateShaders -> (CreatePipelines) -> placeholder textures
+//   startup:   SetPeregrineV -> CreateShaders -> (CreatePipelines) -> placeholder textures -> CreateDescriptorSets (bindless table)
 //   load:      CreateTexture -> CreateMaterial / UploadMaterials -> UploadScene (vertex path) or UploadMeshlets (mesh path)
+//
+// Bindless: textures get texture slots, materials are rows in the device's material table (holding texture slots), meshlet buffers get
+// buffer slots. Draw items carry rows and slots; Ir77PVCmdBuffer turns them into push constants.
 //   frame:     Tick(frame) -> camera / Instances via Paint -> Make*DrawItem per material run -> Paint::SetDraws
 //   runtime:   SetSceneObjectVisible / SetSceneObjectInstances / SetMeshletObjectVisible / SetMeshletRecordVisible
 //   unload:    remove the draw items from Paint, then UnloadScene / UnloadMeshlets / UnloadMesh (freed after the frames in flight)
@@ -160,6 +163,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
     // =========================================================================================================================================
     // per frame -- call once per frame, before Paint records, with the frame-in-flight index Paint is about to record.
+    //   0. ages the bindless table's released slots
     //   1. drops the staging buffers of uploads whose fence has signalled
     //   2. writes this frame's copy of every dirty indirect buffer (visibility / instance changes)
     //   3. ages the graveyard and releases anything no frame in flight can still read
@@ -168,6 +172,9 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (frame >= MAX_FRAMES_IN_FLIGHT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: frame index out of range.");
 
         std::uint64_t const device_id = m_context->m_current_device;
+
+        // 0. released slots become reusable after MAX_FRAMES_IN_FLIGHT Ticks
+        m_context->m_descriptor_sets.at(device_id)->Tick();
 
         // 1. finished uploads -- dropping the staging buffer frees its memory, command buffer and fence
         std::erase_if(m_pending[device_id], [](std::shared_ptr<IIr77PVBuffer> const& staging) {
@@ -365,7 +372,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown mesh.");
 
         Ir77PVMesh& mesh = found->second[mesh_id];
-        Bury({mesh.vertex, mesh.index}, nullptr);
+        Bury({mesh.vertex, mesh.index});
         mesh = Ir77PVMesh{};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -488,10 +495,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline kind not created for window.");
 
-        if (m_context->GetLayout(m_context->LayoutKindFor(kind), item.layout)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: layout not created.");
-
-        item.material = material.set;
+        item.material = material.row;
         item.vertex = vertex;
         item.index = index;
         item.index_type = VK_INDEX_TYPE_UINT32;
@@ -532,7 +536,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         Ir77PVSceneSlot* const scene = FindScene(scene_id);
         if (!scene) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown scene.");
 
-        Bury({scene->vertex, scene->index, scene->vertex_skinned, scene->index_skinned, scene->indirect}, nullptr);
+        Bury({scene->vertex, scene->index, scene->vertex_skinned, scene->index_skinned, scene->indirect});
         *scene = Ir77PVSceneSlot{};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -542,16 +546,17 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     // meshlet path -- Mesh pipeline kind only (VK_EXT_mesh_shader). Takes the same stacked Ir77PVSceneUpload as UploadScene.
     // Each indirect command is one object's range; meshlets are cut from that range only, so none ever spans two objects.
     // One draw record + one mesh command per instance. Static (non-skinned) vertices only.
-    // record_count = records written. Fails when the Mesh layout wasn't created -- the device has no mesh shading.
+    // record_count = records written. Fails when the device has no mesh shading.
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> UploadMeshlets(Ir77PVSceneUpload const& scene, std::uint32_t& meshlet_id, std::uint32_t& record_count,
                                                       bool const& wait = true) {
         if (scene.vertices.empty() || scene.indices.empty() || scene.indirect_commands.empty())
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: empty scene.");
 
-        std::shared_ptr<IIr77PVLayout> layout{};
-        if (m_context->GetLayout(Ir77PVLayoutKind::Mesh, layout)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: Mesh layout not created -- mesh shading unsupported.");
+        bool mesh_shading{false};
+        m_context->m_devices.at(m_context->m_current_device)->GetMeshShading(mesh_shading);
+
+        if (!mesh_shading) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: mesh shading unsupported on this device.");
 
         // shared results -- every object appended here
         std::vector<Ir77PVMeshlet> meshlets{};
@@ -704,22 +709,17 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: meshlet upload failed.");
         }
 
-        // 8. set 3
-        mesh.set = std::static_pointer_cast<IIr77PVDescriptorSet>(std::make_shared<Ir77PVDescriptorSet>());
+        // 8. bindless slots -- order matches Ir77PVMeshletMesh::slots / Ir77PVDrawItem::meshlet_slots
+        std::array<std::shared_ptr<IIr77PVBuffer>, MESHLET_SLOT_COUNT> const slot_buffers{mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles,
+                                                                                          mesh.vertices, mesh.draws};
 
-        mesh.set->SetDevice(m_context->m_devices.at(m_context->m_current_device));
-        mesh.set->SetLayout(layout, 3);
-
-        if (mesh.set->CreateSets(1)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: meshlet set allocation failed -- raise the Mesh layout capacity.");
-
-        mesh.set->BindBuffer(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, mesh.meshlets);
-        mesh.set->BindBuffer(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, mesh.meshlet_vertices);
-        mesh.set->BindBuffer(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, mesh.meshlet_triangles);
-        mesh.set->BindBuffer(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, mesh.vertices);
-        mesh.set->BindBuffer(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, mesh.draws);
-
-        if (mesh.set->Write()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: meshlet set write failed.");
+        for (std::size_t i = 0; i < slot_buffers.size(); i++) {
+            auto const result = RegisterBuffer(slot_buffers[i], mesh.slots[i]);
+            if (result->ID() != GUIDIr77OperationSucceeded) {
+                ReleaseSlots(BINDLESS_BINDING_BUFFERS, std::vector<std::uint32_t>(mesh.slots.begin(), mesh.slots.end()));
+                return result;
+            }
+        }
 
         mesh.meshlet_count = static_cast<std::uint32_t>(meshlets.size());
         record_count = static_cast<std::uint32_t>(draws.size());
@@ -771,11 +771,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (m_context->GetPipeline(window, Ir77PVPipelineKind::Mesh, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: Mesh pipeline not created for window.");
 
-        if (m_context->GetLayout(Ir77PVLayoutKind::Mesh, item.layout)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: Mesh layout not created.");
-
-        item.material = material.set;
-        item.meshlets = mesh.set;
+        item.material = material.row;
+        item.meshlet_slots = mesh.slots;
         item.meshlet_offset = 0;
         item.meshlet_count = mesh.meshlet_count;
 
@@ -856,13 +853,14 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Frees the set 3 buffers once no frame in flight can read them. Remove its draw items from Paint first.
+    // Releases the meshlet buffer slots and frees the buffers once no frame in flight can read them. Remove its draw items from Paint first.
     std::shared_ptr<IIr77Return const> UnloadMeshlets(std::uint32_t const& meshlet_id) {
         Ir77PVMeshletSlot* const slot = FindMeshlets(meshlet_id);
         if (!slot) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown meshlet mesh.");
 
         Ir77PVMeshletMesh const& mesh = slot->mesh;
-        Bury({mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.vertices, mesh.draws, mesh.indirect}, mesh.set);
+        ReleaseSlots(BINDLESS_BINDING_BUFFERS, std::vector<std::uint32_t>(mesh.slots.begin(), mesh.slots.end()));
+        Bury({mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.vertices, mesh.draws, mesh.indirect});
         *slot = Ir77PVMeshletSlot{};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -871,7 +869,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     // =========================================================================================================================================
     // textures -- built on Ir77PVTexture (the same class as the placeholders), so they get its kinds, mip chain and sampler handling.
     // srgb = true for color data (albedo, emissive) -> Color kind (sRGB); false for data maps (normal, ORM, AO) -> Data kind (UNORM).
-    // Blocking: Ir77PVTexture uploads and waits on its own.
+    // Blocking: Ir77PVTexture uploads and waits on its own. Registered in the bindless table -- GetTextureSlot gives its slot.
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> CreateTexture(std::uint8_t const* rgba, std::uint32_t const& width, std::uint32_t const& height, bool const& srgb,
                                                      std::uint32_t& texture_id) {
@@ -895,25 +893,34 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (texture->CreateFromPixels(pool, queue, rgba, width, height, true)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: texture upload failed.");
 
+        VkDescriptorImageInfo info{};
+        texture->GetImageInfo(&info);
+
+        std::uint32_t slot{BINDLESS_NO_SLOT};
+
+        auto const result = m_context->m_descriptor_sets.at(device_id)->RegisterTexture(info.imageView, info.sampler, slot);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
         auto& textures = m_textures[device_id];
         texture_id = static_cast<std::uint32_t>(textures.size());
         textures.push_back(texture);
+        m_texture_slots[device_id].push_back(slot);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetTextureInfo(std::uint32_t const& texture_id, VkDescriptorImageInfo& info) {
-        auto const found = m_textures.find(m_context->m_current_device);
-        if (found == m_textures.end() || texture_id >= found->second.size() || !found->second[texture_id])
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown texture.");
+    // Bindless texture slot of a texture -- what material rows and shaders use
+    std::shared_ptr<IIr77Return const> GetTextureSlot(std::uint32_t const& texture_id, std::uint32_t& slot) {
+        auto const found = m_texture_slots.find(m_context->m_current_device);
+        if (found == m_texture_slots.end() || texture_id >= found->second.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown texture.");
 
-        info = VkDescriptorImageInfo{};
+        slot = found->second[texture_id];
 
-        return found->second[texture_id]->GetImageInfo(&info);
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // =========================================================================================================================================
-    // materials -- set 2 from the Static layout: constants UBO + 5 texture slots (placeholders where no texture is given)
+    // materials -- rows in the device's material table: constants + 5 texture slots (placeholders where no texture is given)
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> CreateMaterial(Ir77PVMaterialConstants const& constants, std::uint32_t& material_id) {
         return CreateMaterial(constants, Ir77PVMaterialTextures{}, material_id);
@@ -934,33 +941,44 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return UploadMaterials(constants, std::vector<Ir77PVMaterialTextures>(constants.size()), material_ids);
     }
 
-    // One staging copy for every material's constants; one buffer + one set per material (each binds its own textures).
+    // One staging copy for every new row. Rows are appended -- existing rows (which frames in flight may be reading) are never rewritten.
     std::shared_ptr<IIr77Return const> UploadMaterials(std::vector<Ir77PVMaterialConstants> const& constants,
                                                        std::vector<Ir77PVMaterialTextures> const& textures, std::vector<std::uint32_t>& material_ids) {
         if (constants.size() != textures.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: constants / textures count mismatch.");
 
-        std::vector<Ir77PVMaterial> built(constants.size());
-        std::vector<Ir77PVUploadEntry> entries{};
-        entries.reserve(constants.size());
+        std::uint64_t const device_id = m_context->m_current_device;
+
+        auto& materials = m_materials[device_id];
+
+        if (materials.size() + constants.size() > MATERIAL_CAPACITY)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material table full -- raise MATERIAL_CAPACITY.");
+
+        std::vector<Ir77PVMaterialRow> rows(constants.size());
 
         for (std::size_t i = 0; i < constants.size(); i++) {
-            auto const result = BuildMaterial(textures[i], built[i]);
+            auto const result = DefineMaterialRow(constants[i], textures[i], rows[i]);
             if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-            VkBuffer dst{VK_NULL_HANDLE};
-            built[i].constants->GetBuffer(0, &dst);
-            entries.push_back({dst, &constants[i], sizeof(Ir77PVMaterialConstants)});
         }
 
-        if (Upload(entries)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material upload failed.");
+        VkBuffer table{VK_NULL_HANDLE};
+        m_context->m_material_tables.at(device_id)->GetBuffer(0, &table);
 
-        auto& materials = m_materials[m_context->m_current_device];
+        Ir77PVUploadEntry entry{};
+        entry.dst = table;
+        entry.data = rows.data();
+        entry.size = static_cast<VkDeviceSize>(rows.size() * sizeof(Ir77PVMaterialRow));
+        entry.dst_offset = static_cast<VkDeviceSize>(materials.size() * sizeof(Ir77PVMaterialRow));
+
+        if (Upload({entry})->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material upload failed.");
+
         material_ids.clear();
-        material_ids.reserve(built.size());
+        material_ids.reserve(rows.size());
 
-        for (auto& material : built) {
-            material_ids.push_back(static_cast<std::uint32_t>(materials.size()));
+        for (std::size_t i = 0; i < rows.size(); i++) {
+            Ir77PVMaterial material{};
+            material.row = static_cast<std::uint32_t>(materials.size());
+
+            material_ids.push_back(material.row);
             materials.push_back(material);
         }
 
@@ -995,10 +1013,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline kind not created for window.");
 
-        if (m_context->GetLayout(m_context->LayoutKindFor(kind), item.layout)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: layout not created.");
-
-        item.material = material.set;
+        item.material = material.row;
         item.vertex = mesh.vertex;
         item.index = mesh.index;
         item.index_type = mesh.index_type;
@@ -1024,11 +1039,10 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
     // Held until MAX_FRAMES_IN_FLIGHT + 1 Ticks have passed -- every frame that could have recorded them has finished by then
-    void Bury(std::vector<std::shared_ptr<IIr77PVBuffer>> const& buffers, std::shared_ptr<IIr77PVDescriptorSet> const& set) {
+    void Bury(std::vector<std::shared_ptr<IIr77PVBuffer>> const& buffers) {
         Ir77PVGrave grave{};
         for (auto const& buffer : buffers)
             if (buffer) grave.buffers.push_back(buffer);
-        grave.set = set;
         grave.frames_left = MAX_FRAMES_IN_FLIGHT + 1;
 
         m_graveyard[m_context->m_current_device].push_back(std::move(grave));
@@ -1067,51 +1081,50 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return buffer;
     }
 
-    // Constants buffer + set 2 for one material. The constants are uploaded by the caller (UploadMaterials batches them).
-    std::shared_ptr<IIr77Return const> BuildMaterial(Ir77PVMaterialTextures const& textures, Ir77PVMaterial& material) {
-        std::shared_ptr<IIr77PVLayout> layout{};
-        if (m_context->GetLayout(Ir77PVLayoutKind::Static, layout)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: Static layout not created.");
+    // One material-table row: the constants plus a texture slot per map -- the texture's when given, a placeholder's otherwise
+    std::shared_ptr<IIr77Return const> DefineMaterialRow(Ir77PVMaterialConstants const& constants, Ir77PVMaterialTextures const& textures,
+                                                         Ir77PVMaterialRow& row) {
+        std::uint32_t white{BINDLESS_NO_SLOT};
+        std::uint32_t flat_normal{BINDLESS_NO_SLOT};
 
-        VkDescriptorImageInfo const placeholder = m_context->GetPlaceholderImageInfo();
-        if (placeholder.imageView == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreatePlaceholderTexture not called.");
+        if (m_context->GetPlaceholderSlot(Ir77PVPlaceholderKind::White, white)->ID() != GUIDIr77OperationSucceeded ||
+            m_context->GetPlaceholderSlot(Ir77PVPlaceholderKind::Normal, flat_normal)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: placeholders not registered -- call CreateDescriptorSets first.");
 
-        VkDescriptorImageInfo const flat_normal = m_context->GetPlaceholderImageInfo(Ir77PVPlaceholderKind::Normal);
-
-        // resolve each slot -- texture when given, placeholder otherwise
+        // albedo, normal, ORM, emissive, AO
         std::array<std::uint32_t, 5> const ids{textures.albedo, textures.normal, textures.orm, textures.emissive, textures.ao};
-        std::array<VkDescriptorImageInfo, 5> images{placeholder, flat_normal, placeholder, placeholder, placeholder};
+        std::array<std::uint32_t, 5> slots{white, flat_normal, white, white, white};
 
         for (std::size_t i = 0; i < ids.size(); i++) {
             if (ids[i] == IR77PV_NO_TEXTURE) continue;
-            if (GetTextureInfo(ids[i], images[i])->ID() != GUIDIr77OperationSucceeded)
+            if (GetTextureSlot(ids[i], slots[i])->ID() != GUIDIr77OperationSucceeded)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material references an unknown texture.");
         }
 
-        material.constants = CreateStaticBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(Ir77PVMaterialConstants));
-        if (!material.constants) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material buffer creation failed.");
-
-        material.set = std::static_pointer_cast<IIr77PVDescriptorSet>(std::make_shared<Ir77PVDescriptorSet>());
-
-        material.set->SetDevice(m_context->m_devices.at(m_context->m_current_device));
-        material.set->SetLayout(layout, 2);
-
-        if (material.set->CreateSets(1)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material set allocation failed -- raise MATERIAL_CAPACITY.");
-
-        material.set->BindBuffer(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, material.constants);
-
-        material.set->BindImage(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, images[0]);  // albedo
-        material.set->BindImage(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, images[1]);  // normal
-        material.set->BindImage(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, images[2]);  // ORM
-        material.set->BindImage(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, images[3]);  // emissive
-        material.set->BindImage(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, images[4]);  // AO
-
-        if (material.set->Write()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: material set write failed.");
-
-        m_context->m_buffers_vertex[m_context->m_current_device].push_back(material.constants);  // teardown order
+        row = Ir77PVMaterialRow{};
+        row.constants = constants;
+        row.textures0 = {slots[0], slots[1], slots[2], slots[3]};
+        row.textures1 = {slots[4], 0, 0, 0};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // One Static buffer copy -> a bindless buffer slot
+    std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, std::uint32_t& slot) {
+        VkDescriptorBufferInfo info{};
+
+        auto const result = buffer->GetBufferInfo(0, &info);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return m_context->m_descriptor_sets.at(m_context->m_current_device)->RegisterBuffer(info.buffer, info.offset, info.range, slot);
+    }
+
+    // Unset slots (BINDLESS_NO_SLOT) are skipped
+    void ReleaseSlots(std::uint32_t const& binding, std::vector<std::uint32_t> const& slots) {
+        auto const& table = m_context->m_descriptor_sets.at(m_context->m_current_device);
+
+        for (auto const slot : slots)
+            if (slot != BINDLESS_NO_SLOT) table->Release(binding, slot);
     }
 
     // one Staging buffer per batch, on the device's upload pool. No-wait uploads stay in m_pending until Tick sees them finished.
@@ -1155,6 +1168,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     std::map<std::uint64_t, std::vector<Ir77PVMaterial>> m_materials{};
 
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVTexture>>> m_textures{};
+
+    std::map<std::uint64_t, std::vector<std::uint32_t>> m_texture_slots{};  // [device][texture_id] -> bindless texture slot
 
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVBuffer>>> m_pending{};  // Staging buffers of uploads submitted with wait = false
 

@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL_video.h>
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -87,6 +88,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
     // -------------------------------------------------------------------------------------------------------------------------------------
     // setup -- after CreateDescriptorSets and CreatePipelines. Overlays are optional (wired if Ir77PVCEF created them).
+    // Every command buffer shares the device's bindless layout + table; each gets its window's frame slots.
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreateCommandBuffers() {
         std::uint64_t const device_id = m_context->m_current_device;
@@ -103,6 +105,16 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (passes == m_context->m_render_passes.end() || passes->second.count(Ir77PVRenderPassKind::Main) == 0)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: main render pass must be created before command buffers.");
 
+        std::shared_ptr<IIr77PVLayout> layout{};
+        std::shared_ptr<IIr77PVDescriptorSet> table{};
+        std::uint32_t material_table{BINDLESS_NO_SLOT};
+
+        if (m_context->GetLayout(layout)->ID() != GUIDIr77OperationSucceeded || m_context->GetDescriptorSet(table)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: bindless layout / table missing -- call CreateLayouts first.");
+
+        if (m_context->GetMaterialTableSlot(material_table)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: material table missing -- call CreateDescriptorSets first.");
+
         for (std::size_t w = 0; w < windows; w++) {
             auto cmd_buffer = std::static_pointer_cast<IIr77PVCmdBuffer>(std::make_shared<Ir77PVCmdBuffer>());
 
@@ -112,18 +124,24 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             for (auto const& [kind, render_pass] : passes->second) cmd_buffer->SetRenderPass(kind, render_pass);
 
-            cmd_buffer->SetGlobalSet(m_context->m_descriptor_sets_global.at(device_id).at(w));
+            cmd_buffer->SetLayout(layout);
 
-            cmd_buffer->SetPassSet(m_context->m_descriptor_sets_pass.at(device_id).at(w));
+            cmd_buffer->SetDescriptorSet(table);
+
+            cmd_buffer->SetMaterialTable(material_table);
+
+            std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT> frame_slots{};
+
+            auto const slots_result = m_context->GetFrameSlots(w, frame_slots);
+            if (slots_result->ID() != GUIDIr77OperationSucceeded) return slots_result;
+
+            cmd_buffer->SetFrameSlots(frame_slots);
 
             if (has_overlays) {
                 std::shared_ptr<IIr77PVPipeline> pipeline_cef{};
-                std::shared_ptr<IIr77PVLayout> layout_cef{};
 
-                if (m_context->GetPipeline(w, Ir77PVPipelineKind::CEF, pipeline_cef)->ID() == GUIDIr77OperationSucceeded &&
-                    m_context->GetLayout(Ir77PVLayoutKind::CEF, layout_cef)->ID() == GUIDIr77OperationSucceeded) {
-                    cmd_buffer->SetOverlay(overlays->second.at(w), pipeline_cef, layout_cef);
-                }
+                if (m_context->GetPipeline(w, Ir77PVPipelineKind::CEF, pipeline_cef)->ID() == GUIDIr77OperationSucceeded)
+                    cmd_buffer->SetOverlay(overlays->second.at(w), pipeline_cef);
             }
 
             if (cmd_buffer->CreateCommandBuffer()->ID() != GUIDIr77OperationSucceeded) {
