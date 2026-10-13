@@ -43,7 +43,7 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> DefineQueueCreateInfos() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport() = 0;
+    virtual std::shared_ptr<IIr77Return const> QueryDeviceExtensionSupport() = 0;
 
     virtual std::shared_ptr<IIr77Return const> QueryDisplaySupport(int& rank, std::string& name) = 0;
 

@@ -289,31 +289,8 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         auto const& swapchain = m_context->m_swapchains.at(m_context->m_current_device).at(index);
 
-        if (swapchain->QuerySwapchainSupport()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: QuerySwapchainSupport failed.");
-
-        if (swapchain->SwapSurfaceFormat()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SwapSurfaceFormat failed.");
-
-        if (swapchain->PresentMode()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: PresentMode failed.");
-
-        if (swapchain->SurfaceCapabilities()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SurfaceCapabilities failed.");
-
-        if (swapchain->DefineSwapchain()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineSwapchain failed.");
-
-        if (swapchain->CleanupSwapchain()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: CleanupSwapchain failed.");
-
-        if (swapchain->InitSwapchainImages()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: InitSwapchainImages failed.");
-
-        if (swapchain->DefineImageView()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineImageView failed.");
-
-        if (swapchain->DefineFramebuffers()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: DefineFramebuffers failed.");
+        if (swapchain->CreateSwapchain()->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: Rebuild failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Reset Swapchain.");
     }

@@ -169,7 +169,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     /************************************************************************************************************************************************************/
 
     // Builds the extension list from what the GPU actually exposes. Required ones fail the call; optional ones are added only when present.
-    std::shared_ptr<IIr77Return const> CheckDeviceExtensionSupport() {
+    std::shared_ptr<IIr77Return const> QueryDeviceExtensionSupport() {
         std::uint32_t count = 0;
         vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, nullptr);
 
@@ -240,9 +240,11 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+/******************************************************************************************************************************************************************************/
+
     // Features go through VkPhysicalDeviceFeatures2 in pNext, so extension feature structs can be chained after it
     std::shared_ptr<IIr77Return const> DefineDeviceInfo() {
-        if (m_extensions.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: CheckDeviceExtensionSupport not called.");
+        if (m_extensions.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: QueryDeviceExtensionSupport not called.");
 
         // query: features2 -> mesh -> vulkan11
         VkPhysicalDeviceVulkan11Features v11_supported{};

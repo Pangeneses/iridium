@@ -275,7 +275,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     std::shared_ptr<IIr77Return const> CreateLogicalDevices() {
         auto const& device = m_devices.at(m_current_device);
 
-        auto result = device->CheckDeviceExtensionSupport();
+        auto result = device->QueryDeviceExtensionSupport();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         result = device->DefineDeviceInfo();
@@ -378,12 +378,10 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
             if (kind == Ir77PVRenderPassKind::Main || kind == Ir77PVRenderPassKind::Post) {
                 auto const& swapchain = m_swapchains.at(m_current_device).at(0);
 
-                if (swapchain->QuerySwapchainSupport()->ID() != GUIDIr77OperationSucceeded ||
-                    swapchain->SwapSurfaceFormat()->ID() != GUIDIr77OperationSucceeded)
-                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: surface format query failed.");
-
                 VkSurfaceFormatKHR surface_format{};
-                swapchain->GetSurfaceFormat(surface_format);
+
+                auto const format_result = swapchain->QuerySurfaceFormat(surface_format);
+                if (format_result->ID() != GUIDIr77OperationSucceeded) return format_result;
 
                 render_pass->SetColorFormat(surface_format.format);
             }
@@ -411,21 +409,8 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
             swapchain->SetRenderPass(main_pass->second);
 
-            swapchain->QuerySwapchainSupport();
-
-            swapchain->SwapSurfaceFormat();
-
-            swapchain->PresentMode();
-
-            swapchain->SurfaceCapabilities();
-
-            swapchain->DefineSwapchain();
-
-            swapchain->InitSwapchainImages();
-
-            swapchain->DefineImageView();
-
-            swapchain->DefineFramebuffers();
+            if (swapchain->CreateSwapchain()->ID() != GUIDIr77OperationSucceeded)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: Rebuild failed.");
         }
 
         m_current_frames[m_current_device] = frames;

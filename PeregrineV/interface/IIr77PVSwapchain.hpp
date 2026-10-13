@@ -33,24 +33,12 @@ typedef struct IIr77PVSwapchain : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> SetAllocator(VmaAllocator allocator) = 0;
 
     virtual std::shared_ptr<IIr77Return const> CreateSurface(SDL_Window* window) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> CleanupSwapchain() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> QuerySwapchainSupport() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SwapSurfaceFormat() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> PresentMode() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SurfaceCapabilities() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> DefineSwapchain() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> InitSwapchainImages() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> DefineImageView() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> DefineFramebuffers() = 0;
+    
+    virtual std::shared_ptr<IIr77Return const> CreateSwapchain() = 0;
+    
+    virtual std::shared_ptr<IIr77Return const> RebuildSwapchain() = 0;
+    
+    virtual std::shared_ptr<IIr77Return const> QuerySurfaceFormat(VkSurfaceFormatKHR& surface_format) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetSwapchain(VkSwapchainKHR* swapchain) = 0;
 
