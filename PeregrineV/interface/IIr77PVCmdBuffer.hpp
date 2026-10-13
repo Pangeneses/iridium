@@ -31,9 +31,6 @@ namespace NSIr77PeregrineV {
 typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     IIr77PVCmdBuffer() = default;
 
-    // wiring
-    virtual std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) = 0;
-
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) = 0;
@@ -67,11 +64,7 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> ClearDraws() = 0;
 
     // setup
-    virtual std::shared_ptr<IIr77Return const> DefineSyncObjects() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> DefineCommandPool() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> AllocateCommandBuffer() = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateCommandBuffer() = 0;
 
     // frame loop
     virtual std::shared_ptr<IIr77Return const> WaitForFence() = 0;

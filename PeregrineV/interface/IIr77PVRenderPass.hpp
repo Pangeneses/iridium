@@ -22,8 +22,6 @@ namespace NSIr77PeregrineV {
 typedef struct IIr77PVRenderPass : virtual public IIr77Enlisted {
     IIr77PVRenderPass() = default;
 
-    virtual std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) = 0;
-
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
     // SetKind first -- it resets formats to the kind's defaults

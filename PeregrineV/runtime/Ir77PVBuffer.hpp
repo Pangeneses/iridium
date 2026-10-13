@@ -2,11 +2,14 @@
 
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
-#include <vulkan/vulkan_core.h>
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
@@ -27,6 +30,17 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// =============================================================================================================================================
+// Ir77PVBuffer -- a VMA buffer in one of three modes.
+//
+//   Dynamic: one host-mapped copy per frame in flight, written with Update
+//   Static:  one device-local copy, filled by a Staging buffer's UploadBatch
+//   Staging: one host-mapped TRANSFER_SRC copy that owns a single upload (command buffer + fence) for its lifetime
+//
+//   configure: SetDevice / SetAllocator / SetUsage / SetMode
+//   create:    CreateResources -> DefineBuffer (per copy)
+//   upload:    UploadBatch -> CreateResources -> DefineStagingData -> DefineUploadCommands -> DefineUploadFence -> SubmitUpload
+// =============================================================================================================================================
 class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enable_shared_from_this<Ir77PVBuffer> {
    public:
     Ir77PVBuffer() {
@@ -41,6 +55,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
 
     ~Ir77PVBuffer() {
         ReleaseUpload();
+
         Release();
     }
 
@@ -85,6 +100,9 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         return GUIDQuerySucceeded;
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // configuration
+    // -------------------------------------------------------------------------------------------------------------------------------------
    public:
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
         m_device = device;
@@ -110,69 +128,47 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // copies = frames in flight for Dynamic; ignored (forced to 1) for Static and Staging
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // create
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // copies = frames in flight for Dynamic; ignored (forced to 1) for Static and Staging. Replaces any previous buffers.
     std::shared_ptr<IIr77Return const> CreateResources(VkDeviceSize const& size, std::uint32_t const& copies) {
-        if (m_allocator == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: allocator not set.");
-        if (m_usage == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: usage not set.");
+        if (m_allocator == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: SetAllocator not called.");
+        if (m_usage == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: SetUsage not called.");
         if (size == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: size is zero.");
+
+        std::uint32_t const count{m_mode == Ir77PVBufferMode::Dynamic ? copies : 1};
+        if (count == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: copy count is zero.");
 
         Release();
 
         m_size = size;
-
-        std::uint32_t const count = (m_mode == Ir77PVBufferMode::Dynamic) ? copies : 1;
-        if (count == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: copy count is zero.");
 
         m_buffers.assign(count, VK_NULL_HANDLE);
         m_allocations.assign(count, VK_NULL_HANDLE);
         m_mapped_ptrs.assign(count, nullptr);
 
         for (std::uint32_t i = 0; i < count; i++) {
-            VkBufferCreateInfo buffer_info{};
-            buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            buffer_info.size = m_size;
-            buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-            VmaAllocationCreateInfo alloc_info{};
-
-            switch (m_mode) {
-                case Ir77PVBufferMode::Dynamic:
-                    buffer_info.usage = m_usage;
-                    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-                    alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-                    break;
-
-                case Ir77PVBufferMode::Static:
-                    buffer_info.usage = m_usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-                    alloc_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-                    break;
-
-                case Ir77PVBufferMode::Staging:
-                    buffer_info.usage = m_usage | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-                    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-                    alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-                    break;
-
-                default:
-                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: unknown buffer mode.");
+            auto const result = DefineBuffer(i);
+            if (result->ID() != GUIDIr77OperationSucceeded) {
+                Release();
+                return result;
             }
-
-            VmaAllocationInfo result_info{};
-            if (vmaCreateBuffer(m_allocator, &buffer_info, &alloc_info, &m_buffers[i], &m_allocations[i], &result_info) != VK_SUCCESS) {
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: buffer creation failed.");
-            }
-
-            m_mapped_ptrs[i] = result_info.pMappedData;
         }
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: buffers created.");
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Buffer.");
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // write
+    // -------------------------------------------------------------------------------------------------------------------------------------
     // Dynamic only: memcpy into the copy for this frame
     std::shared_ptr<IIr77Return const> Update(std::uint32_t const& copy, void const* data, VkDeviceSize const& size, VkDeviceSize const& offset = 0) {
         if (m_mode != Ir77PVBufferMode::Dynamic) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: Update requires Dynamic mode.");
         if (copy >= m_buffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: copy index out of range.");
         if (offset + size > m_size) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: write exceeds buffer size.");
+        if (size == 0) return Ir77RETURN<Ir77OperationSucceeded>();
+        if (data == nullptr) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: Update has no data.");
 
         std::memcpy(static_cast<std::uint8_t*>(m_mapped_ptrs[copy]) + offset, data, static_cast<std::size_t>(size));
 
@@ -189,107 +185,53 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
     std::shared_ptr<IIr77Return const> UploadBatch(VkCommandPool const& pool, VkQueue const& queue, std::vector<Ir77PVUploadEntry> const& entries,
                                                    bool const& wait) {
         if (m_mode != Ir77PVBufferMode::Staging) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: UploadBatch requires Staging mode.");
-        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: device not set.");
-        if (m_upload_cmd != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: an upload is already in flight on this staging buffer.");
+        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: SetDevice not called.");
+        if (m_upload_cmd != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: this staging buffer already has an upload.");
 
         VkDeviceSize total{0};
-        for (auto const& e : entries) {
-            if (e.size == 0) continue;
-            if (e.dst == VK_NULL_HANDLE || e.data == nullptr) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: upload entry has no destination or data.");
-            total += e.size;
+        for (auto const& entry : entries) {
+            if (entry.size == 0) continue;
+            if (entry.dst == VK_NULL_HANDLE || entry.data == nullptr) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: upload entry has no destination or data.");
+            total += entry.size;
         }
         if (total == 0) return Ir77RETURN<Ir77OperationSucceeded>();
 
         m_usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
-        auto const created = CreateResources(total, 1);
-        if (created->ID() != GUIDIr77OperationSucceeded) return created;
+        auto result = CreateResources(total, 1);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        // pack back to back; one copy region per entry
-        std::vector<VkBufferCopy> regions(entries.size());
-        VkDeviceSize cursor{0};
+        std::vector<VkBufferCopy> regions{};
+        DefineStagingData(entries, regions);
 
-        for (std::size_t i = 0; i < entries.size(); i++) {
-            if (entries[i].size == 0) continue;
+        m_upload_pool = pool;
 
-            std::memcpy(static_cast<std::uint8_t*>(m_mapped_ptrs[0]) + cursor, entries[i].data, static_cast<std::size_t>(entries[i].size));
+        result = DefineUploadCommands(entries, regions);
+        if (result->ID() == GUIDIr77OperationSucceeded) result = DefineUploadFence();
+        if (result->ID() == GUIDIr77OperationSucceeded) result = SubmitUpload(queue);
 
-            regions[i].srcOffset = cursor;
-            regions[i].dstOffset = entries[i].dst_offset;
-            regions[i].size = entries[i].size;
-
-            cursor += entries[i].size;
+        if (result->ID() != GUIDIr77OperationSucceeded) {
+            ReleaseUpload();
+            return result;
         }
 
-        vmaFlushAllocation(m_allocator, m_allocations[0], 0, total);  // no-op on coherent memory
+        if (!wait) return Ir77RETURN<Ir77OperationSucceeded>();
 
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
-        m_upload_pool = pool;
+        VkResult const waited{vkWaitForFences(device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX)};
 
-        VkCommandBufferAllocateInfo cmd_alloc{};
-        cmd_alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cmd_alloc.commandPool = pool;
-        cmd_alloc.commandBufferCount = 1;
-
-        VkResult result = vkAllocateCommandBuffers(device, &cmd_alloc, &m_upload_cmd);
-
-        if (result == VK_SUCCESS) {
-            VkCommandBufferBeginInfo begin_info{};
-            begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-            result = vkBeginCommandBuffer(m_upload_cmd, &begin_info);
-        }
-
-        if (result == VK_SUCCESS) {
-            for (std::size_t i = 0; i < entries.size(); i++) {
-                if (entries[i].size == 0) continue;
-                vkCmdCopyBuffer(m_upload_cmd, m_buffers[0], entries[i].dst, 1, &regions[i]);
-            }
-
-            // visible to whatever reads it next -- vertex / index fetch, indirect, shaders, later copies
-            VkMemoryBarrier barrier{};
-            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-            vkCmdPipelineBarrier(m_upload_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-            result = vkEndCommandBuffer(m_upload_cmd);
-        }
-
-        if (result == VK_SUCCESS) {
-            VkFenceCreateInfo fence_info{};
-            fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-            result = vkCreateFence(device, &fence_info, nullptr, &m_upload_fence);
-        }
-
-        if (result == VK_SUCCESS) {
-            VkSubmitInfo submit_info{};
-            submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            submit_info.commandBufferCount = 1;
-            submit_info.pCommandBuffers = &m_upload_cmd;
-            result = vkQueueSubmit(queue, 1, &submit_info, m_upload_fence);
-        }
-
-        if (result != VK_SUCCESS) {
-            ReleaseUpload();
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: batch upload submit failed.");
-        }
-
-        m_upload_submitted = true;
-
-        if (!wait) return Ir77RETURN<Ir77OperationSucceeded>();
-
-        result = vkWaitForFences(device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX);
         ReleaseUpload();
 
-        if (result != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: batch upload wait failed.");
+        if (waited != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: batch upload wait failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // queries
+    // -------------------------------------------------------------------------------------------------------------------------------------
     // true when no upload is in flight on this buffer, or its fence has signalled
     std::shared_ptr<IIr77Return const> IsUploadFinished(bool& finished) {
         finished = true;
@@ -306,7 +248,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
 
     // Static and Staging buffers ignore the copy index so callers can always pass the frame index
     std::shared_ptr<IIr77Return const> GetBuffer(std::uint32_t const& copy, VkBuffer* buffer) {
-        std::uint32_t const index = (m_mode == Ir77PVBufferMode::Dynamic) ? copy : 0;
+        std::uint32_t const index{CopyIndex(copy)};
         if (index >= m_buffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: copy index out of range.");
 
         *buffer = m_buffers[index];
@@ -315,7 +257,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
     }
 
     std::shared_ptr<IIr77Return const> GetBufferInfo(std::uint32_t const& copy, VkDescriptorBufferInfo* info) {
-        std::uint32_t const index = (m_mode == Ir77PVBufferMode::Dynamic) ? copy : 0;
+        std::uint32_t const index{CopyIndex(copy)};
         if (index >= m_buffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: copy index out of range.");
 
         info->buffer = m_buffers[index];
@@ -343,22 +285,160 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // steps
+    // -------------------------------------------------------------------------------------------------------------------------------------
    private:
+    // One copy: usage and memory placement follow the mode
+    std::shared_ptr<IIr77Return const> DefineBuffer(std::uint32_t const& index) {
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = m_size;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo alloc_info{};
+
+        switch (m_mode) {
+            case Ir77PVBufferMode::Dynamic:
+                buffer_info.usage = m_usage;
+                alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+                alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+                break;
+
+            case Ir77PVBufferMode::Static:
+                buffer_info.usage = m_usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+                alloc_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+                break;
+
+            case Ir77PVBufferMode::Staging:
+                buffer_info.usage = m_usage | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+                alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+                alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+                break;
+
+            default:
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: unknown buffer mode.");
+        }
+
+        VmaAllocationInfo result_info{};
+        if (vmaCreateBuffer(m_allocator, &buffer_info, &alloc_info, &m_buffers[index], &m_allocations[index], &result_info) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: vmaCreateBuffer failed at " + std::to_string(index) + ".");
+
+        m_mapped_ptrs[index] = result_info.pMappedData;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Packs the entries back to back into the mapped staging memory; regions[i] is entry i's copy (size 0 = skipped)
+    std::shared_ptr<IIr77Return const> DefineStagingData(std::vector<Ir77PVUploadEntry> const& entries, std::vector<VkBufferCopy>& regions) {
+        regions.assign(entries.size(), VkBufferCopy{});
+
+        VkDeviceSize cursor{0};
+
+        for (std::size_t i = 0; i < entries.size(); i++) {
+            if (entries[i].size == 0) continue;
+
+            std::memcpy(static_cast<std::uint8_t*>(m_mapped_ptrs[0]) + cursor, entries[i].data, static_cast<std::size_t>(entries[i].size));
+
+            regions[i].srcOffset = cursor;
+            regions[i].dstOffset = entries[i].dst_offset;
+            regions[i].size = entries[i].size;
+
+            cursor += entries[i].size;
+        }
+
+        // no-op on coherent memory
+        vmaFlushAllocation(m_allocator, m_allocations[0], 0, cursor);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> DefineUploadCommands(std::vector<Ir77PVUploadEntry> const& entries, std::vector<VkBufferCopy> const& regions) {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        VkCommandBufferAllocateInfo cmd_alloc{};
+        cmd_alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cmd_alloc.commandPool = m_upload_pool;
+        cmd_alloc.commandBufferCount = 1;
+
+        if (vkAllocateCommandBuffers(device, &cmd_alloc, &m_upload_cmd) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: vkAllocateCommandBuffers failed.");
+
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        if (vkBeginCommandBuffer(m_upload_cmd, &begin_info) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: vkBeginCommandBuffer failed.");
+
+        for (std::size_t i = 0; i < entries.size(); i++) {
+            if (regions[i].size == 0) continue;
+
+            vkCmdCopyBuffer(m_upload_cmd, m_buffers[0], entries[i].dst, 1, &regions[i]);
+        }
+
+        // visible to whatever reads it next -- vertex / index fetch, indirect, shaders, later copies
+        VkMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+
+        vkCmdPipelineBarrier(m_upload_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+        if (vkEndCommandBuffer(m_upload_cmd) != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: vkEndCommandBuffer failed.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> DefineUploadFence() {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        VkFenceCreateInfo fence_info{};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+
+        if (vkCreateFence(device, &fence_info, nullptr, &m_upload_fence) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: vkCreateFence failed.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SubmitUpload(VkQueue const& queue) {
+        VkSubmitInfo submit_info{};
+        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &m_upload_cmd;
+
+        if (vkQueueSubmit(queue, 1, &submit_info, m_upload_fence) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: vkQueueSubmit failed.");
+
+        m_upload_submitted = true;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // internals
+    // -------------------------------------------------------------------------------------------------------------------------------------
+   private:
+    std::uint32_t CopyIndex(std::uint32_t const& copy) const { return m_mode == Ir77PVBufferMode::Dynamic ? copy : 0; }
+
     // Frees every copy. Waits for the GPU first -- a frame in flight may still be reading the old buffers.
     // Staging skips the device-wide wait: its only reader is its own upload, which ReleaseUpload has already waited for.
     void Release() {
         if (m_buffers.empty()) return;
 
         if (m_device && m_mode != Ir77PVBufferMode::Staging) {
-            VkDevice device;
+            VkDevice device{VK_NULL_HANDLE};
             m_device->GetDevice(&device);
 
             vkDeviceWaitIdle(device);
         }
 
-        for (std::size_t i = 0; i < m_buffers.size(); i++) {
+        for (std::size_t i = 0; i < m_buffers.size(); i++)
             if (m_buffers[i] != VK_NULL_HANDLE) vmaDestroyBuffer(m_allocator, m_buffers[i], m_allocations[i]);
-        }
 
         m_buffers.clear();
         m_allocations.clear();
@@ -385,7 +465,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
     }
 
    private:
-    std::shared_ptr<IIr77PVDevice> m_device;
+    std::shared_ptr<IIr77PVDevice> m_device{};
 
     VmaAllocator m_allocator{VK_NULL_HANDLE};
 
@@ -410,4 +490,5 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
 
     bool m_upload_submitted{false};
 };
+
 }  // namespace NSIr77PeregrineV

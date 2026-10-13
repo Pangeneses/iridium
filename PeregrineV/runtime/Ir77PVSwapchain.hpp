@@ -12,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -471,10 +472,14 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     bool DefineDepth(VkDevice device) {
         DestroyDepth(device);
 
+        VkFormat depth_format{VK_FORMAT_UNDEFINED};
+        m_render_pass->GetDepthFormat(&depth_format);
+        if (depth_format == VK_FORMAT_UNDEFINED) return false;
+
         VkImageCreateInfo image_info{};
         image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         image_info.imageType = VK_IMAGE_TYPE_2D;
-        image_info.format = DEPTH_FORMAT;
+        image_info.format = depth_format;
         image_info.extent = {m_swapchain_extent.width, m_swapchain_extent.height, 1};
         image_info.mipLevels = 1;
         image_info.arrayLayers = 1;
@@ -494,7 +499,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         view_info.image = m_depth_image;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = DEPTH_FORMAT;
+        view_info.format = depth_format;
         view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
 
         return vkCreateImageView(device, &view_info, nullptr, &m_depth_view) == VK_SUCCESS;
@@ -524,9 +529,6 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     }
 
    private:
-    // Must equal the depth attachment format in Ir77PVRenderPass (Main)
-    static constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
-
     std::shared_ptr<IIr77PVInstance> m_instance{};
 
     std::shared_ptr<IIr77PVDevice> m_device{};
@@ -557,9 +559,9 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
     VkSwapchainKHR m_swapchain{VK_NULL_HANDLE};
 
-    VkSwapchainKHR m_old_swapchain{VK_NULL_HANDLE};  // replaced by the last DefineSwapchain, released by CleanupSwapchain
+    VkSwapchainKHR m_old_swapchain{VK_NULL_HANDLE};
 
-    std::vector<VkImage> m_swapchain_images{};  // owned by the swapchain -- never destroyed here
+    std::vector<VkImage> m_swapchain_images{};
 
     std::vector<VkImageView> m_swapchain_views{};
 

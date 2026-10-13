@@ -26,11 +26,7 @@ namespace NSIr77PeregrineV {
 typedef struct IIr77PVPipelineCPT : virtual public IIr77Enlisted {
     IIr77PVPipelineCPT() = default;
 
-    virtual std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) = 0;
-
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetRenderPass(std::shared_ptr<IIr77PVRenderPass> render_pass) = 0;
 

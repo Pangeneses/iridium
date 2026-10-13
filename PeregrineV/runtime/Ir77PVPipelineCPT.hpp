@@ -1,9 +1,10 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include <vulkan/vulkan_core.h>
 
+#include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
@@ -26,6 +27,12 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// =============================================================================================================================================
+// Ir77PVPipelineCPT -- one compute pipeline for one Ir77PVComputeKind.
+//
+//   configure: SetDevice / SetLayout / SetShader / SetKind
+//   create:    CreatePipeline -> DefineShaderStage -> DefinePipeline
+// =============================================================================================================================================
 class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public std::enable_shared_from_this<Ir77PVPipelineCPT> {
    public:
     Ir77PVPipelineCPT() {
@@ -38,17 +45,14 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         m_enlisted = std::chrono::system_clock::now();
     }
 
+    // the owner waits for the device to go idle before releasing pipelines
     ~Ir77PVPipelineCPT() {
-        if (!m_device) return;
+        if (!m_device || m_pipeline == VK_NULL_HANDLE) return;
 
-        VkDevice device;
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
-        vkDeviceWaitIdle(device);
-
-        if (m_pipeline != VK_NULL_HANDLE) {
-            vkDestroyPipeline(device, m_pipeline, nullptr);
-        }
+        vkDestroyPipeline(device, m_pipeline, nullptr);
     }
 
    public:
@@ -92,6 +96,9 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         return GUIDQuerySucceeded;
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // configuration
+    // -------------------------------------------------------------------------------------------------------------------------------------
    public:
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
         m_device = device;
@@ -117,20 +124,46 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // create
+    // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreatePipeline() {
-        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: device not set.");
-        if (!m_layout) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: layout not set.");
-        if (!m_shader_stack) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: shader stack not set.");
+        if (m_pipeline != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: pipeline already created.");
 
-        VkDevice device;
-        m_device->GetDevice(&device);
+        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: SetDevice not called.");
+        if (!m_layout) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: SetLayout not called.");
+        if (!m_shader_stack) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: SetShader not called.");
 
-        VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
-        m_layout->GetPipelineLayout(&pipeline_layout);
+        auto result = DefineShaderStage();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        if (pipeline_layout == VK_NULL_HANDLE)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: layout has no VkPipelineLayout -- call its DefinePipelineLayout first.");
+        result = DefinePipeline();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Compute Pipeline.");
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // queries
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) {
+        *pipeline = m_pipeline;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetKind(Ir77PVComputeKind* kind) {
+        *kind = m_kind;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // steps
+    // -------------------------------------------------------------------------------------------------------------------------------------
+   private:
+    // Exactly one compute stage per kind
+    std::shared_ptr<IIr77Return const> DefineShaderStage() {
         std::vector<VkPipelineShaderStageCreateInfo> shader_stages{};
 
         switch (m_kind) {
@@ -156,40 +189,49 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
 
         if (shader_stages.size() != 1) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: expected exactly one compute shader stage.");
 
-        VkComputePipelineCreateInfo compute_info{};
-        compute_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        compute_info.stage = shader_stages[0];
-        compute_info.layout = pipeline_layout;
-        compute_info.basePipelineHandle = VK_NULL_HANDLE;
-        compute_info.basePipelineIndex = -1;
+        if (shader_stages[0].stage != VK_SHADER_STAGE_COMPUTE_BIT)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: shader stage is not a compute stage.");
 
-        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &compute_info, nullptr, &m_pipeline) != VK_SUCCESS) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: vkCreateComputePipelines failed.");
-        }
-
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Compute Pipeline.");
-    }
-
-    std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) {
-        *pipeline = m_pipeline;
+        m_shader_stage = shader_stages[0];
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetKind(Ir77PVComputeKind* kind) {
-        *kind = m_kind;
+    std::shared_ptr<IIr77Return const> DefinePipeline() {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
+        m_layout->GetPipelineLayout(&pipeline_layout);
+
+        if (pipeline_layout == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: pipeline layout not created.");
+
+        VkComputePipelineCreateInfo compute_info{};
+        compute_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        compute_info.stage = m_shader_stage;
+        compute_info.layout = pipeline_layout;
+        compute_info.basePipelineHandle = VK_NULL_HANDLE;
+        compute_info.basePipelineIndex = -1;
+
+        VkPipeline pipeline{VK_NULL_HANDLE};
+        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &compute_info, nullptr, &pipeline) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: vkCreateComputePipelines failed.");
+
+        m_pipeline = pipeline;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
-    std::shared_ptr<IIr77PVDevice> m_device{nullptr};
+    std::shared_ptr<IIr77PVDevice> m_device{};
 
-    std::shared_ptr<IIr77PVLayoutCPT> m_layout{nullptr};
+    std::shared_ptr<IIr77PVLayoutCPT> m_layout{};
 
-    std::shared_ptr<IIr77PVShader> m_shader_stack{nullptr};
+    std::shared_ptr<IIr77PVShader> m_shader_stack{};
 
     Ir77PVComputeKind m_kind{Ir77PVComputeKind::Culling};
+
+    VkPipelineShaderStageCreateInfo m_shader_stage{};
 
     VkPipeline m_pipeline{VK_NULL_HANDLE};
 };

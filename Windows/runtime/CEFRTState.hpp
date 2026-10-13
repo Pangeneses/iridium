@@ -49,7 +49,7 @@ class CEFRTState {
         CefString(&settings.resources_dir_path).FromString(exe_dir.string());
         CefString(&settings.locales_dir_path).FromString((exe_dir / "locales").string());
 
-        settings.log_severity = LOGSEVERITY_VERBOSE;
+        settings.log_severity = LOGSEVERITY_WARNING;  // errors, crashes, GPU / renderer failures -- without the updater noise
         CefString(&settings.log_file).FromASCII("/tmp/cef_debug.log");
 
         m_app = new CEFApp();
@@ -89,9 +89,10 @@ class CEFRTState {
         CefBrowserSettings browser_settings{};
         browser_settings.windowless_frame_rate = 60;
 
-        //  
+        //
         // "https://google.com"
-        m_browser = CefBrowserHost::CreateBrowserSync(window_info, new CEFClient(m_render_handler), "http://localhost:50003/landing",browser_settings, nullptr, nullptr);
+        m_browser = CefBrowserHost::CreateBrowserSync(window_info, new CEFClient(m_render_handler), "http://localhost:50003/landing", browser_settings, nullptr,
+                                                      nullptr);
 
         if (!m_browser) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CreateBrowserSync failed");

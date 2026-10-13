@@ -32,12 +32,7 @@ typedef struct IIr77PVLayoutRay : virtual public IIr77Enlisted {
     // 0 = no push constants. When > 0, visible to every ray-tracing stage.
     virtual std::shared_ptr<IIr77Return const> SetPushConstantSize(std::uint32_t const& size) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> DefineDescriptorSetLayout() = 0;
-
-    // Room for `capacity` sets of every set layout
-    virtual std::shared_ptr<IIr77Return const> DefineDescriptorPool(std::uint32_t const& capacity) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> DefinePipelineLayout() = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateLayout(std::uint32_t const& pool_capacity) = 0;
 
     // `count` sets of one set layout from this layout's pool (one per frame in flight, typically)
     virtual std::shared_ptr<IIr77Return const> AllocateSets(std::uint32_t const& set, std::uint32_t const& count, std::vector<VkDescriptorSet>& sets) = 0;

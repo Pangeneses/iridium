@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
@@ -28,18 +29,30 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// =============================================================================================================================================
+// Ir77PVLayoutRay -- descriptor set layouts, descriptor pool and pipeline layout for a ray tracing pipeline.
+// Bindings are supplied per set by the caller; with none, set 0 gets the default TLAS / output / camera / instance table.
+//
+//   configure: SetDevice / SetBindings (per set, contiguous from 0) / SetPushConstantSize
+//   create:    CreateLayout -> DefineDescriptorSetLayout -> DefineDescriptorPool -> DefinePipelineLayout
+// =============================================================================================================================================
 class Ir77PVLayoutRay : public Ir77Enlisted, public IIr77PVLayoutRay, public std::enable_shared_from_this<Ir77PVLayoutRay> {
    public:
     Ir77PVLayoutRay() {
-        m_enlisted_uuid.Generate();
+        try {
+            m_enlisted_uuid.Generate();
+        } catch (std::invalid_argument const&) {
+            throw;
+        }
 
         m_enlisted = std::chrono::system_clock::now();
     }
 
+    // the owner waits for the device to go idle before releasing layouts
     ~Ir77PVLayoutRay() {
         if (!m_device) return;
 
-        VkDevice device;
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
         Destroy(device);
@@ -113,107 +126,39 @@ class Ir77PVLayoutRay : public Ir77Enlisted, public IIr77PVLayoutRay, public std
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // creation
+    // create
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> DefineDescriptorSetLayout() {
-        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: device not set.");
+    // pool_capacity = how many of each set the pool can hand out; 0 = no pool (sets come from elsewhere). Replaces any previous layout.
+    std::shared_ptr<IIr77Return const> CreateLayout(std::uint32_t const& pool_capacity) {
+        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: SetDevice not called.");
 
-        VkDevice device;
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
         Destroy(device);
 
         if (m_bindings.empty()) m_bindings.push_back(DefaultBindings());
 
-        m_set_layouts.assign(m_bindings.size(), VK_NULL_HANDLE);
+        auto result = DefineDescriptorSetLayout();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        for (std::size_t set = 0; set < m_bindings.size(); set++) {
-            // pipeline layouts take a contiguous array of set layouts -- a gap would need a null layout, which core Vulkan rejects
-            if (m_bindings[set].empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: set numbers must be contiguous from 0.");
-
-            VkDescriptorSetLayoutCreateInfo info{};
-            info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-            info.bindingCount = static_cast<std::uint32_t>(m_bindings[set].size());
-            info.pBindings = m_bindings[set].data();
-
-            if (vkCreateDescriptorSetLayout(device, &info, nullptr, &m_set_layouts[set]) != VK_SUCCESS)
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: vkCreateDescriptorSetLayout failed.");
+        if (pool_capacity > 0) {
+            result = DefineDescriptorPool(pool_capacity);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
         }
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Define Ray Descriptor Set Layout.");
-    }
+        result = DefinePipelineLayout();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-    std::shared_ptr<IIr77Return const> DefineDescriptorPool(std::uint32_t const& capacity) {
-        if (m_set_layouts.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: DefineDescriptorSetLayout not called.");
-
-        if (capacity == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: pool capacity is zero.");
-
-        VkDevice device;
-        m_device->GetDevice(&device);
-
-        if (m_pool != VK_NULL_HANDLE) {
-            vkDestroyDescriptorPool(device, m_pool, nullptr);
-            m_pool = VK_NULL_HANDLE;
-        }
-
-        // every binding of every set, times the number of sets of each layout the pool must hold
-        std::map<VkDescriptorType, std::uint32_t> counts{};
-        for (auto const& bindings : m_bindings)
-            for (auto const& binding : bindings) counts[binding.descriptorType] += binding.descriptorCount * capacity;
-
-        std::vector<VkDescriptorPoolSize> sizes{};
-        sizes.reserve(counts.size());
-        for (auto const& [type, count] : counts) sizes.push_back({type, count});
-
-        VkDescriptorPoolCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        info.maxSets = capacity * static_cast<std::uint32_t>(m_set_layouts.size());
-        info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
-        info.pPoolSizes = sizes.data();
-
-        if (vkCreateDescriptorPool(device, &info, nullptr, &m_pool) != VK_SUCCESS)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: vkCreateDescriptorPool failed.");
-
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Define Ray Descriptor Pool.");
-    }
-
-    std::shared_ptr<IIr77Return const> DefinePipelineLayout() {
-        if (m_set_layouts.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: DefineDescriptorSetLayout not called.");
-
-        VkDevice device;
-        m_device->GetDevice(&device);
-
-        if (m_pipeline_layout != VK_NULL_HANDLE) {
-            vkDestroyPipelineLayout(device, m_pipeline_layout, nullptr);
-            m_pipeline_layout = VK_NULL_HANDLE;
-        }
-
-        VkPushConstantRange range{};
-        range.stageFlags = kRayStages;
-        range.offset = 0;
-        range.size = m_push_constant_size;
-
-        VkPipelineLayoutCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        info.setLayoutCount = static_cast<std::uint32_t>(m_set_layouts.size());
-        info.pSetLayouts = m_set_layouts.data();
-        info.pushConstantRangeCount = m_push_constant_size > 0 ? 1 : 0;
-        info.pPushConstantRanges = m_push_constant_size > 0 ? &range : nullptr;
-
-        if (vkCreatePipelineLayout(device, &info, nullptr, &m_pipeline_layout) != VK_SUCCESS)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: vkCreatePipelineLayout failed.");
-
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Define Ray Pipeline Layout.");
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Ray Layout.");
     }
 
     std::shared_ptr<IIr77Return const> AllocateSets(std::uint32_t const& set, std::uint32_t const& count, std::vector<VkDescriptorSet>& sets) {
-        if (m_pool == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: DefineDescriptorPool not called.");
-
+        if (m_pool == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: layout has no descriptor pool.");
         if (set >= m_set_layouts.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: set index out of range.");
-
         if (count == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: set count is zero.");
 
-        VkDevice device;
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
         std::vector<VkDescriptorSetLayout> const layouts(count, m_set_layouts[set]);
@@ -262,7 +207,83 @@ class Ir77PVLayoutRay : public Ir77Enlisted, public IIr77PVLayoutRay, public std
     }
 
     std::shared_ptr<IIr77Return const> GetPushConstantStages(VkShaderStageFlags* stages) {
-        *stages = m_push_constant_size > 0 ? kRayStages : 0;
+        *stages = m_push_constant_size > 0 ? RAY_STAGES : 0;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // steps
+    // -------------------------------------------------------------------------------------------------------------------------------------
+   private:
+    std::shared_ptr<IIr77Return const> DefineDescriptorSetLayout() {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        m_set_layouts.assign(m_bindings.size(), VK_NULL_HANDLE);
+
+        for (std::size_t set = 0; set < m_bindings.size(); set++) {
+            // pipeline layouts take a contiguous array of set layouts -- a gap would need a null layout, which core Vulkan rejects
+            if (m_bindings[set].empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: set numbers must be contiguous from 0.");
+
+            VkDescriptorSetLayoutCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            info.bindingCount = static_cast<std::uint32_t>(m_bindings[set].size());
+            info.pBindings = m_bindings[set].data();
+
+            if (vkCreateDescriptorSetLayout(device, &info, nullptr, &m_set_layouts[set]) != VK_SUCCESS)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: vkCreateDescriptorSetLayout failed at set " + std::to_string(set) + ".");
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Every binding of every set, times the number of each set the pool must hold
+    std::shared_ptr<IIr77Return const> DefineDescriptorPool(std::uint32_t const& pool_capacity) {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        std::map<VkDescriptorType, std::uint32_t> counts{};
+        for (auto const& bindings : m_bindings)
+            for (auto const& binding : bindings) counts[binding.descriptorType] += binding.descriptorCount * pool_capacity;
+
+        std::vector<VkDescriptorPoolSize> sizes{};
+        sizes.reserve(counts.size());
+        for (auto const& [type, count] : counts) sizes.push_back(VkDescriptorPoolSize{type, count});
+
+        VkDescriptorPoolCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        info.maxSets = pool_capacity * static_cast<std::uint32_t>(m_set_layouts.size());
+        info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
+        info.pPoolSizes = sizes.data();
+
+        if (vkCreateDescriptorPool(device, &info, nullptr, &m_pool) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: vkCreateDescriptorPool failed.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // One push constant range visible to every ray stage
+    std::shared_ptr<IIr77Return const> DefinePipelineLayout() {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        VkPushConstantRange range{};
+        range.stageFlags = RAY_STAGES;
+        range.offset = 0;
+        range.size = m_push_constant_size;
+
+        bool const has_push{m_push_constant_size > 0};
+
+        VkPipelineLayoutCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        info.setLayoutCount = static_cast<std::uint32_t>(m_set_layouts.size());
+        info.pSetLayouts = m_set_layouts.data();
+        info.pushConstantRangeCount = has_push ? 1 : 0;
+        info.pPushConstantRanges = has_push ? &range : nullptr;
+
+        if (vkCreatePipelineLayout(device, &info, nullptr, &m_pipeline_layout) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayoutRay: vkCreatePipelineLayout failed.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -271,18 +292,14 @@ class Ir77PVLayoutRay : public Ir77Enlisted, public IIr77PVLayoutRay, public std
     // internals
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
-    static constexpr VkShaderStageFlags kRayStages = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
-                                                     VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_INTERSECTION_BIT_KHR |
-                                                     VK_SHADER_STAGE_CALLABLE_BIT_KHR;
-
     // Set 0 when the caller gives none. Closest-hit sees the TLAS so it can fire shadow / reflection rays.
-    static std::vector<VkDescriptorSetLayoutBinding> DefaultBindings() {
-        VkShaderStageFlags const hit = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+    std::vector<VkDescriptorSetLayoutBinding> DefaultBindings() const {
+        VkShaderStageFlags const hit{VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR};
 
         return {
             {0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, nullptr},  // TLAS
-            {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr},                                            // output
-            {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | hit, nullptr},      // camera
+            {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr},                                                // output
+            {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | hit, nullptr},          // camera
             {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, hit, nullptr},  // per-instance geometry / material table
         };
     }
@@ -300,17 +317,22 @@ class Ir77PVLayoutRay : public Ir77Enlisted, public IIr77PVLayoutRay, public std
     }
 
    private:
-    std::shared_ptr<IIr77PVDevice> m_device;
+    static constexpr VkShaderStageFlags RAY_STAGES = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
+                                                     VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_INTERSECTION_BIT_KHR |
+                                                     VK_SHADER_STAGE_CALLABLE_BIT_KHR;
+
+    std::shared_ptr<IIr77PVDevice> m_device{};
 
     // [set][binding]
     std::vector<std::vector<VkDescriptorSetLayoutBinding>> m_bindings{};
+
+    std::uint32_t m_push_constant_size{0};
 
     std::vector<VkDescriptorSetLayout> m_set_layouts{};
 
     VkDescriptorPool m_pool{VK_NULL_HANDLE};
 
     VkPipelineLayout m_pipeline_layout{VK_NULL_HANDLE};
-
-    std::uint32_t m_push_constant_size{0};
 };
+
 }  // namespace NSIr77PeregrineV

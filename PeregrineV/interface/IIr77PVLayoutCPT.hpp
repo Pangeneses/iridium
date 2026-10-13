@@ -25,11 +25,7 @@ typedef struct IIr77PVLayoutCPT : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetKind(Ir77PVComputeKind const& kind) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> DefineDescriptorSetLayout() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> DefineDescriptorPool(std::uint32_t const& max_count) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> DefinePipelineLayout() = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateLayout(std::uint32_t const& pool_capacity) = 0;
 
     virtual std::shared_ptr<IIr77Return const> AllocateSet(std::uint32_t const& set_index, VkDescriptorSet* set) = 0;
 

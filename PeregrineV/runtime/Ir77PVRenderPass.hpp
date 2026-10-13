@@ -1,11 +1,9 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -27,6 +25,16 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// =============================================================================================================================================
+// Ir77PVRenderPass -- one render pass of a kind:
+//   Main       color (swapchain) + depth, presents
+//   Post       color (swapchain), no depth, presents
+//   Offscreen  color (HDR) + depth, color sampled afterwards
+//   Shadow     depth only, sampled afterwards
+//
+//   SetDevice -> SetKind (resets the depth format) -> [SetColorFormat / SetDepthFormat] -> CreateRenderPass
+// The depth format is decided here; framebuffers read it back with GetDepthFormat so they always match.
+// =============================================================================================================================================
 class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public std::enable_shared_from_this<Ir77PVRenderPass> {
    public:
     Ir77PVRenderPass() {
@@ -42,10 +50,10 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
     ~Ir77PVRenderPass() {
         if (!m_device) return;
 
-        VkDevice device;
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
-        vkDestroyRenderPass(device, m_render_pass, nullptr);
+        if (m_render_pass != VK_NULL_HANDLE) vkDestroyRenderPass(device, m_render_pass, nullptr);
     }
 
    public:
@@ -93,18 +101,13 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
     // configuration
     // -------------------------------------------------------------------------------------------------------------------------------------
    public:
-    std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) {
-        m_instance = instance;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
         m_device = device;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Resets the formats to the kind's defaults -- call SetColorFormat / SetDepthFormat after this, not before
     std::shared_ptr<IIr77Return const> SetKind(Ir77PVRenderPassKind const& kind) {
         m_kind = kind;
         m_depth_format = VK_FORMAT_UNDEFINED;
@@ -136,6 +139,7 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Optional -- left UNDEFINED, CreateRenderPass picks the first supported depth format
     std::shared_ptr<IIr77Return const> SetDepthFormat(VkFormat const& format) {
         m_depth_format = format;
 
@@ -143,26 +147,108 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // creation
+    // create
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreateRenderPass() {
         if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVRenderPass: device not set.");
-
-        VkDevice device;
-        m_device->GetDevice(&device);
-
-        if (m_render_pass != VK_NULL_HANDLE) {
-            vkDestroyRenderPass(device, m_render_pass, nullptr);
-            m_render_pass = VK_NULL_HANDLE;
-        }
 
         bool const color = HasColorAttachment();
         bool const depth = HasDepthAttachment();
 
         if (color && m_color_format == VK_FORMAT_UNDEFINED) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVRenderPass: color format not set.");
 
-        if (depth && m_depth_format == VK_FORMAT_UNDEFINED) m_depth_format = PickDepthFormat();
-        if (depth && m_depth_format == VK_FORMAT_UNDEFINED) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVRenderPass: no supported depth format.");
+        if (depth) {
+            auto const result = DefineDepthFormat();
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        }
+
+        return DefineRenderPass(color, depth);
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // queries
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    std::shared_ptr<IIr77Return const> GetRenderPass(VkRenderPass* render_pass) {
+        *render_pass = m_render_pass;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetKind(Ir77PVRenderPassKind* kind) {
+        *kind = m_kind;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetColorFormat(VkFormat* format) {
+        *format = HasColorAttachment() ? m_color_format : VK_FORMAT_UNDEFINED;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // valid after CreateRenderPass -- framebuffers size their depth image with this
+    std::shared_ptr<IIr77Return const> GetDepthFormat(VkFormat* format) {
+        *format = HasDepthAttachment() ? m_depth_format : VK_FORMAT_UNDEFINED;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> HasColor(bool* has_color) {
+        *has_color = HasColorAttachment();
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> HasDepth(bool* has_depth) {
+        *has_depth = HasDepthAttachment();
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetAttachmentCount(std::uint32_t* count) {
+        *count = m_attachment_count;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // define
+    // -------------------------------------------------------------------------------------------------------------------------------------
+   private:
+    // Keeps a format given through SetDepthFormat; otherwise the first that works as a depth attachment (and as a sampled image for Shadow)
+    std::shared_ptr<IIr77Return const> DefineDepthFormat() {
+        if (m_depth_format != VK_FORMAT_UNDEFINED) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        VkPhysicalDevice physical{VK_NULL_HANDLE};
+        m_device->GetPhysicalDevice(&physical);
+
+        VkFormatFeatureFlags required{VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT};
+        if (m_kind == Ir77PVRenderPassKind::Shadow) required |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+
+        std::array<VkFormat, 4> const candidates{VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM};
+
+        for (auto const format : candidates) {
+            VkFormatProperties props{};
+            vkGetPhysicalDeviceFormatProperties(physical, format, &props);
+
+            if ((props.optimalTilingFeatures & required) == required) {
+                m_depth_format = format;
+                return Ir77RETURN<Ir77OperationSucceeded>();
+            }
+        }
+
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVRenderPass: no supported depth format.");
+    }
+
+    // One subpass: [color], [depth] in that order -- framebuffers attach in the same order
+    std::shared_ptr<IIr77Return const> DefineRenderPass(bool const& color, bool const& depth) {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        if (m_render_pass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(device, m_render_pass, nullptr);
+            m_render_pass = VK_NULL_HANDLE;
+        }
 
         std::vector<VkAttachmentDescription> attachments{};
 
@@ -200,9 +286,8 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
         render_pass_info.dependencyCount = static_cast<std::uint32_t>(dependencies.size());
         render_pass_info.pDependencies = dependencies.data();
 
-        if (vkCreateRenderPass(device, &render_pass_info, nullptr, &m_render_pass) != VK_SUCCESS) {
+        if (vkCreateRenderPass(device, &render_pass_info, nullptr, &m_render_pass) != VK_SUCCESS)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVRenderPass: vkCreateRenderPass failed.");
-        }
 
         m_attachment_count = static_cast<std::uint32_t>(attachments.size());
 
@@ -210,60 +295,15 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // queries
+    // builders -- values only, no state
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> GetRenderPass(VkRenderPass* render_pass) {
-        *render_pass = m_render_pass;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetKind(Ir77PVRenderPassKind* kind) {
-        *kind = m_kind;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetColorFormat(VkFormat* format) {
-        *format = HasColorAttachment() ? m_color_format : VK_FORMAT_UNDEFINED;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetDepthFormat(VkFormat* format) {
-        *format = HasDepthAttachment() ? m_depth_format : VK_FORMAT_UNDEFINED;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> HasColor(bool* has_color) {
-        *has_color = HasColorAttachment();
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> HasDepth(bool* has_depth) {
-        *has_depth = HasDepthAttachment();
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetAttachmentCount(std::uint32_t* count) {
-        *count = m_attachment_count;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    // internals
-    // -------------------------------------------------------------------------------------------------------------------------------------
-   private:
     bool HasColorAttachment() const { return m_kind != Ir77PVRenderPassKind::Shadow; }
 
     bool HasDepthAttachment() const { return m_kind != Ir77PVRenderPassKind::Post; }
 
     bool PresentsToSwapchain() const { return m_kind == Ir77PVRenderPassKind::Main || m_kind == Ir77PVRenderPassKind::Post; }
 
+    // Swapchain passes end in PRESENT_SRC; Offscreen ends ready to be sampled
     VkAttachmentDescription ColorAttachment() const {
         VkAttachmentDescription attachment{};
         attachment.format = m_color_format;
@@ -295,21 +335,19 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
         return attachment;
     }
 
-    // External dependencies:
-    //   in  -- wait for prior use of the attachments (previous frame's writes / sampling) before this pass writes them
-    //   out -- for passes whose result is sampled later (Shadow / Offscreen), make the writes visible to fragment shaders
+    // External dependencies -- not by-region: the passes on the other side read whole images, not the same pixel
+    //   in  -- prior use of the attachments (previous frame's writes / sampling) finishes before this pass writes them
+    //   out -- for passes sampled afterwards (Shadow / Offscreen), the writes are visible to later fragment shaders
     std::vector<VkSubpassDependency> Dependencies() const {
         std::vector<VkSubpassDependency> dependencies{};
 
         VkSubpassDependency in{};
         in.srcSubpass = VK_SUBPASS_EXTERNAL;
         in.dstSubpass = 0;
-        in.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
         VkSubpassDependency out{};
         out.srcSubpass = 0;
         out.dstSubpass = VK_SUBPASS_EXTERNAL;
-        out.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
         switch (m_kind) {
             case Ir77PVRenderPassKind::Main:
@@ -358,30 +396,8 @@ class Ir77PVRenderPass : public Ir77Enlisted, public IIr77PVRenderPass, public s
         return dependencies;
     }
 
-    // First format that works as a depth attachment (and as a sampled image for Shadow)
-    VkFormat PickDepthFormat() const {
-        VkPhysicalDevice physical{VK_NULL_HANDLE};
-        m_device->GetPhysicalDevice(&physical);
-
-        VkFormatFeatureFlags required = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-        if (m_kind == Ir77PVRenderPassKind::Shadow) required |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-
-        std::array<VkFormat, 4> const candidates{VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM};
-
-        for (auto const format : candidates) {
-            VkFormatProperties props{};
-            vkGetPhysicalDeviceFormatProperties(physical, format, &props);
-
-            if ((props.optimalTilingFeatures & required) == required) return format;
-        }
-
-        return VK_FORMAT_UNDEFINED;
-    }
-
    private:
-    std::shared_ptr<IIr77PVInstance> m_instance;
-
-    std::shared_ptr<IIr77PVDevice> m_device;
+    std::shared_ptr<IIr77PVDevice> m_device{};
 
     Ir77PVRenderPassKind m_kind{Ir77PVRenderPassKind::Main};
 

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <vector>
@@ -345,9 +346,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
             layout->SetMeshShading(mesh);
 
-            if (layout->SetKind(kind)->ID() != GUIDIr77OperationSucceeded || layout->DefineDescriptorSetLayout()->ID() != GUIDIr77OperationSucceeded ||
-                layout->DefineDescriptorPool(capacity)->ID() != GUIDIr77OperationSucceeded ||
-                layout->DefinePipelineLayout()->ID() != GUIDIr77OperationSucceeded) {
+            if (layout->SetKind(kind)->ID() != GUIDIr77OperationSucceeded || layout->CreateLayout(capacity)->ID() != GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: layout creation failed.");
             }
 
@@ -368,8 +367,6 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
         for (auto const kind : kinds) {
             auto render_pass = std::static_pointer_cast<IIr77PVRenderPass>(std::make_shared<Ir77PVRenderPass>());
-
-            render_pass->SetInstance(m_instance);
 
             render_pass->SetDevice(m_devices.at(m_current_device));
 
@@ -573,9 +570,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
                 auto ipipeline = std::static_pointer_cast<IIr77PVPipeline>(std::make_shared<Ir77PVPipeline>());
 
-                ipipeline->SetInstance(m_instance);
                 ipipeline->SetDevice(m_devices.at(m_current_device));
-                ipipeline->SetSwapchain(m_swapchains.at(m_current_device).at(w));
                 ipipeline->SetRenderPass(pass->second);
                 ipipeline->SetLayout(layout->second);
                 ipipeline->SetShader(m_shaders.at(m_current_device));

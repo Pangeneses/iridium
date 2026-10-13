@@ -106,8 +106,6 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         for (std::size_t w = 0; w < windows; w++) {
             auto cmd_buffer = std::static_pointer_cast<IIr77PVCmdBuffer>(std::make_shared<Ir77PVCmdBuffer>());
 
-            cmd_buffer->SetInstance(m_context->m_instance);
-
             cmd_buffer->SetDevice(m_context->m_devices.at(device_id));
 
             cmd_buffer->SetSwapchain(m_context->m_swapchains.at(device_id).at(w));
@@ -128,8 +126,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
                 }
             }
 
-            if (cmd_buffer->DefineSyncObjects()->ID() != GUIDIr77OperationSucceeded || cmd_buffer->DefineCommandPool()->ID() != GUIDIr77OperationSucceeded ||
-                cmd_buffer->AllocateCommandBuffer()->ID() != GUIDIr77OperationSucceeded) {
+            if (cmd_buffer->CreateCommandBuffer()->ID() != GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: command buffer setup failed.");
             }
 
@@ -289,8 +286,8 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         auto const& swapchain = m_context->m_swapchains.at(m_context->m_current_device).at(index);
 
-        if (swapchain->CreateSwapchain()->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: Rebuild failed.");
+        auto const result = swapchain->RebuildSwapchain();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Reset Swapchain.");
     }

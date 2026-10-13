@@ -1,13 +1,12 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "../types/Ir77PVTypes.hpp"
@@ -31,6 +30,16 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// =============================================================================================================================================
+// Ir77PVPipeline -- one graphics pipeline for one Ir77PVPipelineKind, against subpass 0 of the render pass it is given.
+//
+//   configure: SetDevice / SetRenderPass / SetLayout / SetShader / SetKind
+//   create:    CreatePipeline -> DefineDynamicState -> DefineVertexInputState -> DefineInputAssemblyState -> DefineViewportState
+//              -> DefineRasterizationState -> DefineMultisamplingState -> DefineDepthStencilState -> DefineColorBlendAttachment
+//              -> DefineColorBlendState -> DefineShaderStages -> DefinePipeline
+//
+// Viewport and scissor are dynamic, so the pipeline does not depend on any swapchain extent.
+// =============================================================================================================================================
 class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::enable_shared_from_this<Ir77PVPipeline> {
    public:
     Ir77PVPipeline() {
@@ -44,9 +53,9 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     }
 
     ~Ir77PVPipeline() {
-        if (!m_device) return;
+        if (!m_device || m_pipeline == VK_NULL_HANDLE) return;
 
-        VkDevice device;
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
         vkDestroyPipeline(device, m_pipeline, nullptr);
@@ -93,21 +102,12 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return GUIDQuerySucceeded;
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // configuration
+    // -------------------------------------------------------------------------------------------------------------------------------------
    public:
-    std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) {
-        m_instance = instance;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
         m_device = device;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) {
-        m_swapchain = swapchain;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -136,10 +136,21 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // create
+    // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreatePipeline() {
+        if (m_pipeline != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: pipeline already created.");
+
+        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: SetDevice not called.");
+        if (!m_render_pass) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: SetRenderPass not called.");
+        if (!m_pipeline_layout) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: SetLayout not called.");
+        if (!m_shader_stack) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: SetShader not called.");
+
         DefineDynamicState();
 
-        DefineVertexInputState();
+        auto result = DefineVertexInputState();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         DefineInputAssemblyState();
 
@@ -155,11 +166,18 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
         DefineColorBlendState();
 
-        if (DefinePipeline()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: DefinePipeline failed.");
+        result = DefineShaderStages();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        return Ir77RETURN<Ir77OperationSucceeded>();
+        result = DefinePipeline();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Pipeline.");
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // queries
+    // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) {
         *pipeline = m_pipeline;
 
@@ -172,12 +190,14 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // steps
+    // -------------------------------------------------------------------------------------------------------------------------------------
    private:
-    bool IsShadow() const { return m_kind == Ir77PVPipelineKind::Shadow || m_kind == Ir77PVPipelineKind::ShadowSkinned; }
-
     std::shared_ptr<IIr77Return const> DefineDynamicState() {
         m_dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
 
+        m_dynamic_state_info = VkPipelineDynamicStateCreateInfo{};
         m_dynamic_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
         m_dynamic_state_info.dynamicStateCount = static_cast<std::uint32_t>(m_dynamic_states.size());
         m_dynamic_state_info.pDynamicStates = m_dynamic_states.data();
@@ -185,17 +205,14 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    static VkVertexInputAttributeDescription Attribute(std::uint32_t location, VkFormat format, std::uint32_t offset) {
-        return VkVertexInputAttributeDescription{location, 0, format, offset};
-    }
-
+    // Locations are shared across kinds: 0 position, 1 normal, 2 uv, 3 joints, 4 weights
     std::shared_ptr<IIr77Return const> DefineVertexInputState() {
         m_attribute_descriptions.clear();
+
         m_binding_description = VkVertexInputBindingDescription{};
         m_binding_description.binding = 0;
         m_binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        // locations are shared across kinds: 0 position, 1 normal, 2 uv, 3 joints, 4 weights
         switch (m_kind) {
             case Ir77PVPipelineKind::Static:
             case Ir77PVPipelineKind::Transparent:
@@ -230,15 +247,18 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
                 break;
 
             case Ir77PVPipelineKind::CEF:
+                // fullscreen quad from gl_VertexIndex -- no vertex input
+                break;
+
             case Ir77PVPipelineKind::Mesh:
-                // fullscreen quad generated from gl_VertexIndex -- no vertex input
+                // task/mesh shaders fetch their own data -- no vertex input stage at all
                 break;
 
             default:
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: unknown pipeline kind.");
         }
 
-        bool const has_input = !m_attribute_descriptions.empty();
+        bool const has_input{!m_attribute_descriptions.empty()};
 
         m_vertex_input_info = VkPipelineVertexInputStateCreateInfo{};
         m_vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -251,6 +271,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     }
 
     std::shared_ptr<IIr77Return const> DefineInputAssemblyState() {
+        m_input_assembly = VkPipelineInputAssemblyStateCreateInfo{};
         m_input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
         m_input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         m_input_assembly.primitiveRestartEnable = VK_FALSE;
@@ -258,23 +279,9 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Viewport and scissor are dynamic -- only the counts are fixed here
     std::shared_ptr<IIr77Return const> DefineViewportState() {
-        // viewport + scissor are dynamic; extent kept only as a default for callers
-        if (m_swapchain) {
-            VkExtent2D swapchain_extent;
-            m_swapchain->GetSwapchainExtents(swapchain_extent);
-
-            m_viewport.x = 0.0f;
-            m_viewport.y = 0.0f;
-            m_viewport.width = static_cast<float>(swapchain_extent.width);
-            m_viewport.height = static_cast<float>(swapchain_extent.height);
-            m_viewport.minDepth = 0.0f;
-            m_viewport.maxDepth = 1.0f;
-
-            m_scissor.offset = {0, 0};
-            m_scissor.extent = swapchain_extent;
-        }
-
+        m_viewport_state_info = VkPipelineViewportStateCreateInfo{};
         m_viewport_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         m_viewport_state_info.viewportCount = 1;
         m_viewport_state_info.scissorCount = 1;
@@ -302,15 +309,12 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
                 m_rasterizer_state_info.depthBiasConstantFactor = 1.25f;
                 m_rasterizer_state_info.depthBiasSlopeFactor = 1.75f;
                 m_rasterizer_state_info.depthBiasClamp = 0.0f;
+                break;
 
             case Ir77PVPipelineKind::TransparentBack:
             case Ir77PVPipelineKind::SkinnedTransparentBack:
+                // first transparent pass draws back faces
                 m_rasterizer_state_info.cullMode = VK_CULL_MODE_FRONT_BIT;
-                break;
-
-            case Ir77PVPipelineKind::Transparent:
-            case Ir77PVPipelineKind::SkinnedTransparent:
-                m_rasterizer_state_info.cullMode = VK_CULL_MODE_BACK_BIT;
                 break;
 
             case Ir77PVPipelineKind::CEF:
@@ -326,11 +330,11 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     }
 
     std::shared_ptr<IIr77Return const> DefineMultisamplingState() {
+        m_multisampling_state_info = VkPipelineMultisampleStateCreateInfo{};
         m_multisampling_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        m_multisampling_state_info.sampleShadingEnable = VK_FALSE;
         m_multisampling_state_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        m_multisampling_state_info.sampleShadingEnable = VK_FALSE;
         m_multisampling_state_info.minSampleShading = 1.0f;
-        m_multisampling_state_info.pSampleMask = nullptr;
         m_multisampling_state_info.alphaToCoverageEnable = VK_FALSE;
         m_multisampling_state_info.alphaToOneEnable = VK_FALSE;
 
@@ -347,33 +351,14 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         m_depth_stencil_info.minDepthBounds = 0.0f;
         m_depth_stencil_info.maxDepthBounds = 1.0f;
 
-        switch (m_kind) {
-            case Ir77PVPipelineKind::Static:
-            case Ir77PVPipelineKind::Skinned:
-            case Ir77PVPipelineKind::Mesh:
-            case Ir77PVPipelineKind::Shadow:
-            case Ir77PVPipelineKind::ShadowSkinned:
-                m_depth_stencil_info.depthTestEnable = VK_TRUE;
-                m_depth_stencil_info.depthWriteEnable = VK_TRUE;
-                break;
-
-            case Ir77PVPipelineKind::Transparent:
-            case Ir77PVPipelineKind::SkinnedTransparent:
-            case Ir77PVPipelineKind::TransparentBack:
-            case Ir77PVPipelineKind::SkinnedTransparentBack:
-                // test against opaque depth, don't occlude other transparents
-                m_depth_stencil_info.depthTestEnable = VK_TRUE;
-                m_depth_stencil_info.depthWriteEnable = VK_FALSE;
-                break;
-
-            case Ir77PVPipelineKind::CEF:
-                // overlay -- always on top
-                m_depth_stencil_info.depthTestEnable = VK_FALSE;
-                m_depth_stencil_info.depthWriteEnable = VK_FALSE;
-                break;
-
-            default:
-                break;
+        if (m_kind == Ir77PVPipelineKind::CEF) {
+            // overlay -- always on top
+            m_depth_stencil_info.depthTestEnable = VK_FALSE;
+            m_depth_stencil_info.depthWriteEnable = VK_FALSE;
+        } else {
+            // transparents test against opaque depth but don't occlude each other
+            m_depth_stencil_info.depthTestEnable = VK_TRUE;
+            m_depth_stencil_info.depthWriteEnable = IsTransparent() ? VK_FALSE : VK_TRUE;
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -382,169 +367,171 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     std::shared_ptr<IIr77Return const> DefineColorBlendAttachment() {
         m_color_blend_attachment = VkPipelineColorBlendAttachmentState{};
         m_color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        m_color_blend_attachment.blendEnable = VK_FALSE;
 
-        switch (m_kind) {
-            case Ir77PVPipelineKind::Transparent:
-            case Ir77PVPipelineKind::SkinnedTransparent:
-            case Ir77PVPipelineKind::TransparentBack:
-            case Ir77PVPipelineKind::SkinnedTransparentBack:
-            case Ir77PVPipelineKind::CEF:
-                m_color_blend_attachment.blendEnable = VK_TRUE;
-                m_color_blend_attachment.blendEnable = VK_TRUE;
-                m_color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-                m_color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                m_color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
-                m_color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-                m_color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-                m_color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
-                break;
-
-            default:
-                m_color_blend_attachment.blendEnable = VK_FALSE;
-                break;
+        if (IsTransparent() || m_kind == Ir77PVPipelineKind::CEF) {
+            m_color_blend_attachment.blendEnable = VK_TRUE;
+            m_color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            m_color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            m_color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+            m_color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            m_color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            m_color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Depth-only shadow pass has no color attachment
     std::shared_ptr<IIr77Return const> DefineColorBlendState() {
+        bool const has_color{!IsShadow()};
+
         m_color_blend_state_info = VkPipelineColorBlendStateCreateInfo{};
         m_color_blend_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         m_color_blend_state_info.logicOpEnable = VK_FALSE;
         m_color_blend_state_info.logicOp = VK_LOGIC_OP_COPY;
-
-        // depth-only shadow pass has no color attachment
-        m_color_blend_state_info.attachmentCount = IsShadow() ? 0 : 1;
-        m_color_blend_state_info.pAttachments = IsShadow() ? nullptr : &m_color_blend_attachment;
+        m_color_blend_state_info.attachmentCount = has_color ? 1 : 0;
+        m_color_blend_state_info.pAttachments = has_color ? &m_color_blend_attachment : nullptr;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DefineShaderStages(std::vector<VkPipelineShaderStageCreateInfo>& shader_stages) {
+    std::shared_ptr<IIr77Return const> DefineShaderStages() {
+        m_shader_stages.clear();
+
         switch (m_kind) {
             case Ir77PVPipelineKind::Static:
             case Ir77PVPipelineKind::Transparent:
             case Ir77PVPipelineKind::TransparentBack:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_VERT, ID_SHADER_FRAG});
+                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_VERT, ID_SHADER_FRAG});
                 break;
 
             case Ir77PVPipelineKind::Skinned:
             case Ir77PVPipelineKind::SkinnedTransparent:
             case Ir77PVPipelineKind::SkinnedTransparentBack:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_SKINNED_VERT, ID_SHADER_FRAG});
+                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_SKINNED_VERT, ID_SHADER_FRAG});
                 break;
 
             case Ir77PVPipelineKind::Shadow:
                 // depth-only: no fragment stage
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_SHADOW_VERT});
+                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_SHADOW_VERT});
                 break;
 
             case Ir77PVPipelineKind::ShadowSkinned:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_SHADOW_SKINNED_VERT});
+                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_SHADOW_SKINNED_VERT});
                 break;
 
             case Ir77PVPipelineKind::Mesh:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_MESH_TASK, ID_SHADER_MESH, ID_SHADER_FRAG});
+                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_MESH_TASK, ID_SHADER_MESH, ID_SHADER_FRAG});
                 break;
 
             case Ir77PVPipelineKind::CEF:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_CEF_VERT, ID_SHADER_CEF_FRAG});
+                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_CEF_VERT, ID_SHADER_CEF_FRAG});
                 break;
 
             default:
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: unknown pipeline kind.");
         }
 
-        // frag.frag constant_id 0 (FLIP_BACK_FACES) -- off for transparent kinds, shader default (on) for everything else
-        bool const transparent = m_kind == Ir77PVPipelineKind::Transparent || m_kind == Ir77PVPipelineKind::TransparentBack ||
-                                 m_kind == Ir77PVPipelineKind::SkinnedTransparent || m_kind == Ir77PVPipelineKind::SkinnedTransparentBack;
+        if (m_shader_stages.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: no shader stages.");
 
-        if (transparent) {
+        // frag.frag constant_id 0 (FLIP_BACK_FACES) -- off for transparent kinds, shader default (on) for everything else
+        if (IsTransparent()) {
             m_flip_back_faces = VK_FALSE;
             m_spec_entry = VkSpecializationMapEntry{0, 0, sizeof(VkBool32)};
             m_spec_info = VkSpecializationInfo{1, &m_spec_entry, sizeof(VkBool32), &m_flip_back_faces};
 
-            for (auto& stage : shader_stages)
+            for (auto& stage : m_shader_stages)
                 if (stage.stage == VK_SHADER_STAGE_FRAGMENT_BIT) stage.pSpecializationInfo = &m_spec_info;
         }
 
-        if (shader_stages.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: no shader stages.");
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Mesh pipelines have no vertex input or input assembly stage
+    std::shared_ptr<IIr77Return const> DefinePipeline() {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
+        m_pipeline_layout->GetPipelineLayout(&pipeline_layout);
+
+        VkRenderPass render_pass{VK_NULL_HANDLE};
+        m_render_pass->GetRenderPass(&render_pass);
+
+        if (pipeline_layout == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: pipeline layout not created.");
+        if (render_pass == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: render pass not created.");
+
+        bool const mesh{m_kind == Ir77PVPipelineKind::Mesh};
+
+        VkGraphicsPipelineCreateInfo pipeline_info{};
+        pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipeline_info.stageCount = static_cast<std::uint32_t>(m_shader_stages.size());
+        pipeline_info.pStages = m_shader_stages.data();
+        pipeline_info.pVertexInputState = mesh ? nullptr : &m_vertex_input_info;
+        pipeline_info.pInputAssemblyState = mesh ? nullptr : &m_input_assembly;
+        pipeline_info.pViewportState = &m_viewport_state_info;
+        pipeline_info.pRasterizationState = &m_rasterizer_state_info;
+        pipeline_info.pMultisampleState = &m_multisampling_state_info;
+        pipeline_info.pDepthStencilState = &m_depth_stencil_info;
+        pipeline_info.pColorBlendState = &m_color_blend_state_info;
+        pipeline_info.pDynamicState = &m_dynamic_state_info;
+        pipeline_info.layout = pipeline_layout;
+        pipeline_info.renderPass = render_pass;
+        pipeline_info.subpass = 0;
+        pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+        pipeline_info.basePipelineIndex = -1;
+
+        VkPipeline pipeline{VK_NULL_HANDLE};
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: vkCreateGraphicsPipelines failed.");
+
+        m_pipeline = pipeline;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DefinePipeline() {
-        VkDevice device;
-        m_device->GetDevice(&device);
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // internals
+    // -------------------------------------------------------------------------------------------------------------------------------------
+   private:
+    bool IsShadow() const { return m_kind == Ir77PVPipelineKind::Shadow || m_kind == Ir77PVPipelineKind::ShadowSkinned; }
 
-        VkPipelineLayout pipeline_layout;
-        m_pipeline_layout->GetPipelineLayout(&pipeline_layout);
+    bool IsTransparent() const {
+        return m_kind == Ir77PVPipelineKind::Transparent || m_kind == Ir77PVPipelineKind::TransparentBack ||
+               m_kind == Ir77PVPipelineKind::SkinnedTransparent || m_kind == Ir77PVPipelineKind::SkinnedTransparentBack;
+    }
 
-        VkRenderPass render_pass;
-        m_render_pass->GetRenderPass(&render_pass);
-
-        std::vector<VkPipelineShaderStageCreateInfo> shader_stages{};
-        if (DefineShaderStages(shader_stages)->ID() != GUIDIr77OperationSucceeded) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: shader stages failed.");
-        }
-
-        bool const mesh = m_kind == Ir77PVPipelineKind::Mesh;
-
-        m_pipeline_info = VkGraphicsPipelineCreateInfo{};
-        m_pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        m_pipeline_info.stageCount = static_cast<std::uint32_t>(shader_stages.size());
-        m_pipeline_info.pStages = shader_stages.data();
-        m_pipeline_info.pVertexInputState = mesh ? nullptr : &m_vertex_input_info;
-        m_pipeline_info.pInputAssemblyState = mesh ? nullptr : &m_input_assembly;
-        m_pipeline_info.pViewportState = &m_viewport_state_info;
-        m_pipeline_info.pRasterizationState = &m_rasterizer_state_info;
-        m_pipeline_info.pMultisampleState = &m_multisampling_state_info;
-        m_pipeline_info.pDepthStencilState = &m_depth_stencil_info;
-        m_pipeline_info.pColorBlendState = &m_color_blend_state_info;
-        m_pipeline_info.pDynamicState = &m_dynamic_state_info;
-        m_pipeline_info.layout = pipeline_layout;
-        m_pipeline_info.renderPass = render_pass;
-        m_pipeline_info.subpass = 0;
-        m_pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
-        m_pipeline_info.basePipelineIndex = -1;
-
-        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &m_pipeline_info, nullptr, &m_pipeline) != VK_SUCCESS) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: VkPipeline failed.");
-        }
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
+    // all attributes come from binding 0
+    VkVertexInputAttributeDescription Attribute(std::uint32_t const location, VkFormat const format, std::uint32_t const offset) const {
+        return VkVertexInputAttributeDescription{location, 0, format, offset};
     }
 
    private:
-    std::shared_ptr<IIr77PVInstance> m_instance;
+    std::shared_ptr<IIr77PVDevice> m_device{};
 
-    std::shared_ptr<IIr77PVDevice> m_device;
+    std::shared_ptr<IIr77PVRenderPass> m_render_pass{};
 
-    std::shared_ptr<IIr77PVSwapchain> m_swapchain;
+    std::shared_ptr<IIr77PVLayout> m_pipeline_layout{};
 
-    std::shared_ptr<IIr77PVRenderPass> m_render_pass;
-
-    std::shared_ptr<IIr77PVLayout> m_pipeline_layout;
-
-    std::shared_ptr<IIr77PVShader> m_shader_stack;
+    std::shared_ptr<IIr77PVShader> m_shader_stack{};
 
     Ir77PVPipelineKind m_kind{Ir77PVPipelineKind::Static};
 
+    VkPipeline m_pipeline{VK_NULL_HANDLE};
+
+    // create-info state -- members because the create info points into them
     std::vector<VkDynamicState> m_dynamic_states{};
+
+    VkPipelineDynamicStateCreateInfo m_dynamic_state_info{};
 
     VkVertexInputBindingDescription m_binding_description{};
 
     std::vector<VkVertexInputAttributeDescription> m_attribute_descriptions{};
 
-    VkPipelineDynamicStateCreateInfo m_dynamic_state_info{};
-
     VkPipelineVertexInputStateCreateInfo m_vertex_input_info{};
 
     VkPipelineInputAssemblyStateCreateInfo m_input_assembly{};
-
-    VkViewport m_viewport{};
-
-    VkRect2D m_scissor{};
 
     VkPipelineViewportStateCreateInfo m_viewport_state_info{};
 
@@ -558,9 +545,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
     VkPipelineColorBlendStateCreateInfo m_color_blend_state_info{};
 
-    VkGraphicsPipelineCreateInfo m_pipeline_info{};
-
-    VkPipeline m_pipeline{VK_NULL_HANDLE};
+    std::vector<VkPipelineShaderStageCreateInfo> m_shader_stages{};
 
     VkBool32 m_flip_back_faces{VK_TRUE};
 
@@ -568,4 +553,5 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
     VkSpecializationInfo m_spec_info{};
 };
+
 }  // namespace NSIr77PeregrineV

@@ -156,11 +156,11 @@ class iridium {
 
             if (locked->UploadFrame(buffer, w, h)->ID() == GUIDIr77OperationSucceeded) {
                 if (m_ui_uploads == 0)
-                    std::printf("[UI] first frame %dx%d after %lld ms\n", w, h,
-                                static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_start_time).count()));
+                    std::printf(
+                        "[UI] first frame %dx%d after %lld ms\n", w, h,
+                        static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_start_time).count()));
                 m_ui_uploads++;
-            }
-            else
+            } else
                 m_ui_upload_failed++;
 
             m_ui_last_paint = std::to_string(w) + "x" + std::to_string(h);
@@ -292,14 +292,27 @@ class iridium {
         if (m_ui_uploads == 0) {
             auto const now = std::chrono::steady_clock::now();
             if (now - m_ui_last_status >= std::chrono::seconds(1)) {
-                m_ui_last_status = now;
+                std::uint32_t elapsed_ms = (now - m_ui_last_status).count();
                 // nothing painted yet -- poke CEF once; if the UI appears after this line, it was a missed first paint, not a load failure
-                if (m_ui_paints == 0 && !m_ui_kicked && now - m_start_time >= std::chrono::seconds(5)) {
-                    m_ui_kicked = true;
-                    std::printf("[UI] no paint after 2 s -- WasResized + Invalidate\n");
+                // stage 1 (2 s): resize + invalidate. stage 2 (5 s): reload -- a stalled compositor never recovers on its own
+                if (m_ui_paints == 0 && elapsed_ms >= 2000 && m_ui_kicked == 0) {
+                    std::cerr << "[UI] no paint after 2 s -- WasResized + Invalidate" << std::endl;
                     m_rt_state->GetBrowser()->GetHost()->WasResized();
                     m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
+                    m_ui_kicked = 1;
+                } else if (m_ui_paints == 0 && elapsed_ms >= 5000 && m_ui_kicked == 1) {
+                    // keep this run's CEF log before anything else can overwrite it
+                    std::string const snapshot{"/tmp/ir77_blank_" + std::to_string(std::time(nullptr)) + ".log"};
+                    std::error_code ec{};
+                    std::filesystem::copy_file("/tmp/cef_debug.log", snapshot, std::filesystem::copy_options::overwrite_existing, ec);
+
+                    std::cerr << "[UI] no paint after 5 s -- Reload (CEF log saved to " << snapshot << ")" << std::endl;
+                    m_rt_state->GetBrowser()->ReloadIgnoreCache();
+                    m_ui_kicked = 2;
                 }
+
+                m_ui_last_status = now;
+
                 std::printf(
                     "[UI] paints %u, uploads %u, upload failed %u, dropped stale %u, dropped resizing %u, in flight %d, repaint %d, "
                     "cef %dx%d, window %dx%d, last paint %s\n",
