@@ -17,6 +17,7 @@
 #include "IIr77PVDescriptorSet.hpp"
 #include "IIr77PVPipeline.hpp"
 #include "IIr77PVPipelineCPT.hpp"
+#include "IIr77PVPipelineCache.hpp"
 #include "IIr77PVOverlay.hpp"
 
 #include "../types/Ir77PVTypes.hpp"
@@ -27,6 +28,7 @@ namespace NSIr77PeregrineV {
 
 // One window's frame loop: command pool and buffers, sync objects, recording, submit and present.
 // Bindless: the one descriptor set is bound once per bind point per command buffer; every draw / dispatch gets Ir77PVPushConstants.
+// Dynamic rendering: passes begin on the swapchain / shadow images directly; cull, front face and depth test / write are set per draw.
 typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     IIr77PVCmdBuffer() = default;
 
@@ -35,10 +37,11 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> SetSwapchain(std::shared_ptr<IIr77PVSwapchain> swapchain) = 0;
 
+    // Attachment formats of one pass kind -- the pass itself is begun with vkCmdBeginRendering
     virtual std::shared_ptr<IIr77Return const> SetRenderPass(Ir77PVRenderPassKind const& kind, std::shared_ptr<IIr77PVRenderPass> render_pass) = 0;
 
-    // Depth-only pass the Shadow / ShadowSkinned pipelines were built against, plus its shadow-map framebuffer
-    virtual std::shared_ptr<IIr77Return const> SetShadowTarget(VkFramebuffer const& framebuffer, VkExtent2D const& extent) = 0;
+    // Depth image the Shadow / ShadowSkinned pipelines render into (in the Shadow pass's depth format); the main pass samples it afterwards
+    virtual std::shared_ptr<IIr77Return const> SetShadowTarget(VkImage const& image, VkImageView const& view, VkExtent2D const& extent) = 0;
 
     // The device's one pipeline layout -- push constants and the set bind go through it
     virtual std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout) = 0;
@@ -52,18 +55,23 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     // Buffer slot of the device's material table (Ir77PeregrineV::GetMaterialTableSlot)
     virtual std::shared_ptr<IIr77Return const> SetMaterialTable(std::uint32_t const& slot) = 0;
 
-    // CEF composite, drawn last in the main pass; the overlay's texture slot goes in pc.user[0]
-    virtual std::shared_ptr<IIr77Return const> SetOverlay(std::shared_ptr<IIr77PVOverlay> overlay, std::shared_ptr<IIr77PVPipeline> pipeline) = 0;
+    // The device's pipeline cache -- resolves the pipeline handles on draw items and the overlay while recording. Required.
+    virtual std::shared_ptr<IIr77Return const> SetPipelineCache(std::shared_ptr<IIr77PVPipelineCache> pipeline_cache) = 0;
+
+    // CEF composite, drawn last in the main pass; the overlay's texture slot goes in pc.user[0]. pipeline -- usually FindPipeline(CEF).
+    virtual std::shared_ptr<IIr77Return const> SetOverlay(std::shared_ptr<IIr77PVOverlay> overlay, Ir77PVPipelineHandle const& pipeline) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetClearColor(VkClearColorValue const& clear_color) = 0;
 
+    // ---- pass list -----------------------------------------------------------------------------------------------------------------------
+    // What RecordCommandBuffer records, in order. Exactly one Raster pass must target the swapchain. Default: Compute -> Shadow -> Main.
+    virtual std::shared_ptr<IIr77Return const> SetPassList(std::vector<Ir77PVPassDesc> const& passes) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetPassList(std::vector<Ir77PVPassDesc>& passes) = 0;
+
     // ---- compute -----------------------------------------------------------------------------------------------------------------------------
-    virtual std::shared_ptr<IIr77Return const> SetComputePipeline(std::shared_ptr<IIr77PVPipelineCPT> pipeline) = 0;
-
-    // What the compute shader reads -- its slots in user[] or the other index fields; frame / materials are filled in at record time
-    virtual std::shared_ptr<IIr77Return const> SetComputePush(Ir77PVPushConstants const& push) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetComputeDispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) = 0;
+    // The dispatch list, replaced whole; recorded in order by the Compute pass, a barrier after each. Empty = no compute work.
+    virtual std::shared_ptr<IIr77Return const> SetDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
 
     /*
     // ---- ray tracing -------------------------------------------------------------------------------------------------------------------------

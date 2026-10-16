@@ -1,4 +1,7 @@
-#version 450
+#version 460
+#extension GL_GOOGLE_include_directive : require
+
+#include "include/bindless.glsl"
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
@@ -8,28 +11,15 @@ layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec2 fragUV;
 layout(location = 2) out vec3 fragWorldPos;
 
-// set 0 binding 0 -- matches Ir77PVCamera
-layout(set = 0, binding = 0) uniform CameraUBO {
-    mat4 view;
-    mat4 proj;
-    mat4 view_proj;
-    vec4 eye;
-} camera;
-
-// set 0 binding 2 -- one model matrix per instance, written every frame.
-// gl_InstanceIndex = firstInstance + instance, so firstInstance picks the object.
-layout(std430, set = 0, binding = 2) readonly buffer Instances {
-    mat4 models[];
-};
-
+// gl_InstanceIndex = firstInstance + instance, so firstInstance picks the object's slot in the instance table
 void main() {
-    mat4 model = models[gl_InstanceIndex];
+    mat4 model = IR77_MODEL(gl_InstanceIndex);
 
     vec4 world = model * vec4(inPosition, 1.0);
-    fragWorldPos = world.xyz;
-    gl_Position = camera.view_proj * world;
 
-    gl_Position = camera.view_proj * model * vec4(inPosition, 1.0);
+    fragWorldPos = world.xyz;
     fragNormal = mat3(model) * inNormal;
     fragUV = inUV;
+
+    gl_Position = IR77_CAMERA.view_proj * world;
 }

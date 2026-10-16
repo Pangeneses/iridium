@@ -13,6 +13,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -21,8 +22,11 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+#include <simdjson.h>
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
@@ -31,8 +35,6 @@
 #include "../Windows/runtime/CEFRTState.hpp"
 #include "../Windows/runtime/CEFClient.hpp"
 #include "../Windows/runtime/CEFMouseEvent.hpp"
-
-#include "../PeregrineV/dictionary/IDIr77PVContext.hpp"
 
 #include "../PeregrineV/server/Ir77PeregrineV.hpp"
 #include "../PeregrineV/server/Ir77PVCEF.hpp"
@@ -81,6 +83,8 @@ class iridium {
         }
 
         SDL_ShowWindow(m_window);
+
+        SDL_StartTextInput(m_window);  // SDL_EVENT_TEXT_INPUT -> typed characters for the UI's inputs
 
         std::vector<SDL_Window*> windows{m_window};
 
@@ -180,7 +184,9 @@ class iridium {
         Require(m_vulkan->CreatePipelines(kinds));
 
         // content -- the glTF scene
-        m_scene_ready = LoadScene(m_scene_path, true)->ID() == GUIDIr77OperationSucceeded;
+        m_scene_ready = LoadScene(m_scene_path, false)->ID() == GUIDIr77OperationSucceeded;
+
+        Require(m_asset->FindPipeline(std::string{"ripple"}, m_scene_pipeline));
 
         if (!m_scene_ready) {
             std::cerr << "Iridium: scene '" << m_scene_path << "' failed to load \n";
@@ -218,7 +224,7 @@ class iridium {
                     break;
                 }
 
-                // F2 cycles file cameras, then the orbit camera -- kept from CEF
+                // F2 cycles file cameras, then the controlled camera -- kept from CEF
                 case SDL_EVENT_KEY_DOWN: {
                     if (event.key.key == SDLK_F2 && !event.key.repeat) {
                         m_scene_camera_index = (m_scene_camera_index + 1) % (m_scene_camera_count + 1);
@@ -292,7 +298,7 @@ class iridium {
         if (m_ui_uploads == 0) {
             auto const now = std::chrono::steady_clock::now();
             if (now - m_ui_last_status >= std::chrono::seconds(1)) {
-                std::uint32_t elapsed_ms = (now - m_ui_last_status).count();
+                auto const elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_start_time).count();
                 // nothing painted yet -- poke CEF once; if the UI appears after this line, it was a missed first paint, not a load failure
                 // stage 1 (2 s): resize + invalidate. stage 2 (5 s): reload -- a stalled compositor never recovers on its own
                 if (m_ui_paints == 0 && elapsed_ms >= 2000 && m_ui_kicked == 0) {
@@ -322,9 +328,20 @@ class iridium {
         }
     }
 
-    void ChromeStep() { m_message_loop->CEFDoMessageLoop(m_rt_state->GetBrowser()); }
+    // TEST: pump CEF for ~2 ms per frame instead of one call -- if blanks stop, the cause is message-loop starvation
+    void ChromeStep() {
+        auto const until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
 
-    void IridiumStep() {}
+        do m_message_loop->CEFDoMessageLoop(m_rt_state->GetBrowser());
+        while (std::chrono::steady_clock::now() < until);
+    }
+
+    // Angular -> Iridium: every window.cefQuery request since the last frame, applied in arrival order before the frame is built
+    void IridiumStep() {
+        m_rt_state->GetClient()->TakeQueries(m_queries);
+
+        for (std::string const& query : m_queries) ApplyQuery(query);
+    }
 
     void VulkanStep() {
         auto const frame_start = std::chrono::steady_clock::now();
@@ -336,10 +353,11 @@ class iridium {
         float dt{0.0f};
 
         if (m_scene_ready) {
-            dt = m_last_seconds > 0.0f ? seconds - m_last_seconds : 0.0f;
-            m_last_seconds = seconds;
+            dt = m_vstep_seconds > 0.0f ? seconds - m_vstep_seconds : 0.0f;
+            m_vstep_seconds = seconds;
 
             m_scene->Update(dt);                         // everything scene-side: animation, world transforms
+            UpdateCameraControl(dt);                     // held keys from the UI move the controlled camera
             auto const uploaded = UploadScene(seconds);  // the frame's results -> PeregrineV
             if (uploaded->ID() != GUIDIr77OperationSucceeded && !m_upload_error_logged) {
                 std::printf("[ERROR] UploadScene failed -- no draws this frame\n");
@@ -398,7 +416,7 @@ class iridium {
     std::shared_ptr<IIr77Return const> SelectCamera(std::uint32_t const& index) {
         if (index > m_scene_camera_count) return Ir77RETURN<Ir77NotConfigured>(nullptr, "Iridium: no such camera.");
 
-        m_scene_camera_index = index;  // == camera count -> orbit camera
+        m_scene_camera_index = index;  // == camera count -> the controlled camera
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -655,10 +673,12 @@ class iridium {
         std::memcpy(m_scene_lights.data(), &header, sizeof(header));
         std::memcpy(m_scene_lights.data() + sizeof(header), light_list.data(), light_list.size() * sizeof(Ir77PVLight));
 
-        // file cameras -- index m_scene_camera_count is the orbit camera; start on the file's first camera if it has one
+        // file cameras -- index m_scene_camera_count is the controlled camera; start on the file's first camera if it has one
         m_scene->GetCameras(m_scene_cameras);
         m_scene_cameras->GetCameraCount(m_scene_camera_count);
         m_scene_camera_index = 0;
+
+        ResetCameraControl();  // the controlled camera starts framed on the scene
 
         // every clip in the file plays by default, looping -- the app takes over with PlayAnimation / StopAnimation
         m_scene->PlayAllAnimations(true);
@@ -721,13 +741,12 @@ class iridium {
             std::memcpy(m_scene_bones_packed.data() + base_slots * sizeof(std::uint32_t), m_scene_bones.data(), bone_count * sizeof(glm::mat4));
         }
 
-        glm::vec3 const center = (m_scene_min + m_scene_max) * 0.5f;
         float const radius = std::max(glm::length(m_scene_max - m_scene_min) * 0.5f, 0.01f);
 
         for (std::size_t w = 0; w < windows; w++) {
             float const aspect = m_window_height > 0 ? static_cast<float>(m_window_width) / static_cast<float>(m_window_height) : 1.78f;
 
-            // file camera (rebuilt with this window's aspect), or the orbit camera framed on the scene bounds
+            // file camera (rebuilt with this window's aspect), or the controlled camera (orbit / fly, driven from the UI)
             Ir77PVCamera camera{};
             bool built = false;
 
@@ -736,17 +755,12 @@ class iridium {
                 built = m_scene_cameras->BuildCamera(m_scene_camera_index, aspect, fallback_far, camera)->ID() == GUIDIr77OperationSucceeded;
             }
 
-            if (!built) {
-                float const orbit = seconds * 0.25f;
-                float const distance = radius * 2.5f;
-                glm::vec3 const eye = center + glm::vec3(std::sin(orbit) * distance, distance * 0.5f, std::cos(orbit) * distance);
+            if (!built) camera = MakeControlledCamera(aspect);
 
-                // planes hug the scene: whole bounds in front of far, near as large as allowed for depth precision
-                float const zfar = distance + radius * 2.0f;
-                float const znear = std::max(zfar * 0.0001f, 0.001f);
+            m_camera_view = camera.view;  // where the next switch to orbit / fly starts from
+            m_camera_fov = glm::degrees(2.0f * std::atan(1.0f / std::abs(camera.proj[1][1])));  // the lens too
 
-                camera = Ir77PVAsset::MakeCamera(eye, center, 60.0f, aspect, znear, zfar);
-            }
+            camera.time = glm::vec4(seconds, seconds - m_last_seconds, static_cast<float>(m_frame_number), 0.0f);
 
             m_paint->SetFrameData(w, Ir77PVBufferSlot::Camera, &camera, sizeof(camera));
             m_paint->SetFrameData(w, Ir77PVBufferSlot::Instances, m_scene_transforms.data(), m_scene_transforms.size() * sizeof(glm::mat4));
@@ -763,9 +777,9 @@ class iridium {
                     run.gltf_material < m_scene_material_ids.size() ? m_scene_material_ids[run.gltf_material] : m_scene_default_material;
 
                 Ir77PVDrawItem item{};
-                auto const made = m_scene_mesh ? m_asset->MakeMeshletSceneDrawItem(w, m_scene_id, material, run.first_command, run.command_count, item)
-                                               : m_asset->MakeIndirectDrawItem(w, Ir77PVPipelineKind::Static, m_scene_id, material, run.first_command,
-                                                                               run.command_count, false, item);
+                auto const made =
+                    m_scene_mesh ? m_asset->MakeMeshletSceneDrawItem(w, m_scene_id, material, run.first_command, run.command_count, item)
+                                 : m_asset->MakeIndirectDrawItem(w, m_scene_pipeline, m_scene_id, material, run.first_command, run.command_count, false, item);
                 if (made->ID() != GUIDIr77OperationSucceeded) return made;
 
                 items.push_back(item);
@@ -810,15 +824,15 @@ class iridium {
 
                 std::uint32_t const scene = draw.skinned ? m_scene_skinned_id : m_scene_blend_id;
 
-                // far side first (front faces culled), then near side (back faces culled)
-                Ir77PVPipelineKind const passes[2] = {draw.skinned ? Ir77PVPipelineKind::SkinnedTransparentBack : Ir77PVPipelineKind::TransparentBack,
-                                                      draw.skinned ? Ir77PVPipelineKind::SkinnedTransparent : Ir77PVPipelineKind::Transparent};
+                // far side first (front faces culled), then near side -- one pipeline, the cull flips per draw
+                Ir77PVPipelineKind const kind{draw.skinned ? Ir77PVPipelineKind::SkinnedTransparent : Ir77PVPipelineKind::Transparent};
 
-                for (Ir77PVPipelineKind const kind : passes) {
+                for (bool const back_faces : {true, false}) {
                     Ir77PVDrawItem item{};
                     auto const made = m_asset->MakeIndirectDrawItem(w, kind, scene, material, draw.command, 1, draw.skinned, item);
                     if (made->ID() != GUIDIr77OperationSucceeded) return made;
 
+                    item.back_faces = back_faces;
                     blend_items.push_back(item);
                 }
             }
@@ -826,6 +840,9 @@ class iridium {
             m_paint->SetDraws(w, Ir77PVPass::Transparent, blend_items);
             m_frame_stats.transparent_items = static_cast<std::uint32_t>(blend_items.size());
         }
+
+        m_last_seconds = seconds;
+        m_frame_number++;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -859,6 +876,139 @@ class iridium {
 
             f.playing.push_back(clip_stat);
         }
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // UI commands -- window.cefQuery requests from Angular, JSON: {"camera": "<command>", ...}
+    //   move  forward / right / up in -1..1 -- held-key state, applied every frame (0 on key up)
+    //   look  dx / dy in pixels             -- mouse drag; turns the fly camera / swings the orbit camera
+    //   zoom  delta in wheel steps          -- orbit distance, 10% per step
+    //   speed value                         -- multiplies move speed
+    //   mode  value "orbit" | "fly" | "file" -- orbit / fly start from the current view, so switching never jumps
+    //   next                                -- next file camera, then the controlled camera (F2)
+    //   reset                               -- orbit framed on the scene
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    void ApplyQuery(std::string const& query) {
+        simdjson::dom::element root{};
+        std::string_view command{};
+
+        if (m_query_parser.parse(query).get(root) != simdjson::SUCCESS || root["camera"].get(command) != simdjson::SUCCESS) {
+            std::printf("[WARN] UI query ignored: %s\n", query.c_str());
+            return;
+        }
+
+        if (!m_query_seen) {
+            std::printf("[UI] first query: %s\n", query.c_str());
+            m_query_seen = true;
+        }
+
+        // driving the camera from a file camera takes it over -- the controlled camera starts from the current view
+        if ((command == "move" || command == "look" || command == "zoom") && m_scene_camera_index < m_scene_camera_count) {
+            DefineCameraFromView(m_camera_fly);
+            m_scene_camera_index = m_scene_camera_count;
+        }
+
+        auto const number = [&root](char const* key) {
+            double value{0.0};
+            if (root[key].get(value) != simdjson::SUCCESS) value = 0.0;  // missing / not a number -> 0
+            return static_cast<float>(value);
+        };
+
+        if (command == "move") {
+            m_camera_move = glm::clamp(glm::vec3(number("right"), number("up"), number("forward")), glm::vec3(-1.0f), glm::vec3(1.0f));
+        } else if (command == "look") {
+            m_camera_yaw -= number("dx") * CAMERA_LOOK_RADIANS_PER_PIXEL;
+            m_camera_pitch = glm::clamp(m_camera_pitch - number("dy") * CAMERA_LOOK_RADIANS_PER_PIXEL, -CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
+        } else if (command == "zoom") {
+            m_camera_distance = std::max(m_camera_distance * std::pow(1.1f, -number("delta")), 0.01f);
+        } else if (command == "speed") {
+            float const factor = number("value");
+            if (factor > 0.0f) m_camera_speed *= factor;
+        } else if (command == "mode") {
+            std::string_view mode{};
+            if (root["value"].get(mode) != simdjson::SUCCESS) mode = {};
+
+            if (mode == "orbit" || mode == "fly") {
+                DefineCameraFromView(mode == "fly");
+                m_scene_camera_index = m_scene_camera_count;
+            } else if (mode == "file" && m_scene_camera_count > 0) {
+                m_scene_camera_index = 0;
+            }
+        } else if (command == "next") {
+            m_scene_camera_index = (m_scene_camera_index + 1) % (m_scene_camera_count + 1);
+        } else if (command == "reset") {
+            ResetCameraControl();
+            m_scene_camera_index = m_scene_camera_count;
+        } else {
+            std::printf("[WARN] UI camera command unknown: %s\n", query.c_str());
+        }
+    }
+
+    // Orbit on the scene: target its centre, back off to frame its bounds, a little above
+    void ResetCameraControl() {
+        float const radius = std::max(glm::length(m_scene_max - m_scene_min) * 0.5f, 0.01f);
+
+        m_camera_fly = false;
+        m_camera_target = (m_scene_min + m_scene_max) * 0.5f;
+        m_camera_distance = radius * 2.5f;
+        m_camera_yaw = glm::pi<float>();  // looking down -Z, from the +Z side
+        m_camera_pitch = -0.35f;
+        m_camera_speed = radius * 0.5f;  // units per second at full key
+        m_camera_move = glm::vec3(0.0f);
+    }
+
+    // Takes over from whatever was on screen last frame -- file camera, orbit or fly
+    void DefineCameraFromView(bool const fly) {
+        glm::mat4 const world = glm::inverse(m_camera_view);
+        glm::vec3 const eye = glm::vec3(world[3]);
+        glm::vec3 const forward = glm::normalize(-glm::vec3(world[2]));  // the view looks down its -Z
+
+        m_camera_fly = fly;
+        m_camera_yaw = std::atan2(forward.x, forward.z);
+        m_camera_pitch = glm::clamp(std::asin(glm::clamp(forward.y, -1.0f, 1.0f)), -CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
+
+        if (fly) {
+            m_camera_position = eye;
+        } else {
+            m_camera_distance = std::max(glm::length(m_camera_target - eye), 0.01f);
+            m_camera_target = eye + forward * m_camera_distance;  // keep the view; orbit around the point straight ahead
+        }
+    }
+
+    // Held keys, every frame. Fly: walk along the view. Orbit: forward dollies in / out, right / up pan the target.
+    void UpdateCameraControl(float const dt) {
+        if (m_camera_move == glm::vec3(0.0f) || dt <= 0.0f) return;
+
+        glm::vec3 const forward = CameraForward();
+        glm::vec3 const right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+        glm::vec3 const up = glm::cross(right, forward);
+
+        float const step = m_camera_speed * dt;
+
+        if (m_camera_fly) {
+            m_camera_position += (right * m_camera_move.x + up * m_camera_move.y + forward * m_camera_move.z) * step;
+        } else {
+            m_camera_target += (right * m_camera_move.x + up * m_camera_move.y) * step;
+            m_camera_distance = std::max(m_camera_distance * std::exp(-m_camera_move.z * dt), 0.01f);
+        }
+    }
+
+    glm::vec3 CameraForward() const {
+        return glm::vec3(std::cos(m_camera_pitch) * std::sin(m_camera_yaw), std::sin(m_camera_pitch), std::cos(m_camera_pitch) * std::cos(m_camera_yaw));
+    }
+
+    // The controlled camera's matrices. Planes hug the scene: whole bounds in front of far, near as large as depth precision allows.
+    Ir77PVCamera MakeControlledCamera(float const aspect) const {
+        glm::vec3 const center = (m_scene_min + m_scene_max) * 0.5f;
+        float const radius = std::max(glm::length(m_scene_max - m_scene_min) * 0.5f, 0.01f);
+
+        glm::vec3 const forward = CameraForward();
+        glm::vec3 const eye = m_camera_fly ? m_camera_position : m_camera_target - forward * m_camera_distance;
+
+        float const zfar = glm::length(eye - center) + radius * 2.0f;
+        float const znear = std::max(zfar * 0.0001f, 0.001f);
+
+        return Ir77PVAsset::MakeCamera(eye, eye + forward, m_camera_fov, aspect, znear, zfar);
     }
 
     // The scene stats as console lines -- the printf replacement until the app displays them
@@ -898,7 +1048,7 @@ class iridium {
     std::uint32_t m_ui_dropped_resizing{0};
     std::string m_ui_last_paint{"none"};
     std::chrono::steady_clock::time_point m_ui_last_status{};
-    bool m_ui_kicked{false};
+    std::uint32_t m_ui_kicked{0};
 
     // one material run -- contiguous indirect commands sharing a glTF material
     struct Ir77SceneRun {
@@ -932,10 +1082,14 @@ class iridium {
 
     std::uint32_t m_frame{0};  // frame in flight, for Asset::Tick
 
-    float m_last_seconds{0.0f};  // previous frame's clock, for the scene's dt
+    float m_last_seconds{0.0f};  // camera.time.y
+
+    std::uint32_t m_frame_number{0};  // camera.time.z
+
+    float m_vstep_seconds{0.0f};  // previous frame's clock, for the scene's dt
 
     // scene
-    std::string m_scene_path{"/home/alpha/workspace/iridium/Public/Bend.glb"};  // set to your model
+    std::string m_scene_path{"/home/alpha/workspace/iridium/Public/sheet.glb"};  // set to your model
 
     std::shared_ptr<Ir77Scene> m_scene{};
 
@@ -971,7 +1125,39 @@ class iridium {
 
     std::uint32_t m_scene_camera_count{0};
 
-    std::uint32_t m_scene_camera_index{0};  // == m_scene_camera_count -> orbit camera; F2 cycles
+    std::uint32_t m_scene_camera_index{0};  // == m_scene_camera_count -> the controlled camera; F2 / "next" cycles
+
+    // controlled camera -- orbit (target, distance) or fly (position); yaw / pitch aim both
+    bool m_camera_fly{false};
+
+    glm::vec3 m_camera_target{0.0f};
+
+    glm::vec3 m_camera_position{0.0f};
+
+    float m_camera_distance{1.0f};
+
+    float m_camera_yaw{0.0f};
+
+    float m_camera_pitch{0.0f};
+
+    float m_camera_speed{1.0f};  // units per second at full key
+
+    glm::vec3 m_camera_move{0.0f};  // held keys: right, up, forward in -1..1
+
+    glm::mat4 m_camera_view{1.0f};  // last frame's view, whichever camera drew it
+
+    float m_camera_fov{60.0f};  // vertical, degrees -- taken from whichever camera drew last, so a takeover keeps the lens
+
+    static constexpr float CAMERA_LOOK_RADIANS_PER_PIXEL{0.004f};
+
+    static constexpr float CAMERA_PITCH_LIMIT{1.5f};  // just short of straight up / down
+
+    // UI queries -- drained each frame by IridiumStep
+    std::vector<std::string> m_queries{};
+
+    simdjson::dom::parser m_query_parser{};
+
+    bool m_query_seen{false};  // [UI] first query logged
 
     glm::vec3 m_scene_min{-1.0f};
 
@@ -984,6 +1170,8 @@ class iridium {
     std::vector<std::uint32_t> m_scene_material_ids{};  // [glTF material] -> Asset material id
 
     bool m_scene_mesh{false};
+
+    Ir77PVPipelineHandle m_scene_pipeline{IR77PV_NO_PIPELINE};  // what the static scene draws with
 
     bool m_scene_ready{false};
 

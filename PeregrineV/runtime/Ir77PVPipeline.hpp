@@ -2,18 +2,19 @@
 
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "../types/Ir77PVTypes.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
-
-#include "../dictionary/IDIr77PVContext.hpp"
 
 #include "../dictionary/IDIIr77PeregrineV.hpp"
 #include "../dictionary/IDIr77PeregrineV.hpp"
@@ -31,14 +32,18 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 // =============================================================================================================================================
-// Ir77PVPipeline -- one graphics pipeline for one Ir77PVPipelineKind, against subpass 0 of the render pass it is given.
+// Ir77PVPipeline -- one graphics pipeline built from an Ir77PVPipelineDesc, for dynamic rendering into the attachment formats of the pass it
+// is given. Normally created by Ir77PVPipelineCache, which keys pipelines by their description.
 //
-//   configure: SetDevice / SetRenderPass / SetLayout / SetShader / SetKind
+//   configure: SetDevice / SetRenderPass (attachment formats) / SetLayout / SetShader / SetDesc / [SetPipelineCache]
 //   create:    CreatePipeline -> DefineDynamicState -> DefineVertexInputState -> DefineInputAssemblyState -> DefineViewportState
 //              -> DefineRasterizationState -> DefineMultisamplingState -> DefineDepthStencilState -> DefineColorBlendAttachment
 //              -> DefineColorBlendState -> DefineShaderStages -> DefinePipeline
 //
-// Viewport and scissor are dynamic, so the pipeline does not depend on any swapchain extent.
+// Dynamic: viewport, scissor, cull mode, front face, depth test / write / compare -- Ir77PVCmdBuffer sets them per pass and per draw from the
+// description's policy. Baked: shader stages (registry handles), vertex input (from the vertex shader's reflection -- none when it reads no
+// inputs), blend (opaque / alpha / additive), attachment formats, depth bias, the FLIP_BACK_FACES constant. DefineShaderStages checks each
+// stage slot and the vertex -> fragment interface.
 // =============================================================================================================================================
 class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::enable_shared_from_this<Ir77PVPipeline> {
    public:
@@ -130,8 +135,14 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetKind(Ir77PVPipelineKind const& kind) {
-        m_kind = kind;
+    std::shared_ptr<IIr77Return const> SetDesc(Ir77PVPipelineDesc const& desc) {
+        m_desc = desc;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> SetPipelineCache(VkPipelineCache const& cache) {
+        m_cache = cache;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -184,8 +195,15 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetKind(Ir77PVPipelineKind* kind) {
-        *kind = m_kind;
+    std::shared_ptr<IIr77Return const> GetDesc(Ir77PVPipelineDesc* desc) {
+        *desc = m_desc;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // false when the vertex shader reads no inputs (or there is none) -- draws need no vertex buffer
+    std::shared_ptr<IIr77Return const> GetVertexInput(bool& has_input) {
+        has_input = m_has_vertex_input;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -195,7 +213,9 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
     std::shared_ptr<IIr77Return const> DefineDynamicState() {
-        m_dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        m_dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT,          VK_DYNAMIC_STATE_SCISSOR,           VK_DYNAMIC_STATE_CULL_MODE,
+                            VK_DYNAMIC_STATE_FRONT_FACE,        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+                            VK_DYNAMIC_STATE_DEPTH_COMPARE_OP};
 
         m_dynamic_state_info = VkPipelineDynamicStateCreateInfo{};
         m_dynamic_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -205,7 +225,8 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Locations are shared across kinds: 0 position, 1 normal, 2 uv, 3 joints, 4 weights
+    // From the vertex shader's own input locations (reflected at load): 0 position, 1 normal, 2 uv, 3 joints, 4 weights, all from binding 0.
+    // Reading 3 or 4 means the skinned layout (Ir77PVVertexSkinned); otherwise Ir77PVVertex. No vertex shader (mesh) = no vertex input.
     std::shared_ptr<IIr77Return const> DefineVertexInputState() {
         m_attribute_descriptions.clear();
 
@@ -213,52 +234,56 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         m_binding_description.binding = 0;
         m_binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        switch (m_kind) {
-            case Ir77PVPipelineKind::Static:
-            case Ir77PVPipelineKind::Transparent:
-            case Ir77PVPipelineKind::TransparentBack:
-                m_binding_description.stride = sizeof(Ir77PVVertex);
-                m_attribute_descriptions = {Attribute(0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertex, position)),
-                                            Attribute(1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertex, normal)),
-                                            Attribute(2, VK_FORMAT_R32G32_SFLOAT, offsetof(Ir77PVVertex, uv))};
-                break;
+        std::vector<std::uint32_t> locations{};
 
-            case Ir77PVPipelineKind::Shadow:
-                m_binding_description.stride = sizeof(Ir77PVVertex);
-                m_attribute_descriptions = {Attribute(0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertex, position))};
-                break;
+        if (m_desc.vertex != IR77PV_NO_SHADER) {
+            Ir77PVShaderStage stage{Ir77PVShaderStage::Vertex};
+            Ir77PVShaderReflection reflection{};
 
-            case Ir77PVPipelineKind::Skinned:
-            case Ir77PVPipelineKind::SkinnedTransparent:
-            case Ir77PVPipelineKind::SkinnedTransparentBack:
-                m_binding_description.stride = sizeof(Ir77PVVertexSkinned);
-                m_attribute_descriptions = {Attribute(0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertexSkinned, position)),
-                                            Attribute(1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertexSkinned, normal)),
-                                            Attribute(2, VK_FORMAT_R32G32_SFLOAT, offsetof(Ir77PVVertexSkinned, uv)),
-                                            Attribute(3, VK_FORMAT_R32G32B32A32_UINT, offsetof(Ir77PVVertexSkinned, joints)),
-                                            Attribute(4, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Ir77PVVertexSkinned, weights))};
-                break;
+            auto const result = m_shader_stack->GetShaderReflection(m_desc.vertex, stage, reflection);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-            case Ir77PVPipelineKind::ShadowSkinned:
-                m_binding_description.stride = sizeof(Ir77PVVertexSkinned);
-                m_attribute_descriptions = {Attribute(0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Ir77PVVertexSkinned, position)),
-                                            Attribute(3, VK_FORMAT_R32G32B32A32_UINT, offsetof(Ir77PVVertexSkinned, joints)),
-                                            Attribute(4, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Ir77PVVertexSkinned, weights))};
-                break;
+            locations = reflection.inputs;
+        }
 
-            case Ir77PVPipelineKind::CEF:
-                // fullscreen quad from gl_VertexIndex -- no vertex input
-                break;
+        bool const skinned{std::find_if(locations.begin(), locations.end(), [](std::uint32_t const l) {
+                               return l == VERTEX_LOCATION_JOINTS || l == VERTEX_LOCATION_WEIGHTS;
+                           }) != locations.end()};
 
-            case Ir77PVPipelineKind::Mesh:
-                // task/mesh shaders fetch their own data -- no vertex input stage at all
-                break;
+        m_binding_description.stride = skinned ? sizeof(Ir77PVVertexSkinned) : sizeof(Ir77PVVertex);
 
-            default:
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: unknown pipeline kind.");
+        for (auto const location : locations) {
+            switch (location) {
+                case VERTEX_LOCATION_POSITION:
+                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32_SFLOAT,
+                                                                 skinned ? offsetof(Ir77PVVertexSkinned, position) : offsetof(Ir77PVVertex, position)));
+                    break;
+
+                case VERTEX_LOCATION_NORMAL:
+                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32_SFLOAT,
+                                                                 skinned ? offsetof(Ir77PVVertexSkinned, normal) : offsetof(Ir77PVVertex, normal)));
+                    break;
+
+                case VERTEX_LOCATION_UV:
+                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32_SFLOAT,
+                                                                 skinned ? offsetof(Ir77PVVertexSkinned, uv) : offsetof(Ir77PVVertex, uv)));
+                    break;
+
+                case VERTEX_LOCATION_JOINTS:
+                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32A32_UINT, offsetof(Ir77PVVertexSkinned, joints)));
+                    break;
+
+                case VERTEX_LOCATION_WEIGHTS:
+                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Ir77PVVertexSkinned, weights)));
+                    break;
+
+                default:
+                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: vertex shader reads an unknown location " + std::to_string(location) + ".");
+            }
         }
 
         bool const has_input{!m_attribute_descriptions.empty()};
+        m_has_vertex_input = has_input;
 
         m_vertex_input_info = VkPipelineVertexInputStateCreateInfo{};
         m_vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -289,6 +314,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // cullMode / frontFace are dynamic (Ir77PVCmdBuffer::RecordDynamicState); the values here are placeholders. Depth bias stays baked.
     std::shared_ptr<IIr77Return const> DefineRasterizationState() {
         m_rasterizer_state_info = VkPipelineRasterizationStateCreateInfo{};
         m_rasterizer_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -300,30 +326,12 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         m_rasterizer_state_info.cullMode = VK_CULL_MODE_BACK_BIT;
         m_rasterizer_state_info.depthBiasEnable = VK_FALSE;
 
-        switch (m_kind) {
-            case Ir77PVPipelineKind::Shadow:
-            case Ir77PVPipelineKind::ShadowSkinned:
-                // front-face culling + bias to fight shadow acne
-                m_rasterizer_state_info.cullMode = VK_CULL_MODE_FRONT_BIT;
-                m_rasterizer_state_info.depthBiasEnable = VK_TRUE;
-                m_rasterizer_state_info.depthBiasConstantFactor = 1.25f;
-                m_rasterizer_state_info.depthBiasSlopeFactor = 1.75f;
-                m_rasterizer_state_info.depthBiasClamp = 0.0f;
-                break;
-
-            case Ir77PVPipelineKind::TransparentBack:
-            case Ir77PVPipelineKind::SkinnedTransparentBack:
-                // first transparent pass draws back faces
-                m_rasterizer_state_info.cullMode = VK_CULL_MODE_FRONT_BIT;
-                break;
-
-            case Ir77PVPipelineKind::CEF:
-                // fullscreen quad -- winding irrelevant
-                m_rasterizer_state_info.cullMode = VK_CULL_MODE_NONE;
-                break;
-
-            default:
-                break;
+        // bias to fight shadow acne
+        if (m_desc.depth_bias) {
+            m_rasterizer_state_info.depthBiasEnable = VK_TRUE;
+            m_rasterizer_state_info.depthBiasConstantFactor = 1.25f;
+            m_rasterizer_state_info.depthBiasSlopeFactor = 1.75f;
+            m_rasterizer_state_info.depthBiasClamp = 0.0f;
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -341,25 +349,17 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Always provided: required whenever the subpass has a depth attachment, ignored when it doesn't
+    // depthTestEnable / depthWriteEnable / depthCompareOp are dynamic (Ir77PVCmdBuffer); only the fixed parts are set here
     std::shared_ptr<IIr77Return const> DefineDepthStencilState() {
         m_depth_stencil_info = VkPipelineDepthStencilStateCreateInfo{};
         m_depth_stencil_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        m_depth_stencil_info.depthTestEnable = VK_TRUE;
+        m_depth_stencil_info.depthWriteEnable = VK_TRUE;
         m_depth_stencil_info.depthCompareOp = VK_COMPARE_OP_LESS;
         m_depth_stencil_info.depthBoundsTestEnable = VK_FALSE;
         m_depth_stencil_info.stencilTestEnable = VK_FALSE;
         m_depth_stencil_info.minDepthBounds = 0.0f;
         m_depth_stencil_info.maxDepthBounds = 1.0f;
-
-        if (m_kind == Ir77PVPipelineKind::CEF) {
-            // overlay -- always on top
-            m_depth_stencil_info.depthTestEnable = VK_FALSE;
-            m_depth_stencil_info.depthWriteEnable = VK_FALSE;
-        } else {
-            // transparents test against opaque depth but don't occlude each other
-            m_depth_stencil_info.depthTestEnable = VK_TRUE;
-            m_depth_stencil_info.depthWriteEnable = IsTransparent() ? VK_FALSE : VK_TRUE;
-        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -369,7 +369,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         m_color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         m_color_blend_attachment.blendEnable = VK_FALSE;
 
-        if (IsTransparent() || m_kind == Ir77PVPipelineKind::CEF) {
+        if (m_desc.blend == Ir77PVBlend::Alpha) {
             m_color_blend_attachment.blendEnable = VK_TRUE;
             m_color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
             m_color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -379,12 +379,24 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
             m_color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
         }
 
+        // colour += src * src alpha; the target's alpha is left as it was
+        if (m_desc.blend == Ir77PVBlend::Additive) {
+            m_color_blend_attachment.blendEnable = VK_TRUE;
+            m_color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            m_color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            m_color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+            m_color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            m_color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            m_color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Depth-only shadow pass has no color attachment
+    // Depth-only passes have no color attachment
     std::shared_ptr<IIr77Return const> DefineColorBlendState() {
-        bool const has_color{!IsShadow()};
+        bool has_color{false};
+        m_render_pass->HasColor(&has_color);
 
         m_color_blend_state_info = VkPipelineColorBlendStateCreateInfo{};
         m_color_blend_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -396,47 +408,32 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // The description's stage handles, in pipeline order. Raster: vertex [+ fragment]. Mesh: [task +] mesh [+ fragment], no vertex.
     std::shared_ptr<IIr77Return const> DefineShaderStages() {
         m_shader_stages.clear();
 
-        switch (m_kind) {
-            case Ir77PVPipelineKind::Static:
-            case Ir77PVPipelineKind::Transparent:
-            case Ir77PVPipelineKind::TransparentBack:
-                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_VERT, ID_SHADER_FRAG});
-                break;
+        if (m_desc.IsMesh() && m_desc.vertex != IR77PV_NO_SHADER)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: a description has either a vertex or a mesh stage, not both.");
 
-            case Ir77PVPipelineKind::Skinned:
-            case Ir77PVPipelineKind::SkinnedTransparent:
-            case Ir77PVPipelineKind::SkinnedTransparentBack:
-                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_SKINNED_VERT, ID_SHADER_FRAG});
-                break;
+        if (!m_desc.IsMesh() && m_desc.vertex == IR77PV_NO_SHADER)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: the description has no vertex or mesh stage.");
 
-            case Ir77PVPipelineKind::Shadow:
-                // depth-only: no fragment stage
-                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_SHADOW_VERT});
-                break;
+        if (!m_desc.IsMesh() && m_desc.task != IR77PV_NO_SHADER)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: a task stage needs a mesh stage.");
 
-            case Ir77PVPipelineKind::ShadowSkinned:
-                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_SHADOW_SKINNED_VERT});
-                break;
+        auto result = DefineStageInterface();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-            case Ir77PVPipelineKind::Mesh:
-                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_MESH_TASK, ID_SHADER_MESH, ID_SHADER_FRAG});
-                break;
+        std::vector<Ir77PVShaderHandle> handles{};
 
-            case Ir77PVPipelineKind::CEF:
-                m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, {ID_SHADER_CEF_VERT, ID_SHADER_CEF_FRAG});
-                break;
+        for (auto const handle : {m_desc.task, m_desc.mesh, m_desc.vertex, m_desc.fragment})
+            if (handle != IR77PV_NO_SHADER) handles.push_back(handle);
 
-            default:
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: unknown pipeline kind.");
-        }
+        result = m_shader_stack->GetPipelineShaderStageInfos(m_shader_stages, handles);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        if (m_shader_stages.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: no shader stages.");
-
-        // frag.frag constant_id 0 (FLIP_BACK_FACES) -- off for transparent kinds, shader default (on) for everything else
-        if (IsTransparent()) {
+        // frag.frag constant_id 0 (FLIP_BACK_FACES) -- only written when off; the shader default is on
+        if (!m_desc.flip_back_faces) {
             m_flip_back_faces = VK_FALSE;
             m_spec_entry = VkSpecializationMapEntry{0, 0, sizeof(VkBool32)};
             m_spec_info = VkSpecializationInfo{1, &m_spec_entry, sizeof(VkBool32), &m_flip_back_faces};
@@ -448,7 +445,42 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Mesh pipelines have no vertex input or input assembly stage
+    // Each handle is the stage its slot names, and every location the fragment shader reads is written by the vertex / mesh shader
+    std::shared_ptr<IIr77Return const> DefineStageInterface() {
+        std::pair<Ir77PVShaderHandle, Ir77PVShaderStage> const slots[]{{m_desc.vertex, Ir77PVShaderStage::Vertex},
+                                                                       {m_desc.fragment, Ir77PVShaderStage::Fragment},
+                                                                       {m_desc.task, Ir77PVShaderStage::Task},
+                                                                       {m_desc.mesh, Ir77PVShaderStage::Mesh}};
+
+        Ir77PVShaderReflection producer{};  // vertex or mesh
+        Ir77PVShaderReflection consumer{};  // fragment
+
+        for (auto const& [handle, expected] : slots) {
+            if (handle == IR77PV_NO_SHADER) continue;
+
+            Ir77PVShaderStage stage{Ir77PVShaderStage::Vertex};
+            Ir77PVShaderReflection reflection{};
+
+            auto const result = m_shader_stack->GetShaderReflection(handle, stage, reflection);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+            if (stage != expected) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: a description's stage slot holds a shader of another stage.");
+
+            if (expected == Ir77PVShaderStage::Vertex || expected == Ir77PVShaderStage::Mesh) producer = reflection;
+            if (expected == Ir77PVShaderStage::Fragment) consumer = reflection;
+        }
+
+        if (m_desc.fragment == IR77PV_NO_SHADER) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        for (auto const location : consumer.inputs)
+            if (!std::binary_search(producer.outputs.begin(), producer.outputs.end(), location))
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: the fragment shader reads location " + std::to_string(location) +
+                                                               ", which the vertex / mesh shader doesn't write.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Mesh pipelines have no vertex input or input assembly stage. Dynamic rendering: the pass's formats go in VkPipelineRenderingCreateInfo.
     std::shared_ptr<IIr77Return const> DefinePipeline() {
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
@@ -456,16 +488,26 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
         m_pipeline_layout->GetPipelineLayout(&pipeline_layout);
 
-        VkRenderPass render_pass{VK_NULL_HANDLE};
-        m_render_pass->GetRenderPass(&render_pass);
-
         if (pipeline_layout == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: pipeline layout not created.");
-        if (render_pass == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: render pass not created.");
 
-        bool const mesh{m_kind == Ir77PVPipelineKind::Mesh};
+        VkFormat color_format{VK_FORMAT_UNDEFINED};
+        VkFormat depth_format{VK_FORMAT_UNDEFINED};
+        m_render_pass->GetColorFormat(&color_format);
+        m_render_pass->GetDepthFormat(&depth_format);
+
+        bool const has_color{color_format != VK_FORMAT_UNDEFINED};
+
+        VkPipelineRenderingCreateInfo rendering_info{};
+        rendering_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+        rendering_info.colorAttachmentCount = has_color ? 1 : 0;
+        rendering_info.pColorAttachmentFormats = has_color ? &color_format : nullptr;
+        rendering_info.depthAttachmentFormat = depth_format;
+
+        bool const mesh{m_desc.IsMesh()};
 
         VkGraphicsPipelineCreateInfo pipeline_info{};
         pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipeline_info.pNext = &rendering_info;
         pipeline_info.stageCount = static_cast<std::uint32_t>(m_shader_stages.size());
         pipeline_info.pStages = m_shader_stages.data();
         pipeline_info.pVertexInputState = mesh ? nullptr : &m_vertex_input_info;
@@ -477,13 +519,12 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         pipeline_info.pColorBlendState = &m_color_blend_state_info;
         pipeline_info.pDynamicState = &m_dynamic_state_info;
         pipeline_info.layout = pipeline_layout;
-        pipeline_info.renderPass = render_pass;
-        pipeline_info.subpass = 0;
+        pipeline_info.renderPass = VK_NULL_HANDLE;
         pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
         pipeline_info.basePipelineIndex = -1;
 
         VkPipeline pipeline{VK_NULL_HANDLE};
-        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) != VK_SUCCESS)
+        if (vkCreateGraphicsPipelines(device, m_cache, 1, &pipeline_info, nullptr, &pipeline) != VK_SUCCESS)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: vkCreateGraphicsPipelines failed.");
 
         m_pipeline = pipeline;
@@ -495,13 +536,6 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     // internals
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
-    bool IsShadow() const { return m_kind == Ir77PVPipelineKind::Shadow || m_kind == Ir77PVPipelineKind::ShadowSkinned; }
-
-    bool IsTransparent() const {
-        return m_kind == Ir77PVPipelineKind::Transparent || m_kind == Ir77PVPipelineKind::TransparentBack ||
-               m_kind == Ir77PVPipelineKind::SkinnedTransparent || m_kind == Ir77PVPipelineKind::SkinnedTransparentBack;
-    }
-
     // all attributes come from binding 0
     VkVertexInputAttributeDescription Attribute(std::uint32_t const location, VkFormat const format, std::uint32_t const offset) const {
         return VkVertexInputAttributeDescription{location, 0, format, offset};
@@ -516,7 +550,9 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
     std::shared_ptr<IIr77PVShader> m_shader_stack{};
 
-    Ir77PVPipelineKind m_kind{Ir77PVPipelineKind::Static};
+    Ir77PVPipelineDesc m_desc{};
+
+    VkPipelineCache m_cache{VK_NULL_HANDLE};
 
     VkPipeline m_pipeline{VK_NULL_HANDLE};
 
@@ -526,6 +562,8 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     VkPipelineDynamicStateCreateInfo m_dynamic_state_info{};
 
     VkVertexInputBindingDescription m_binding_description{};
+
+    bool m_has_vertex_input{false};
 
     std::vector<VkVertexInputAttributeDescription> m_attribute_descriptions{};
 

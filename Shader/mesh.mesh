@@ -1,20 +1,15 @@
 #version 460
 #extension GL_EXT_mesh_shader : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "include/bindless.glsl"
 
 // One workgroup per visible meshlet. Outputs match vert.vert so frag.spv is shared unchanged.
 // max_vertices / max_primitives must match MESHLET_MAX_VERTICES / MESHLET_MAX_TRIANGLES.
 layout(local_size_x = 32) in;
 layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
-// set 0 binding 0 -- matches Ir77PVCamera
-layout(set = 0, binding = 0) uniform CameraUBO {
-    mat4 view;
-    mat4 proj;
-    mat4 view_proj;
-    vec4 eye;
-} camera;
-
-// set 3 -- matches Ir77PVLayout::BindingsMeshlet
+// pc.user[0] -- matches Ir77PVMeshlet
 struct Meshlet {
     vec4 sphere;
     vec4 cone;
@@ -23,30 +18,16 @@ struct Meshlet {
     uint vertex_count;
     uint triangle_count;
 };
+IR77_BUFFER(ir77_meshlets, Meshlet);
 
-layout(std430, set = 3, binding = 0) readonly buffer Meshlets {
-    Meshlet meshlets[];
-};
+// pc.user[1] -- meshlet-local index -> mesh vertex index
+IR77_BUFFER(ir77_meshlet_vertices, uint);
 
-// meshlet-local index -> mesh vertex index
-layout(std430, set = 3, binding = 1) readonly buffer MeshletVertices {
-    uint meshlet_vertices[];
-};
+// pc.user[2] -- uint8 x3 per triangle, read as packed words (no 8-bit storage feature needed)
+IR77_BUFFER(ir77_meshlet_triangles, uint);
 
-// uint8 x3 per triangle, read as packed words (no 8-bit storage feature needed)
-layout(std430, set = 3, binding = 2) readonly buffer MeshletTriangles {
-    uint meshlet_triangles[];
-};
-
-// Ir77PVVertex as 8 tightly packed floats: position xyz, normal xyz, uv
-layout(std430, set = 3, binding = 3) readonly buffer Vertices {
-    float vertices[];
-};
-
-// set 0 binding 2 -- one model matrix per instance
-layout(std430, set = 0, binding = 2) readonly buffer Instances {
-    mat4 models[];
-};
+// pc.vertices -- Ir77PVVertex as 8 tightly packed floats: position xyz, normal xyz, uv
+IR77_BUFFER(ir77_vertex_floats, float);
 
 // must match mesh.task
 struct TaskPayload {
@@ -61,30 +42,34 @@ layout(location = 1) out vec2 fragUV[];
 layout(location = 2) out vec3 fragWorldPos[];
 
 uint TriangleByte(uint byte_index) {
-    return (meshlet_triangles[byte_index >> 2] >> ((byte_index & 3u) * 8u)) & 0xFFu;
+    return (ir77_meshlet_triangles[pc.user[2]].data[byte_index >> 2] >> ((byte_index & 3u) * 8u)) & 0xFFu;
+}
+
+float VertexFloat(uint index) {
+    return ir77_vertex_floats[pc.vertices].data[index];
 }
 
 void main() {
     uint lane = gl_LocalInvocationIndex;
 
-    Meshlet meshlet = meshlets[payload.meshlets[gl_WorkGroupID.x]];
+    Meshlet meshlet = ir77_meshlets[pc.user[0]].data[payload.meshlets[gl_WorkGroupID.x]];
 
     SetMeshOutputsEXT(meshlet.vertex_count, meshlet.triangle_count);
 
-    mat4 model = models[payload.instance];
-    mat4 mvp = camera.view_proj * model;
+    mat4 model = IR77_MODEL(payload.instance);
+    mat4 view_proj = IR77_CAMERA.view_proj;
     mat3 normal_matrix = mat3(model);
 
     for (uint i = lane; i < meshlet.vertex_count; i += 32) {
-        uint base = meshlet_vertices[meshlet.vertex_offset + i] * 8u;
+        uint base = ir77_meshlet_vertices[pc.user[1]].data[meshlet.vertex_offset + i] * 8u;
 
-        vec3 position = vec3(vertices[base + 0], vertices[base + 1], vertices[base + 2]);
-        vec3 normal = vec3(vertices[base + 3], vertices[base + 4], vertices[base + 5]);
-        vec2 uv = vec2(vertices[base + 6], vertices[base + 7]);
+        vec3 position = vec3(VertexFloat(base + 0), VertexFloat(base + 1), VertexFloat(base + 2));
+        vec3 normal = vec3(VertexFloat(base + 3), VertexFloat(base + 4), VertexFloat(base + 5));
+        vec2 uv = vec2(VertexFloat(base + 6), VertexFloat(base + 7));
 
         vec4 world = model * vec4(position, 1.0);
         fragWorldPos[i] = world.xyz;
-        gl_MeshVerticesEXT[i].gl_Position = camera.view_proj * world;
+        gl_MeshVerticesEXT[i].gl_Position = view_proj * world;
         fragNormal[i] = normal_matrix * normal;
         fragUV[i] = uv;
     }

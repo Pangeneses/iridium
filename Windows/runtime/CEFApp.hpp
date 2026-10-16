@@ -2,8 +2,11 @@
 
 #include "include/cef_app.h"
 
+#include "CEFRenderProcessHandler.hpp"
+
 namespace CEF {
 
+// Passed to CefExecuteProcess as well as CefInitialize, so the renderer subprocesses get GetRenderProcessHandler (window.cefQuery).
 class CEFApp : public CefApp {
    public:
     CEFApp() {};
@@ -23,8 +26,8 @@ class CEFApp : public CefApp {
         command_line->AppendSwitch("disable-gpu-process-crash-limit");
         command_line->AppendSwitch("ignore-gpu-blocklist");
         command_line->AppendSwitch("enable-gpu-rasterization");
-       // command_line->AppendSwitchWithValue("disable-features", "OptimizationGuideOnDeviceModel,OnDeviceModelService");
-       command_line->AppendSwitchWithValue("disable-features", "webgpu");
+        // command_line->AppendSwitchWithValue("disable-features", "OptimizationGuideOnDeviceModel,OnDeviceModelService");
+        // command_line->AppendSwitchWithValue("disable-features", "webgpu");
     }
 
     void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {}
@@ -33,9 +36,12 @@ class CEFApp : public CefApp {
 
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return nullptr; }
 
-    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return nullptr; }
+    // renderer processes only -- the browser process never asks
+    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return m_render_process_handler; }
 
    private:
+    CefRefPtr<CefRenderProcessHandler> m_render_process_handler{new CEFRenderProcessHandler()};
+
     IMPLEMENT_REFCOUNTING(CEFApp);
 };
 

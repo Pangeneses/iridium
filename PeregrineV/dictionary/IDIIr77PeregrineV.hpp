@@ -35,9 +35,8 @@ inline Ir77GUID GUIDIIr77PVBuffer{(static_cast<unsigned __int128>(0xA665143705AD
 inline Ir77GUID GUIDIIr77PVCompute{(static_cast<unsigned __int128>(0x4CF567680DCB4A88) << 64) | 0x9A25F925F2778211};
 inline Ir77GUID GUIDIIr77PVDescriptorSet{(static_cast<unsigned __int128>(0xC7EFCD677B114AC8) << 64) | 0x9EF48FEFF8B288F8};
 inline Ir77GUID GUIDIIr77PVLayout{(static_cast<unsigned __int128>(0xF1FC7315669F4091) << 64) | 0x8DC0297D45CD38CD};
-inline Ir77GUID GUIDIIr77PVLayoutCPT{(static_cast<unsigned __int128>(0xE7669947A0E44A28) << 64) | 0xB79312BEFEB99E7B};
-inline Ir77GUID GUIDIIr77PVLayoutRay{(static_cast<unsigned __int128>(0xF13C790E648C4BC1) << 64) | 0x91B192DEEEF9668F};
 inline Ir77GUID GUIDIIr77PVPipeline{(static_cast<unsigned __int128>(0xB10BE474EAC70D1A) << 64) | 0xFEFDBF8EA6C37F9D};
+inline Ir77GUID GUIDIIr77PVPipelineCache{(static_cast<unsigned __int128>(0xA299C54C906948DC) << 64) | 0x952ECFA401376D92};
 inline Ir77GUID GUIDIIr77PVPipelineCPT{(static_cast<unsigned __int128>(0x46C20AB047F94AE2) << 64) | 0x9A1201B0DEE5A384};
 inline Ir77GUID GUIDIIr77PVPipelineRay{(static_cast<unsigned __int128>(0xA9B8A5CE4B7C49F0) << 64) | 0xA3C627B3D928C9A9};
 inline Ir77GUID GUIDIIr77PVCmdBuffer{(static_cast<unsigned __int128>(0xF71D19D109D2114D) << 64) | 0x1186ADBD29983077};
@@ -119,29 +118,43 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
     std::shared_ptr<IIr77Return const> m_invalidation_condition{nullptr};
 
     std::map<std::string, IIr77GUID const*> m_index{
+        // Root
         {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},
+
+        // Modules
         {"GUIDIIr77PVPaint", &GUIDIIr77PVPaint},
         {"GUIDIIr77PVAsset", &GUIDIIr77PVAsset},
         {"GUIDIIr77PVCEF", &GUIDIIr77PVCEF},
+
+        // Core Vulkan Objects
         {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},
         {"GUIDIIr77PVDevice", &GUIDIIr77PVDevice},
         {"GUIDIIr77PVSwapchain", &GUIDIIr77PVSwapchain},
         {"GUIDIIr77PVRenderPass", &GUIDIIr77PVRenderPass},
         {"GUIDIIr77PVOverlay", &GUIDIIr77PVOverlay},
+
+        // Resources
         {"GUIDIIr77PVBuffer", &GUIDIIr77PVBuffer},
-        {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
-        {"GUIDIIr77PVDescriptorSet", &GUIDIIr77PVDescriptorSet},
-        {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},
-        {"GUIDIIr77PVLayoutCPT", &GUIDIIr77PVLayoutCPT},
-        {"GUIDIIr77PVLayoutRay", &GUIDIIr77PVLayoutRay},
-        {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},
-        {"GUIDIIr77PVPipelineCPT", &GUIDIIr77PVPipelineRay},
-        {"GUIDIIr77PVPipelineCPT", &GUIDIIr77PVPipelineRay},
         {"GUIDIIr77PVTexture", &GUIDIIr77PVTexture},
-        {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
         {"GUIDIIr77PVShader", &GUIDIIr77PVShader},
         {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},
         {"GUIDIIr77PVMesh", &GUIDIIr77PVMesh},
+
+        // Compute
+        {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
+
+        // Descriptor/Layout
+        {"GUIDIIr77PVDescriptorSet", &GUIDIIr77PVDescriptorSet},
+        {"GUIDIIr77PVLayout", &GUIDIIr77PVLayout},
+
+        // Pipelines
+        {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},
+        {"GUIDIIr77PVPipelineCache", &GUIDIIr77PVPipelineCache},
+        {"GUIDIIr77PVPipelineCPT", &GUIDIIr77PVPipelineCPT},
+        {"GUIDIIr77PVPipelineRay", &GUIDIIr77PVPipelineRay},
+
+        // Command Recording
+        {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
     };
 };
 

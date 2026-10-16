@@ -27,6 +27,7 @@
 #include "../interface/IIr77PVSwapchain.hpp"
 #include "../interface/IIr77PVRenderPass.hpp"
 #include "../interface/IIr77PVPipeline.hpp"
+#include "../interface/IIr77PVPipelineCache.hpp"
 #include "../interface/IIr77PVLayout.hpp"
 #include "../interface/IIr77PVBuffer.hpp"
 #include "../interface/IIr77PVDescriptorSet.hpp"
@@ -39,14 +40,13 @@
 #include "../runtime/Ir77PVSwapchain.hpp"
 #include "../runtime/Ir77PVRenderPass.hpp"
 #include "../runtime/Ir77PVPipeline.hpp"
+#include "../runtime/Ir77PVPipelineCache.hpp"
 #include "../runtime/Ir77PVLayout.hpp"
 #include "../runtime/Ir77PVBuffer.hpp"
 #include "../runtime/Ir77PVDescriptorSet.hpp"
 #include "../runtime/Ir77PVTexture.hpp"
 
 #include "../types/Ir77PVTypes.hpp"
-
-#include "IDIr77PVContext.hpp"
 
 #include "../types/Ir77PVTypes.hpp"
 
@@ -83,7 +83,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         m_buffers_vertex.clear();
         m_buffers_index.clear();
         m_swapchains.clear();
-        m_pipelines.clear();
+        m_pipeline_caches.clear();  // saves the cache file, destroys every pipeline
         m_placeholders.clear();
         m_descriptor_sets.clear();  // after everything that registered slots in it
         m_layouts.clear();
@@ -495,42 +495,23 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Descriptor Sets.");
     }
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // pipelines -- per window, per kind. Each kind resolves its render pass via RenderPassKindFor; every kind shares the one bindless layout.
-    // Kinds whose render pass hasn't been created yet (e.g. Shadow) are skipped.
-    // Only request kinds whose shaders are loaded (Skinned / Shadow shaders don't exist yet).
+    // pipelines -- one Ir77PVPipelineCache per device, shared by every window: a pipeline is built the first time its description is asked
+    // for, and the driver's compiled code is kept on disk between runs. Asking for the kinds here only warms the cache at startup; kinds
+    // whose shaders or render pass are missing are skipped. Needs CreateLayouts, CreateRenderPasses and Asset::CreateShaders.
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreatePipelines(std::vector<Ir77PVPipelineKind> const& kinds) {
-        std::size_t const windows = m_windows.at(m_current_device).size();
+        auto const result = DefinePipelineCache();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        if (windows > MAX_WINDOWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: too many windows.");
+        auto const& cache = m_pipeline_caches.at(m_current_device);
 
-        auto const& render_passes = m_render_passes.at(m_current_device);
-        auto const& layout = m_layouts.at(m_current_device);
+        for (auto const kind : kinds) {
+            Ir77PVPipelineHandle handle{IR77PV_NO_PIPELINE};
+            std::shared_ptr<IIr77PVPipeline> pipeline{};
 
-        std::vector<std::map<Ir77PVPipelineKind, std::shared_ptr<IIr77PVPipeline>>> per_window(windows);
-
-        for (std::size_t w = 0; w < windows; w++) {
-            for (auto const kind : kinds) {
-                auto const pass = render_passes.find(RenderPassKindFor(kind));
-                if (pass == render_passes.end()) continue;  // that render pass kind doesn't exist
-
-                auto ipipeline = std::static_pointer_cast<IIr77PVPipeline>(std::make_shared<Ir77PVPipeline>());
-
-                ipipeline->SetDevice(m_devices.at(m_current_device));
-                ipipeline->SetRenderPass(pass->second);
-                ipipeline->SetLayout(layout);
-                ipipeline->SetShader(m_shaders.at(m_current_device));
-                ipipeline->SetKind(kind);
-
-                if (ipipeline->CreatePipeline()->ID() != GUIDIr77OperationSucceeded) {
-                    continue;  // this kind's shader stage(s) aren't loaded -- skip it, not fatal
-                }
-
-                per_window[w].emplace(kind, ipipeline);
-            }
+            cache->FindPipeline(kind, handle);
+            cache->GetPipeline(handle, pipeline);  // builds now, into the slot draw items will use; a role that can't resolve is skipped
         }
-
-        m_pipelines[m_current_device] = per_window;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Pipelines.");
     }
@@ -588,15 +569,39 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetPipeline(std::size_t const& window, Ir77PVPipelineKind const& kind, std::shared_ptr<IIr77PVPipeline>& pipeline) {
-        auto const device = m_pipelines.find(m_current_device);
-        if (device == m_pipelines.end() || window >= device->second.size())
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: no pipelines for window.");
+    // A manifest pipeline's handle -- what draw items carry
+    std::shared_ptr<IIr77Return const> FindPipeline(std::string const& name, Ir77PVPipelineHandle& handle) {
+        auto const found = m_pipeline_caches.find(m_current_device);
+        if (found == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreatePipelines not called.");
 
-        auto const found = device->second[window].find(kind);
-        if (found == device->second[window].end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: pipeline kind not created.");
+        return found->second->FindPipeline(name, handle);
+    }
 
-        pipeline = found->second;
+    // An engine role's handle -- follows the manifest's "roles"
+    std::shared_ptr<IIr77Return const> FindPipeline(Ir77PVPipelineKind const& kind, Ir77PVPipelineHandle& handle) {
+        auto const found = m_pipeline_caches.find(m_current_device);
+        if (found == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreatePipelines not called.");
+
+        return found->second->FindPipeline(kind, handle);
+    }
+
+    // The pipeline a handle resolves to under the current manifest -- every window on the device shares it
+    std::shared_ptr<IIr77Return const> GetPipeline(Ir77PVPipelineHandle const& handle, std::shared_ptr<IIr77PVPipeline>& pipeline) {
+        auto const found = m_pipeline_caches.find(m_current_device);
+        if (found == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreatePipelines not called.");
+
+        return found->second->GetPipeline(handle, pipeline);
+    }
+
+    // Before CreatePipelines: overrides <shader root>/pipelines.json. After: reloads now -- a bad file fails and the old manifest stays.
+    std::shared_ptr<IIr77Return const> SetPipelineManifest(std::string const& path) {
+        auto const cache = m_pipeline_caches.find(m_current_device);
+        if (cache != m_pipeline_caches.end()) {
+            auto const result = cache->second->LoadManifest(path);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        }
+
+        m_pipeline_manifests[m_current_device] = path;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -754,16 +759,40 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
         return slot;
     }
 
-    Ir77PVRenderPassKind RenderPassKindFor(Ir77PVPipelineKind const kind) const {
-        switch (kind) {
-            case Ir77PVPipelineKind::Shadow:
+    // The device's pipeline cache, wired to its layout, shaders and every render pass. A no-op once it exists.
+    std::shared_ptr<IIr77Return const> DefinePipelineCache() {
+        if (m_pipeline_caches.count(m_current_device) != 0) return Ir77RETURN<Ir77OperationSucceeded>();
 
-            case Ir77PVPipelineKind::ShadowSkinned:
-                return Ir77PVRenderPassKind::Shadow;
+        auto const shaders = m_shaders.find(m_current_device);
+        if (shaders == m_shaders.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: shaders not loaded -- call Asset::CreateShaders first.");
 
-            default:
-                return Ir77PVRenderPassKind::Main;
-        }
+        auto const passes = m_render_passes.find(m_current_device);
+        if (passes == m_render_passes.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: CreateRenderPasses not called.");
+
+        auto cache = std::static_pointer_cast<IIr77PVPipelineCache>(std::make_shared<Ir77PVPipelineCache>());
+
+        cache->SetDevice(m_devices.at(m_current_device));
+
+        cache->SetLayout(m_layouts.at(m_current_device));
+
+        cache->SetShader(shaders->second);
+
+        for (auto const& [kind, render_pass] : passes->second) cache->SetRenderPass(kind, render_pass);
+
+        auto const result = cache->CreatePipelineCache();
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        auto const manifest = m_pipeline_manifests.find(m_current_device);
+        if (manifest == m_pipeline_manifests.end())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PeregrineV: no pipeline manifest -- put pipelines.json in the shader root or call SetPipelineManifest.");
+
+        auto const loaded = cache->LoadManifest(manifest->second);
+
+        if (loaded->ID() != GUIDIr77OperationSucceeded) return loaded;
+
+        m_pipeline_caches[m_current_device] = cache;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
@@ -796,7 +825,7 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
     /*************************** passes *********************************/
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVSwapchain>>> m_swapchains;
 
-    std::map<std::size_t, std::map<Ir77PVRenderPassKind, std::shared_ptr<IIr77PVRenderPass>>> m_render_passes;
+    std::map<std::uint64_t, std::map<Ir77PVRenderPassKind, std::shared_ptr<IIr77PVRenderPass>>> m_render_passes;
 
     /*************************** layout / pipelines *********************/
     // [device] -- the one bindless layout and the one bindless table
@@ -804,8 +833,11 @@ class Ir77PeregrineV : public Ir77Enlisted, public std::enable_shared_from_this<
 
     std::map<std::uint64_t, std::shared_ptr<IIr77PVDescriptorSet>> m_descriptor_sets;
 
-    // [device][window][kind]
-    std::map<std::uint64_t, std::vector<std::map<Ir77PVPipelineKind, std::shared_ptr<IIr77PVPipeline>>>> m_pipelines;
+    // [device] -- every pipeline, keyed by description
+    std::map<std::uint64_t, std::shared_ptr<IIr77PVPipelineCache>> m_pipeline_caches;
+
+    // [device] -- pipelines.json; Asset::CreateShaders fills it from the shader root unless SetPipelineManifest did
+    std::map<std::uint64_t, std::string> m_pipeline_manifests;
 
     /*************************** buffers / slots ************************/
     // [device][window][slot]

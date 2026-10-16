@@ -34,11 +34,12 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 // =============================================================================================================================================
-// Ir77PVSwapchain -- one window's surface, swapchain, image views, shared depth image and Main-pass framebuffers.
+// Ir77PVSwapchain -- one window's surface, swapchain, image views and shared depth image. The Main pass renders into them directly
+// (dynamic rendering) -- there are no framebuffers.
 //
 //   create:    SetInstance / SetDevice / SetAllocator / SetRenderPass -> CreateSurface
 //   build:     DefineSwapchainSupport -> DefineSwapSurfaceFormat -> DefinePresentMode -> DefineSurfaceCapabilities -> DefineSwapchain
-//              -> DefineSwapchainImages -> DefineImageView -> DefineFramebuffers
+//              -> DefineSwapchainImages -> DefineImageView -> DefineDepthTarget
 //   rebuild:   the same sequence, with CleanupSwapchain after DefineSwapchain (it releases what the new swapchain replaced)
 // =============================================================================================================================================
 class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std::enable_shared_from_this<Ir77PVSwapchain> {
@@ -62,8 +63,6 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
 
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
-
-        DestroyFramebuffers(device);
 
         DestroyDepth(device);
 
@@ -166,7 +165,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     // -------------------------------------------------------------------------------------------------------------------------------------
     // build / rebuild
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // first build -- support, format, present mode, extent, swapchain, images, views, framebuffers
+    // first build -- support, format, present mode, extent, swapchain, images, views, depth image
     std::shared_ptr<IIr77Return const> CreateSwapchain() { return Build(false); }
 
     // after OUT_OF_DATE / SUBOPTIMAL -- the same sequence, releasing what the new swapchain replaced
@@ -208,18 +207,16 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         result = DefineImageView();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        result = DefineFramebuffers();
+        result = DefineDepthTarget();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, rebuild ? "Success: Rebuild Swapchain." : "Success: Create Swapchain.");
     }
 
-    // Releases the framebuffers, depth image and views of the previous build, and the swapchain DefineSwapchain replaced
+    // Releases the depth image and views of the previous build, and the swapchain DefineSwapchain replaced
     std::shared_ptr<IIr77Return const> CleanupSwapchain() {
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
-
-        DestroyFramebuffers(device);
 
         DestroyDepth(device);
 
@@ -381,36 +378,15 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Attachment order matches the Main render pass: [0] color (per swapchain image), [1] depth (shared)
-    std::shared_ptr<IIr77Return const> DefineFramebuffers() {
+    // The shared depth image at the current extent, in the Main pass's depth format
+    std::shared_ptr<IIr77Return const> DefineDepthTarget() {
         if (m_allocator == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SetAllocator not called -- the depth image needs it.");
         if (!m_render_pass) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: SetRenderPass not called.");
 
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
-        VkRenderPass render_pass{VK_NULL_HANDLE};
-        m_render_pass->GetRenderPass(&render_pass);
-
         if (!DefineDepth(device)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: depth image creation failed.");
-
-        m_swapchain_framebuffers.assign(m_swapchain_views.size(), VK_NULL_HANDLE);
-
-        for (std::size_t i = 0; i < m_swapchain_views.size(); i++) {
-            std::array<VkImageView, 2> const attachments{m_swapchain_views[i], m_depth_view};
-
-            VkFramebufferCreateInfo framebuffer_info{};
-            framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebuffer_info.renderPass = render_pass;
-            framebuffer_info.attachmentCount = static_cast<std::uint32_t>(attachments.size());
-            framebuffer_info.pAttachments = attachments.data();
-            framebuffer_info.width = m_swapchain_extent.width;
-            framebuffer_info.height = m_swapchain_extent.height;
-            framebuffer_info.layers = 1;
-
-            if (vkCreateFramebuffer(device, &framebuffer_info, nullptr, &m_swapchain_framebuffers[i]) != VK_SUCCESS)
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVSwapchain: vkCreateFramebuffer failed at " + std::to_string(i) + ".");
-        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -437,8 +413,16 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetSwapchainFramebuffers(std::vector<VkFramebuffer>& swapchain_framebuffers) {
-        swapchain_framebuffers = m_swapchain_framebuffers;
+    std::shared_ptr<IIr77Return const> GetSwapchainImages(std::vector<VkImage>& swapchain_images) {
+        swapchain_images = m_swapchain_images;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // the shared depth image + view -- the Main pass's depth attachment
+    std::shared_ptr<IIr77Return const> GetDepthTarget(VkImage& image, VkImageView& view) {
+        image = m_depth_image;
+        view = m_depth_view;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -468,7 +452,7 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         m_swapchain_extent.height = std::clamp(static_cast<std::uint32_t>(height), m_capabilities.minImageExtent.height, m_capabilities.maxImageExtent.height);
     }
 
-    // One depth image per swapchain, sized to the current extent, shared by every framebuffer
+    // One depth image per swapchain, sized to the current extent, shared by every frame
     bool DefineDepth(VkDevice device) {
         DestroyDepth(device);
 
@@ -512,13 +496,6 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
         m_depth_view = VK_NULL_HANDLE;
         m_depth_image = VK_NULL_HANDLE;
         m_depth_allocation = VK_NULL_HANDLE;
-    }
-
-    void DestroyFramebuffers(VkDevice device) {
-        for (auto const framebuffer : m_swapchain_framebuffers)
-            if (framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device, framebuffer, nullptr);
-
-        m_swapchain_framebuffers.clear();
     }
 
     void DestroyViews(VkDevice device) {
@@ -570,8 +547,6 @@ class Ir77PVSwapchain : public Ir77Enlisted, public IIr77PVSwapchain, public std
     VmaAllocation m_depth_allocation{VK_NULL_HANDLE};
 
     VkImageView m_depth_view{VK_NULL_HANDLE};
-
-    std::vector<VkFramebuffer> m_swapchain_framebuffers{};
 };
 
 }  // namespace NSIr77PeregrineV

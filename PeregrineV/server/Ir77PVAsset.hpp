@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "../types/Ir77PVTypes.hpp"
@@ -31,11 +32,9 @@
 
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "IDIr77PVContext.hpp"
+#include "../interface/IIr77PVShader.hpp"
 
-#include "IIr77PVShader.hpp"
 #include "Ir77PeregrineV.hpp"
-#include "Ir77PVPaint.hpp"
 
 #include "../runtime/Ir77PVBuffer.hpp"
 #include "../runtime/Ir77PVDescriptorSet.hpp"
@@ -49,8 +48,9 @@ namespace NSIr77PeregrineV {
 // =============================================================================================================================================
 // Ir77PVAsset -- the data binding point between a client (scene loader / game layer) and PeregrineV.
 //
-//   startup:   SetPeregrineV -> CreateShaders -> (CreatePipelines) -> placeholder textures -> CreateDescriptorSets (bindless table)
+//   startup:   SetPeregrineV -> [SetShaderRoot] -> CreateShaders (every .spv in the root) -> (CreatePipelines) -> placeholder textures -> CreateDescriptorSets (bindless table)
 //   load:      CreateTexture -> CreateMaterial / UploadMaterials -> UploadScene (vertex path) or UploadMeshlets (mesh path)
+//   gpu data:  CreateStorageBuffer (compute writes it, shaders read it by slot) -> MakeProceduralDrawItem / Ir77PVDispatch -> DestroyStorageBuffer
 //
 // Bindless: textures get texture slots, materials are rows in the device's material table (holding texture slots), meshlet buffers get
 // buffer slots. Draw items carry rows and slots; Ir77PVCmdBuffer turns them into push constants.
@@ -91,6 +91,10 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             // textures release their own image / view / sampler -- the device is idle and the allocator still alive here
             auto const textures = m_textures.find(device_id);
             if (textures != m_textures.end()) textures->second.clear();
+
+            // storage buffers free themselves -- same reason
+            auto const storage = m_storage_buffers.find(device_id);
+            if (storage != m_storage_buffers.end()) storage->second.clear();
         }
 
         m_graveyard.clear();  // buffers are still listed in the context slots, which tear them down
@@ -232,75 +236,142 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     // shaders
     // =========================================================================================================================================
 
-    // Loads every shader file that exists under the root. Required ones fail the call; optional ones (skinned,
-    // shadow, mesh) are skipped, and the pipeline kinds they unlock are reported by GetPipelineKinds.
+    // Registers every .spv under the shader root, each under its file name without ".spv" ("vert", "skinned.vert", "heightmap.frag"); the
+    // stage comes from the SPIR-V. A file that breaks the shader contract (Ir77PVTypes.hpp) -- or a task / mesh shader on a device without mesh
+    // shading -- is skipped with a warning. Which shaders combine into which pipelines is the manifest's job: <shader root>/pipelines.json
+    // becomes the device's manifest unless PeregrineV::SetPipelineManifest named one already. More shaders can be registered at any time
+    // through the registry's LoadShader / AddShader.
     std::shared_ptr<IIr77Return const> CreateShaders() {
-        bool mesh_shading{false};
-        m_context->m_devices.at(m_context->m_current_device)->GetMeshShading(mesh_shading);
-
-        std::vector<Ir77PVShaderFile> const files{
-            {"vert.spv", ID_SHADER_VERT, Ir77PVShaderStage::Vertex, true},
-            {"frag.spv", ID_SHADER_FRAG, Ir77PVShaderStage::Fragment, true},
-            {"cef.vert.spv", ID_SHADER_CEF_VERT, Ir77PVShaderStage::Vertex, true},
-            {"cef.frag.spv", ID_SHADER_CEF_FRAG, Ir77PVShaderStage::Fragment, true},
-            {"skinned.vert.spv", ID_SHADER_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
-            {"shadow.vert.spv", ID_SHADER_SHADOW_VERT, Ir77PVShaderStage::Vertex, false},
-            {"shadow_skinned.vert.spv", ID_SHADER_SHADOW_SKINNED_VERT, Ir77PVShaderStage::Vertex, false},
-            {"mesh.task.spv", ID_SHADER_MESH_TASK, Ir77PVShaderStage::Task, false, true},
-            {"mesh.mesh.spv", ID_SHADER_MESH, Ir77PVShaderStage::Mesh, false, true},
-        };
+        std::error_code error{};
+        if (!std::filesystem::is_directory(m_shader_root, error))
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: shader root not found: " + m_shader_root);
 
         auto shader = std::static_pointer_cast<IIr77PVShader>(std::make_shared<Ir77PVShader>());
 
         shader->SetDevice(m_context->m_devices.at(m_context->m_current_device));
 
-        std::map<std::uint64_t, bool> loaded{};
+        for (auto const& entry : std::filesystem::directory_iterator(m_shader_root, error)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".spv") continue;
 
-        for (auto const& entry : files) {
-            if (entry.mesh_shading && !mesh_shading) continue;
+            std::string const name{entry.path().stem().string()};  // "skinned.vert.spv" -> "skinned.vert"
+            Ir77PVShaderHandle handle{IR77PV_NO_SHADER};
 
-            std::filesystem::path const path = std::filesystem::path(m_shader_root) / entry.file;
-
-            if (!std::filesystem::exists(path)) {
-                if (entry.required) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: required shader missing.");
-                std::printf("[WARN] optional shader missing: %s\n", path.string().c_str());
-                continue;
-            }
-
-            if (shader->LoadShader(path.string(), entry.id, entry.stage)->ID() != GUIDIr77OperationSucceeded) {
-                if (entry.required) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: required shader failed to load.");
-                std::printf("[WARN] optional shader failed to load: %s\n", path.string().c_str());
-                continue;
-            }
-
-            loaded[entry.id] = true;
+            if (shader->LoadShader(name, entry.path().string(), handle)->ID() != GUIDIr77OperationSucceeded)
+                std::printf("[WARN] shader skipped: %s\n", entry.path().string().c_str());
         }
 
-        // pipeline kinds whose every stage loaded
-        std::vector<Ir77PVPipelineKind> kinds{Ir77PVPipelineKind::Static, Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::TransparentBack,
-                                              Ir77PVPipelineKind::CEF};
+        if (error) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: cannot read the shader root: " + m_shader_root);
 
-        if (loaded.count(ID_SHADER_SKINNED_VERT)) {
-            kinds.push_back(Ir77PVPipelineKind::Skinned);
-            kinds.push_back(Ir77PVPipelineKind::SkinnedTransparent);
-            kinds.push_back(Ir77PVPipelineKind::SkinnedTransparentBack);
-        }
-        if (loaded.count(ID_SHADER_SHADOW_VERT)) kinds.push_back(Ir77PVPipelineKind::Shadow);
-        if (loaded.count(ID_SHADER_SHADOW_SKINNED_VERT)) kinds.push_back(Ir77PVPipelineKind::ShadowSkinned);
-        if (loaded.count(ID_SHADER_MESH_TASK) && loaded.count(ID_SHADER_MESH)) kinds.push_back(Ir77PVPipelineKind::Mesh);
-
-        m_pipeline_kinds[m_context->m_current_device] = kinds;
+        std::filesystem::path const manifest = std::filesystem::path(m_shader_root) / "pipelines.json";
+        if (std::filesystem::is_regular_file(manifest, error))
+            m_context->m_pipeline_manifests.emplace(m_context->m_current_device, manifest.string());  // emplace -- an explicit one wins
 
         m_context->m_shaders[m_context->m_current_device] = shader;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Shaders.");
     }
 
+    // Every engine role -- CreatePipelines warms the cache with them. A role the manifest leaves out, or points at an unavailable pipeline,
+    // is skipped there (static and cef can't be: the manifest fails to load without them).
     std::shared_ptr<IIr77Return const> GetPipelineKinds(std::vector<Ir77PVPipelineKind>& kinds) {
-        auto const found = m_pipeline_kinds.find(m_context->m_current_device);
-        if (found == m_pipeline_kinds.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreateShaders not called.");
+        kinds = {Ir77PVPipelineKind::Static, Ir77PVPipelineKind::Skinned,     Ir77PVPipelineKind::Shadow, Ir77PVPipelineKind::ShadowSkinned,
+                 Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::CEF, Ir77PVPipelineKind::Mesh,   Ir77PVPipelineKind::SkinnedTransparent};
 
-        kinds = found->second;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The handle a draw item carries for a manifest pipeline ("water") -- look it up once, reuse it for every item. Needs CreatePipelines.
+    std::shared_ptr<IIr77Return const> FindPipeline(std::string const& name, Ir77PVPipelineHandle& handle) {
+        auto const cache = m_context->m_pipeline_caches.find(m_context->m_current_device);
+        if (cache == m_context->m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreatePipelines not called.");
+
+        return cache->second->FindPipeline(name, handle);
+    }
+
+    // The handle for an engine role -- follows the manifest's "roles"
+    std::shared_ptr<IIr77Return const> FindPipeline(Ir77PVPipelineKind const& kind, Ir77PVPipelineHandle& handle) {
+        auto const cache = m_context->m_pipeline_caches.find(m_context->m_current_device);
+        if (cache == m_context->m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreatePipelines not called.");
+
+        return cache->second->FindPipeline(kind, handle);
+    }
+
+    // =========================================================================================================================================
+    // storage buffers -- GPU data a compute pass writes and shaders read by slot (storage buffers, set 0 binding 1): height fields, particle
+    // state, indirect commands. One copy shared by every frame in flight; the Compute pass waits for the previous frame's readers before
+    // writing. Also usable as a draw's / dispatch's indirect buffer, or bound as vertex / index data.
+    // =========================================================================================================================================
+
+    // size bytes, filled from data (zeros when data is null). Blocking upload. buffer_id for Get / Upload / Destroy; slot for the shaders.
+    std::shared_ptr<IIr77Return const> CreateStorageBuffer(VkDeviceSize const& size, void const* data, std::uint32_t& buffer_id, std::uint32_t& slot) {
+        if (size == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: storage buffer size is 0.");
+
+        auto buffer = CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                             VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                         size);
+        if (!buffer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: storage buffer creation failed.");
+
+        std::vector<std::uint8_t> zeros{};
+        if (!data) zeros.assign(static_cast<std::size_t>(size), 0);
+
+        VkBuffer dst{VK_NULL_HANDLE};
+        buffer->GetBuffer(0, &dst);
+
+        if (Upload({{dst, data ? data : zeros.data(), size}}, true)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: storage buffer upload failed.");
+
+        auto const result = RegisterBuffer(buffer, slot);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        auto& buffers = m_storage_buffers[m_context->m_current_device];
+        auto& slots = m_storage_slots[m_context->m_current_device];
+
+        buffer_id = static_cast<std::uint32_t>(buffers.size());
+        buffers.push_back(buffer);
+        slots.push_back(slot);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The buffer itself -- for item.indirect / dispatch.indirect
+    std::shared_ptr<IIr77Return const> GetStorageBuffer(std::uint32_t const& buffer_id, std::shared_ptr<IIr77PVBuffer>& buffer) {
+        auto const found = m_storage_buffers.find(m_context->m_current_device);
+        if (found == m_storage_buffers.end() || buffer_id >= found->second.size() || !found->second[buffer_id])
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown storage buffer.");
+
+        buffer = found->second[buffer_id];
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // CPU rewrite of [offset, offset + size) -- resets, spawn parameters. The copy runs in submission order ahead of later frames.
+    std::shared_ptr<IIr77Return const> UploadStorageBuffer(std::uint32_t const& buffer_id, void const* data, VkDeviceSize const& size, VkDeviceSize const& offset,
+                                                           bool const& wait) {
+        std::shared_ptr<IIr77PVBuffer> buffer{};
+
+        auto const result = GetStorageBuffer(buffer_id, buffer);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        VkBuffer dst{VK_NULL_HANDLE};
+        buffer->GetBuffer(0, &dst);
+
+        return Upload({{dst, data, size, offset}}, wait);
+    }
+
+    // Releases the slot and frees the buffer once no frame in flight can read it. Remove the draws / dispatches using it first.
+    std::shared_ptr<IIr77Return const> DestroyStorageBuffer(std::uint32_t const& buffer_id) {
+        std::shared_ptr<IIr77PVBuffer> buffer{};
+
+        auto const result = GetStorageBuffer(buffer_id, buffer);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        auto& slots = m_storage_slots[m_context->m_current_device];
+
+        ReleaseSlots(BINDLESS_BINDING_BUFFERS, {slots[buffer_id]});
+        Bury({buffer});
+
+        m_storage_buffers[m_context->m_current_device][buffer_id].reset();
+        slots[buffer_id] = BINDLESS_NO_SLOT;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -471,8 +542,20 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Draw item for commands [first_command, first_command + command_count) of a scene -- one material run.
+    // Draw item for commands [first_command, first_command + command_count) of a scene -- one material run -- through an engine role
     std::shared_ptr<IIr77Return const> MakeIndirectDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& scene_id,
+                                                            std::uint32_t const& material_id, std::uint32_t const& first_command,
+                                                            std::uint32_t const& command_count, bool const& skinned, Ir77PVDrawItem& item) {
+        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
+
+        auto const result = FindPipeline(kind, pipeline);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return MakeIndirectDrawItem(window, pipeline, scene_id, material_id, first_command, command_count, skinned, item);
+    }
+
+    // The same through any pipeline handle (FindPipeline) -- its vertex shader must read the channel `skinned` selects
+    std::shared_ptr<IIr77Return const> MakeIndirectDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline, std::uint32_t const& scene_id,
                                                             std::uint32_t const& material_id, std::uint32_t const& first_command,
                                                             std::uint32_t const& command_count, bool const& skinned, Ir77PVDrawItem& item) {
         Ir77PVSceneSlot* const scene = FindScene(scene_id);
@@ -492,8 +575,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         item = Ir77PVDrawItem{};
 
-        if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline kind not created for window.");
+        auto const pipeline_result = DefineItemPipeline(pipeline, false, false, item);
+        if (pipeline_result->ID() != GUIDIr77OperationSucceeded) return pipeline_result;
 
         item.material = material.row;
         item.vertex = vertex;
@@ -756,9 +839,20 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Direct (non-indirect) draw of meshlets [0, meshlet_count) -- single-object meshlet meshes only.
+    // Direct (non-indirect) draw of meshlets [0, meshlet_count) -- single-object meshlet meshes only -- through the mesh role
     std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
                                                            Ir77PVDrawItem& item) {
+        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
+
+        auto const result = FindPipeline(Ir77PVPipelineKind::Mesh, pipeline);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return MakeMeshletDrawItem(window, pipeline, meshlet_id, material_id, item);
+    }
+
+    // The same through any task / mesh pipeline handle
+    std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline, std::uint32_t const& meshlet_id,
+                                                           std::uint32_t const& material_id, Ir77PVDrawItem& item) {
         Ir77PVMeshletMesh mesh{};
         Ir77PVMaterial material{};
 
@@ -768,8 +862,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         item = Ir77PVDrawItem{};
 
-        if (m_context->GetPipeline(window, Ir77PVPipelineKind::Mesh, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: Mesh pipeline not created for window.");
+        auto const pipeline_result = DefineItemPipeline(pipeline, true, false, item);
+        if (pipeline_result->ID() != GUIDIr77OperationSucceeded) return pipeline_result;
 
         item.material = material.row;
         item.meshlet_slots = mesh.slots;
@@ -783,13 +877,24 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     // indirect_offset and draw_base both start at first_record, so gl_DrawID 0..record_count-1 lines up with the records.
     std::shared_ptr<IIr77Return const> MakeMeshletIndirectDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
                                                                    std::uint32_t const& first_record, std::uint32_t const& record_count, Ir77PVDrawItem& item) {
+        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
+
+        auto const result = FindPipeline(Ir77PVPipelineKind::Mesh, pipeline);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return MakeMeshletIndirectDrawItem(window, pipeline, meshlet_id, material_id, first_record, record_count, item);
+    }
+
+    std::shared_ptr<IIr77Return const> MakeMeshletIndirectDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline, std::uint32_t const& meshlet_id,
+                                                                   std::uint32_t const& material_id, std::uint32_t const& first_record,
+                                                                   std::uint32_t const& record_count, Ir77PVDrawItem& item) {
         Ir77PVMeshletSlot* const slot = FindMeshlets(meshlet_id);
         if (!slot) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown meshlet mesh.");
 
         if (static_cast<std::size_t>(first_record) + record_count > slot->commands.size())
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: record range outside the meshlet mesh.");
 
-        auto const result = MakeMeshletDrawItem(window, meshlet_id, material_id, item);
+        auto const result = MakeMeshletDrawItem(window, pipeline, meshlet_id, material_id, item);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         item.indirect = slot->mesh.indirect;
@@ -804,6 +909,17 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     // mapped to their records. This is how a material run becomes one mesh draw.
     std::shared_ptr<IIr77Return const> MakeMeshletSceneDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
                                                                 std::uint32_t const& first_command, std::uint32_t const& command_count, Ir77PVDrawItem& item) {
+        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
+
+        auto const result = FindPipeline(Ir77PVPipelineKind::Mesh, pipeline);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return MakeMeshletSceneDrawItem(window, pipeline, meshlet_id, material_id, first_command, command_count, item);
+    }
+
+    std::shared_ptr<IIr77Return const> MakeMeshletSceneDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline, std::uint32_t const& meshlet_id,
+                                                                std::uint32_t const& material_id, std::uint32_t const& first_command,
+                                                                std::uint32_t const& command_count, Ir77PVDrawItem& item) {
         Ir77PVMeshletSlot* const slot = FindMeshlets(meshlet_id);
         if (!slot) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown meshlet mesh.");
 
@@ -813,7 +929,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         std::uint32_t const first = slot->first_record[first_command];
         std::uint32_t const end = slot->first_record[first_command + command_count];
 
-        return MakeMeshletIndirectDrawItem(window, meshlet_id, material_id, first, end - first, item);
+        return MakeMeshletIndirectDrawItem(window, pipeline, meshlet_id, material_id, first, end - first, item);
     }
 
     // Hide / show every instance of one scene object on the mesh path. Applied to each frame copy by Tick.
@@ -994,13 +1110,41 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Draw item for mesh + material through a given pipeline kind on a window. Caller fills model / instances.
-    // Needs CreatePipelines first; the pipeline lookup fails for kinds whose render pass wasn't created.
+    // Draw item with no vertex buffer: vertex_count vertices (times instance_count) that the vertex shader builds from gl_VertexIndex /
+    // gl_InstanceIndex and storage buffers. The pipeline's vertex shader must read no inputs. Caller fills model / user; for a GPU-driven
+    // count set item.indirect (a storage buffer holding VkDrawIndirectCommands) and item.indirect_count.
+    std::shared_ptr<IIr77Return const> MakeProceduralDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline, std::uint32_t const& material_id,
+                                                              std::uint32_t const& vertex_count, std::uint32_t const& instance_count, Ir77PVDrawItem& item) {
+        Ir77PVMaterial material{};
+        if (GetMaterial(material_id, material)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: unknown material.");
+
+        item = Ir77PVDrawItem{};
+
+        auto const pipeline_result = DefineItemPipeline(pipeline, false, true, item);
+        if (pipeline_result->ID() != GUIDIr77OperationSucceeded) return pipeline_result;
+
+        item.material = material.row;
+        item.index_count = vertex_count;
+        item.instance_count = instance_count;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Draw item for mesh + material through an engine role on a window. Caller fills model / instances. Needs CreatePipelines first.
     std::shared_ptr<IIr77Return const> MakeDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& mesh_id,
                                                     std::uint32_t const& material_id, Ir77PVDrawItem& item) {
-        if (kind == Ir77PVPipelineKind::Mesh)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: Mesh kind takes a meshlet mesh -- use MakeMeshletDrawItem.");
+        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
 
+        auto const result = FindPipeline(kind, pipeline);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return MakeDrawItem(window, pipeline, mesh_id, material_id, item);
+    }
+
+    // The same through any vertex-input pipeline handle (FindPipeline) -- a task / mesh pipeline takes a meshlet mesh (MakeMeshletDrawItem)
+    std::shared_ptr<IIr77Return const> MakeDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline, std::uint32_t const& mesh_id,
+                                                    std::uint32_t const& material_id, Ir77PVDrawItem& item) {
         Ir77PVMesh mesh{};
         Ir77PVMaterial material{};
 
@@ -1010,8 +1154,8 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
         item = Ir77PVDrawItem{};
 
-        if (m_context->GetPipeline(window, kind, item.pipeline)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline kind not created for window.");
+        auto const pipeline_result = DefineItemPipeline(pipeline, false, false, item);
+        if (pipeline_result->ID() != GUIDIr77OperationSucceeded) return pipeline_result;
 
         item.material = material.row;
         item.vertex = mesh.vertex;
@@ -1079,6 +1223,39 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (buffer->CreateResources(size, MAX_FRAMES_IN_FLIGHT)->ID() != GUIDIr77OperationSucceeded) return nullptr;
 
         return buffer;
+    }
+
+    // item.pipeline = handle, once it resolves now to the right path: mesh = a task / mesh pipeline, otherwise a vertex shader; procedural =
+    // one that reads no vertex inputs. The command buffer re-resolves the handle every frame, so a later manifest reload still re-points the item.
+    std::shared_ptr<IIr77Return const> DefineItemPipeline(Ir77PVPipelineHandle const& handle, bool const mesh, bool const procedural, Ir77PVDrawItem& item) {
+        auto const cache = m_context->m_pipeline_caches.find(m_context->m_current_device);
+        if (cache == m_context->m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: CreatePipelines not called.");
+
+        std::shared_ptr<IIr77PVPipeline> pipeline{};
+
+        auto const result = cache->second->GetPipeline(handle, pipeline);
+        if (result->ID() != GUIDIr77OperationSucceeded) {
+            std::string name{};
+            cache->second->GetPipelineName(handle, name);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: pipeline '" + name + "' not available (manifest, shaders or pass missing).");
+        }
+
+        Ir77PVPipelineDesc desc{};
+        pipeline->GetDesc(&desc);
+
+        if (desc.IsMesh() != mesh)
+            return Ir77RETURN<Ir77NotConfigured>(this, mesh ? "Ir77PVAsset: a meshlet draw needs a task / mesh pipeline."
+                                                            : "Ir77PVAsset: a task / mesh pipeline takes a meshlet mesh -- use MakeMeshlet*DrawItem.");
+
+        bool vertex_input{false};
+        pipeline->GetVertexInput(vertex_input);
+
+        if (procedural && vertex_input)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAsset: a procedural draw needs a vertex shader that reads no inputs (layout locations).");
+
+        item.pipeline = handle;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // One material-table row: the constants plus a texture slot per map -- the texture's when given, a placeholder's otherwise
@@ -1156,9 +1333,6 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
     std::string m_shader_root{"/home/alpha/workspace/iridium/Shader"};
 
-    // [device]
-    std::map<std::uint64_t, std::vector<Ir77PVPipelineKind>> m_pipeline_kinds{};
-
     std::map<std::uint64_t, std::vector<Ir77PVMesh>> m_meshes{};  // single-mesh path
 
     std::map<std::uint64_t, std::vector<Ir77PVSceneSlot>> m_scenes{};  // scene path (vertex)
@@ -1170,6 +1344,10 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVTexture>>> m_textures{};
 
     std::map<std::uint64_t, std::vector<std::uint32_t>> m_texture_slots{};  // [device][texture_id] -> bindless texture slot
+
+    std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVBuffer>>> m_storage_buffers{};  // [device][buffer_id] -- empty once destroyed
+
+    std::map<std::uint64_t, std::vector<std::uint32_t>> m_storage_slots{};  // [device][buffer_id] -> bindless buffer slot
 
     std::map<std::uint64_t, std::vector<std::shared_ptr<IIr77PVBuffer>>> m_pending{};  // Staging buffers of uploads submitted with wait = false
 

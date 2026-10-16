@@ -1,24 +1,47 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include "include/cef_client.h"
+#include "include/cef_life_span_handler.h"
 #include "include/cef_render_handler.h"
+#include "include/cef_request_handler.h"
+#include "include/wrapper/cef_message_router.h"
+
+#include "CEFLoadHandler.hpp"
+#include "CEFQueryHandler.hpp"
+#include "include/cef_context_menu_handler.h"
 
 namespace CEF {
 
-class CEFClient : public CefClient {
+// Browser-side handlers. Also the life span and request handler, only to keep the message router told about closes, navigations and
+// renderer crashes (pending window.cefQuery calls are cancelled then). TakeQueries hands the app what the page sent.
+class CEFClient : public CefClient, public CefContextMenuHandler, public CefDisplayHandler, public CefLifeSpanHandler, public CefRequestHandler {
    public:
-    CEFClient() = default;
+    CEFClient() { DefineRouter(); }
 
-    explicit CEFClient(CefRefPtr<CefRenderHandler> render_handler) : m_render_handler(render_handler) {}
+    explicit CEFClient(CefRefPtr<CefRenderHandler> render_handler) : m_render_handler(render_handler) { DefineRouter(); }
+
+    ~CEFClient() override {
+        if (m_router) m_router->RemoveHandler(&m_query_handler);
+    }
 
    public:
     CefRefPtr<CefAudioHandler> GetAudioHandler() override { return m_audio_handler; }
 
     CefRefPtr<CefCommandHandler> GetCommandHandler() override { return m_command_handler; }
 
-    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return m_context_menu_handler; }
+    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
 
     CefRefPtr<CefDialogHandler> GetDialogHandler() override { return m_dialog_handler; }
+
+    // ---- CefContextMenuHandler ---------------------------------------------------------------------------------------------------------------
+    // windowless: CEF has no window to show a native menu in -- an empty model means none is attempted. Menus belong to the Angular UI.
+    void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params,
+                             CefRefPtr<CefMenuModel> model) override {
+        model->Clear();
+    }
 
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return m_display_handler; }
 
@@ -38,7 +61,7 @@ class CEFClient : public CefClient {
 
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return m_keyboard_handler; }
 
-    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return m_life_span_handler; }
+    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
 
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return m_load_handler; }
 
@@ -46,32 +69,63 @@ class CEFClient : public CefClient {
 
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return m_render_handler; }
 
-    CefRefPtr<CefRequestHandler> GetRequestHandler() override { return m_request_handler; }
+    CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
+    // window.cefQuery traffic from the renderer
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefProcessId source_process,
                                   CefRefPtr<CefProcessMessage> message) override {
+        return m_router->OnProcessMessageReceived(browser, frame, source_process, message);
+    }
+
+    // ---- CefLifeSpanHandler ------------------------------------------------------------------------------------------------------------------
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override { m_router->OnBeforeClose(browser); }
+
+    // ---- CefRequestHandler -------------------------------------------------------------------------------------------------------------------
+    // a navigation cancels the old page's pending queries; returns false -- the navigation goes ahead
+    bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request, bool user_gesture, bool is_redirect) override {
+        m_router->OnBeforeBrowse(browser, frame);
+
         return false;
     }
 
+    void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser, TerminationStatus status, int error_code, CefString const& error_string) override {
+        m_router->OnRenderProcessTerminated(browser);
+    }
+
+    // ---- app side ----------------------------------------------------------------------------------------------------------------------------
+    // Every window.cefQuery request since the last call, oldest first
+    void TakeQueries(std::vector<std::string>& queries) { m_query_handler.TakeQueries(queries); }
+
    private:
-    CefRefPtr<CefAudioHandler> m_audio_handler;
-    CefRefPtr<CefCommandHandler> m_command_handler;
-    CefRefPtr<CefContextMenuHandler> m_context_menu_handler;
-    CefRefPtr<CefDialogHandler> m_dialog_handler;
-    CefRefPtr<CefDisplayHandler> m_display_handler;
-    CefRefPtr<CefDownloadHandler> m_download_handler;
-    CefRefPtr<CefDragHandler> m_drag_handler;
-    CefRefPtr<CefFindHandler> m_find_handler;
-    CefRefPtr<CefFocusHandler> m_focus_handler;
-    CefRefPtr<CefFrameHandler> m_frame_handler;
-    CefRefPtr<CefPermissionHandler> m_permission_handler;
-    CefRefPtr<CefJSDialogHandler> m_jsdialog_handler;
-    CefRefPtr<CefKeyboardHandler> m_keyboard_handler;
-    CefRefPtr<CefLifeSpanHandler> m_life_span_handler;
-    CefRefPtr<CefLoadHandler> m_load_handler;
-    CefRefPtr<CefPrintHandler> m_print_handler;
-    CefRefPtr<CefRenderHandler> m_render_handler;
-    CefRefPtr<CefRequestHandler> m_request_handler;
+    void DefineRouter() {
+        CefMessageRouterConfig config{};  // window.cefQuery / window.cefQueryCancel -- must match CEFRenderProcessHandler
+
+        m_router = CefMessageRouterBrowserSide::Create(config);
+        m_router->AddHandler(&m_query_handler, false);
+    }
+
+   private:
+    CefRefPtr<CefAudioHandler> m_audio_handler{};
+    CefRefPtr<CefCommandHandler> m_command_handler{};
+    CefRefPtr<CefContextMenuHandler> m_context_menu_handler{};
+    CefRefPtr<CefDialogHandler> m_dialog_handler{};
+    CefRefPtr<CefDisplayHandler> m_display_handler{};
+    CefRefPtr<CefDownloadHandler> m_download_handler{};
+    CefRefPtr<CefDragHandler> m_drag_handler{};
+    CefRefPtr<CefFindHandler> m_find_handler{};
+    CefRefPtr<CefFocusHandler> m_focus_handler{};
+    CefRefPtr<CefFrameHandler> m_frame_handler{};
+    CefRefPtr<CefPermissionHandler> m_permission_handler{};
+    CefRefPtr<CefJSDialogHandler> m_jsdialog_handler{};
+    CefRefPtr<CefKeyboardHandler> m_keyboard_handler{};
+    CefRefPtr<CefLoadHandler> m_load_handler{new CEFLoadHandler()};  // main-frame load timing -> stderr
+    CefRefPtr<CefPrintHandler> m_print_handler{};
+    CefRefPtr<CefRenderHandler> m_render_handler{};
+
+    // declared before the router -- the router holds a raw pointer to it and is released first
+    CEFQueryHandler m_query_handler{};
+
+    CefRefPtr<CefMessageRouterBrowserSide> m_router{};
 
     IMPLEMENT_REFCOUNTING(CEFClient);
 };

@@ -10,6 +10,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -43,6 +44,43 @@ static constexpr std::size_t MESHLET_MAX_TRIANGLES = 124;
 
 // 0 = pure locality, higher = tighter normal cones for backface culling
 static constexpr float MESHLET_CONE_WEIGHT = 0.25f;
+
+/************************************************************************************************************************************************************************/
+/********************************************************************** SYSTEM ID'S
+ * ********************************************************************************/
+/************************************************************************************************************************************************************************/
+inline constexpr std::uint64_t ID_DEVICE_NONE = UINT64_MAX;
+
+inline constexpr std::uint64_t ID_DEVICE_001 = 0x9B72E4C1F08A33D7;
+
+inline constexpr std::uint64_t ID_DEVICE_002 = 0xA4F7C9D2035B7E11;
+
+inline constexpr std::uint64_t ID_DEVICE_003 = 0x9B22E4A7F0C18D33;
+
+inline constexpr std::uint64_t ID_DEVICE_004 = 0xC8D1A3F945667210;
+
+inline constexpr std::uint64_t ID_DEVICE_005 = 0x7F33B8C2D9A4E5CC;
+
+inline constexpr std::uint64_t ID_DEVICE_006 = 0xE1448F2297C3B508;
+
+inline constexpr std::uint64_t ID_DEVICE_007 = 0x5D9A77C1E204F399;
+
+inline constexpr std::uint64_t ID_DEVICE_008 = 0xB3C4E8F117A29D54;
+
+// =============================================================================================================================================
+// shader handles -- index into the device's shader registry (Ir77PVShader); stable for the registry's life. Shaders are found by name.
+// =============================================================================================================================================
+using Ir77PVShaderHandle = std::uint32_t;
+
+inline constexpr Ir77PVShaderHandle IR77PV_NO_SHADER = UINT32_MAX;
+
+// =============================================================================================================================================
+// pipeline handles -- what a draw item carries. Issued by Ir77PVPipelineCache::FindPipeline per manifest pipeline name (or engine role),
+// stable for the cache's life, resolved against the current manifest every time a command buffer records the item.
+// =============================================================================================================================================
+using Ir77PVPipelineHandle = std::uint32_t;
+
+inline constexpr Ir77PVPipelineHandle IR77PV_NO_PIPELINE = UINT32_MAX;
 
 // =============================================================================================================================================
 // bindless -- one layout, one descriptor set per device. Must match Shader/include/bindless.glsl.
@@ -86,7 +124,7 @@ typedef struct Ir77PVPushConstants {
     std::uint32_t vertices{0};            // buffer slot: pulled / mesh / compute vertex data
     std::uint32_t bones{0};               // buffer slot: bone palette
     std::uint32_t draw_base{0};           // first draw / meshlet for this call
-    std::uint32_t mode{0};                // shading mode
+    std::uint32_t mode{0};                // shading mode -> pc.mode
     std::array<std::uint32_t, 8> user{};  // per-kind data, see above
 }* pIr77PVPushConstants;
 
@@ -131,14 +169,72 @@ enum class Ir77PVPass : std::uint8_t { Shadow, Opaque, Transparent };
 enum class Ir77PVRenderPassKind : std::uint8_t { Main, Shadow, Offscreen, Post };
 
 // =============================================================================================================================================
-// pipelines -- every kind uses the one bindless layout; the kind picks shaders, vertex input and raster / blend state
+// pass list -- what Ir77PVCmdBuffer records each frame, in order. Draw lists (Ir77PVPass) are filled by SetDraws; a pass says which lists it
+// records and into what. Default: Shadow pass -> Main pass (Opaque, Transparent, CEF overlay).
 // =============================================================================================================================================
 
-// Static / Skinned / Transparent* -- vertex input, main pass
+// Compute -- the dispatch list (SetDispatches), outside any rendering
+// Raster  -- vkCmdBeginRendering on the target, then the pass's draw lists in order
+enum class Ir77PVPassType : std::uint8_t { Compute, Raster };
+
+// What a Raster pass renders into
+// Swapchain -- the acquired swapchain image + the swapchain's depth image; ends ready to present. Exactly one pass per list targets it.
+// Shadow    -- the shadow target (SetShadowTarget), depth only; ends ready to be sampled. Skipped while it has no draws or no target.
+enum class Ir77PVPassTarget : std::uint8_t { Swapchain, Shadow };
+
+typedef struct Ir77PVPassDesc {
+    Ir77PVPassType type{Ir77PVPassType::Raster};
+    Ir77PVPassTarget target{Ir77PVPassTarget::Swapchain};
+    Ir77PVRenderPassKind formats{Ir77PVRenderPassKind::Main};  // the attachment formats the pass's pipelines were built for
+    std::vector<Ir77PVPass> lists{};                           // draw lists, recorded in this order
+    bool overlay{false};                                       // CEF composite after the lists
+}* pIr77PVPassDesc;
+
+// =============================================================================================================================================
+// pipelines -- a pipeline is described by Ir77PVPipelineDesc and built on first request by the device's Ir77PVPipelineCache.
+// Every pipeline uses the one bindless layout. Cull mode, front face and depth test / write / compare are dynamic: the description carries
+// the policy Ir77PVCmdBuffer applies per draw, the pipeline itself doesn't bake them.
+// =============================================================================================================================================
+
+// Presets -- Ir77PVPipelineCache::DescribeKind turns each into a description
+// Static / Skinned / *Transparent -- vertex input, main pass. Transparent far / near sides: one pipeline, Ir77PVDrawItem::back_faces
 // Shadow / ShadowSkinned          -- vertex input, depth-only shadow pass
 // CEF                             -- fullscreen quad, overlay texture from pc.user[0]
 // Mesh                            -- task / mesh / fragment, no vertex input (VK_EXT_mesh_shader only)
-enum class Ir77PVPipelineKind : std::uint8_t { Static, Skinned, Shadow, ShadowSkinned, Transparent, CEF, Mesh, SkinnedTransparent, TransparentBack, SkinnedTransparentBack };
+enum class Ir77PVPipelineKind : std::uint8_t { Static, Skinned, Shadow, ShadowSkinned, Transparent, CEF, Mesh, SkinnedTransparent };
+
+// Opaque -- no blending. Alpha -- straight alpha over the target. Additive -- src * alpha added to the target (glow, sparks; order-free).
+enum class Ir77PVBlend : std::uint8_t { Opaque, Alpha, Additive };
+
+typedef struct Ir77PVPipelineDesc {
+    // stages -- registry handles (Ir77PVShader::FindShader / LoadShader). Raster: vertex [+ fragment]. Mesh: [task +] mesh [+ fragment].
+    // Vertex input comes from the vertex shader's reflected input locations -- see VERTEX_LOCATION_*.
+    Ir77PVShaderHandle vertex{IR77PV_NO_SHADER};
+    Ir77PVShaderHandle fragment{IR77PV_NO_SHADER};
+    Ir77PVShaderHandle task{IR77PV_NO_SHADER};
+    Ir77PVShaderHandle mesh{IR77PV_NO_SHADER};
+    Ir77PVShaderHandle compute{IR77PV_NO_SHADER};  // a compute pipeline -- no other stage, nothing below applies
+
+    // baked into the pipeline
+    Ir77PVBlend blend{Ir77PVBlend::Opaque};
+    Ir77PVRenderPassKind pass{Ir77PVRenderPassKind::Main};  // attachment formats
+    bool depth_bias{false};                                 // shadow acne
+    bool flip_back_faces{true};                             // frag.frag constant_id 0
+
+    // dynamic -- applied per draw by Ir77PVCmdBuffer
+    VkCullModeFlags cull{VK_CULL_MODE_BACK_BIT};  // an item's back_faces / double_sided adjusts this
+    bool depth_test{true};
+    bool depth_write{true};
+
+    // task / mesh shading -- no vertex input stage
+    bool IsMesh() const { return mesh != IR77PV_NO_SHADER; }
+
+    // compute -- dispatched (Ir77PVDispatch), never drawn
+    bool IsCompute() const { return compute != IR77PV_NO_SHADER; }
+
+    // Cache key -- every field compares, so two descriptions share a pipeline only when they are identical
+    auto operator<=>(Ir77PVPipelineDesc const&) const = default;
+}* pIr77PVPipelineDesc;
 
 // Compute passes -- graphics-adjacent, dispatched before or alongside the render pass
 enum class Ir77PVComputeKind : std::uint8_t { Culling, SkinningUpdate, MorphUpdate, ClothSim, ParticleSim, TerrainLOD, GPUOcclusion, IndirectPrep };
@@ -207,21 +303,35 @@ constexpr VkShaderStageFlagBits ToVkStage(Ir77PVShaderStage const stage) {
     return VK_SHADER_STAGE_VERTEX_BIT;
 }
 
+// The contract every shader meets -- checked from its SPIR-V when it is registered (Ir77PVShader), so a shader that breaks it is rejected at
+// load with a message instead of failing at draw time:
+//   entry point "main"; descriptors only in set 0 -- binding 0 sampled textures, 1 storage buffers, 2 storage images (bindless.glsl);
+//   push constants at most 128 bytes (Ir77PVPushConstants); vertex shaders read only the vertex locations below; task / mesh shaders only on a
+//   device with mesh shading.
+inline constexpr std::uint32_t PUSH_CONSTANT_LIMIT = 128;
+
+// Vertex input locations, binding 0. A vertex shader reading 3 or 4 is fed the skinned layout (Ir77PVVertexSkinned), otherwise Ir77PVVertex.
+inline constexpr std::uint32_t VERTEX_LOCATION_POSITION = 0;
+inline constexpr std::uint32_t VERTEX_LOCATION_NORMAL = 1;
+inline constexpr std::uint32_t VERTEX_LOCATION_UV = 2;
+inline constexpr std::uint32_t VERTEX_LOCATION_JOINTS = 3;
+inline constexpr std::uint32_t VERTEX_LOCATION_WEIGHTS = 4;
+
+// What a shader's SPIR-V says about itself
+typedef struct Ir77PVShaderReflection {
+    std::vector<std::uint32_t> inputs{};   // Input locations, sorted (built-ins excluded)
+    std::vector<std::uint32_t> outputs{};  // Output locations, sorted (built-ins excluded)
+    std::uint32_t push_constant_size{0};   // bytes; 0 = no push constants
+}* pIr77PVShaderReflection;
+
+// One registered shader -- its name, stage (from the SPIR-V entry point), module (in stage_create_info), reflection and SPIR-V
 typedef struct Ir77PVShaderInfo {
+    std::string name{};
     Ir77PVShaderStage stage{Ir77PVShaderStage::Vertex};
     VkPipelineShaderStageCreateInfo stage_create_info{};
-    std::vector<char> byte_code{};
-    std::uint32_t size{0};
+    Ir77PVShaderReflection reflection{};
+    std::vector<std::uint32_t> spirv{};
 }* pIr77PVShaderInfo;
-
-// One shader file the loader looks for; optional ones are skipped when missing
-typedef struct Ir77PVShaderFile {
-    std::string file{};
-    std::uint64_t id{0};
-    Ir77PVShaderStage stage{Ir77PVShaderStage::Vertex};
-    bool required{false};
-    bool mesh_shading{false};  // only loaded on a device with VK_EXT_mesh_shader enabled
-}* pIr77PVShaderFile;
 
 // =============================================================================================================================================
 // buffers / textures
@@ -310,6 +420,9 @@ typedef struct Ir77PVCamera {
     glm::mat4 proj{1.0f};
     glm::mat4 view_proj{1.0f};
     glm::vec4 eye{0.0f};
+
+    // x seconds since start, y seconds since last frame, z frame number -- the caller's clock
+    glm::vec4 time{0.0f};  
 }* pIr77PVCamera;
 
 typedef struct Ir77PVLight {
@@ -480,17 +593,22 @@ typedef struct Ir77PVGrave {
 // One draw in a pass list. Everything a shader reads beyond vertex input comes through push constants built from these fields
 // (Ir77PVCmdBuffer). Raster kinds use vertex / index; Mesh uses meshlet_slots and meshlet_offset / meshlet_count.
 typedef struct Ir77PVDrawItem {
-    std::shared_ptr<IIr77PVPipeline> pipeline{};
+    Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};  // FindPipeline(name / kind) -- NO_PIPELINE items are skipped
 
     std::uint32_t material{0};              // row in the material table -> pc.material
     std::uint32_t bones{BINDLESS_NO_SLOT};  // buffer slot of this draw's bone palette; NO_SLOT = the frame's bones buffer -> pc.bones
     std::uint32_t mode{0};                  // shading mode -> pc.mode
+    bool double_sided{false};               // opaque pipelines draw with no culling (glTF doubleSided)
+    bool mirrored{false};                   // negative-determinant model -- front face flips to clockwise
+    bool back_faces{false};                 // draw the far side only (front faces culled) -- the first of a transparent object's two draws
 
-    // raster kinds
+    std::array<std::uint32_t, 4> user{};  // -> pc.user[4..7] -- the pipeline's manifest "user" names, in order
+
+    // raster kinds. vertex may be empty when the pipeline's vertex shader reads no inputs (procedural: gl_VertexIndex / storage buffers).
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
     VkIndexType index_type{VK_INDEX_TYPE_UINT32};
-    std::uint32_t index_count{0};
+    std::uint32_t index_count{0};  // indices -- or vertices, for a draw without an index buffer
     std::uint32_t first_index{0};
     std::int32_t vertex_offset{0};
     std::uint32_t instance_count{1};
@@ -508,8 +626,21 @@ typedef struct Ir77PVDrawItem {
     std::uint32_t indirect_count{0};
 
     std::array<float, 16> model{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};  // -> pc.model
-    std::uint32_t light_index{0};  // shadow kinds -> pc.user[0]
+    std::uint32_t light_index{0};                                                                                                 // shadow pass -> pc.user[0]
 }* pIr77PVDrawItem;
+
+// One compute dispatch -- the Compute pass records the list in order, each followed by a barrier, so a dispatch sees the ones before it and
+// every draw sees them all. pipeline: FindPipeline on a manifest entry with "compute". push: what the shader reads (slots in user[],
+// vertices ...); frame / instances / bones / materials are filled in at record time.
+typedef struct Ir77PVDispatch {
+    Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
+    Ir77PVPushConstants push{};
+    std::array<std::uint32_t, 3> groups{1, 1, 1};
+
+    // indirect -- groups from a VkDispatchIndirectCommand another dispatch wrote; groups ignored
+    std::shared_ptr<IIr77PVBuffer> indirect{};
+    VkDeviceSize indirect_offset{0};
+}* pIr77PVDispatch;
 
 // =============================================================================================================================================
 // ray tracing

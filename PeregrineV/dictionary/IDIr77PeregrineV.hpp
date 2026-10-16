@@ -34,9 +34,8 @@ inline Ir77GUID GUIDIr77PVBuffer{(static_cast<unsigned __int128>(0xD1A93F6E4C807
 inline Ir77GUID GUIDIr77PVCompute{(static_cast<unsigned __int128>(0x6F520D9B3E71A8C4) << 64) | 0xA8D4731F50C2E96B};
 inline Ir77GUID GUIDIr77PVDescriptorSet{(static_cast<unsigned __int128>(0xA8E21D0018AA4998) << 64) | 0xADDDE66142752D4C};
 inline Ir77GUID GUIDIr77PVLayout{(static_cast<unsigned __int128>(0xF9C41B8E3A706D25) << 64) | 0x53BD70F1248A9CE6};
-inline Ir77GUID GUIDIr77PVLayoutCPT{(static_cast<unsigned __int128>(0x3BE5D94E9B7C464D) << 64) | 0xB73084E71E497B84};
-inline Ir77GUID GUIDIr77PVLayoutRay{(static_cast<unsigned __int128>(0xBC0A5F08C1AC4CBB) << 64) | 0xADB031A5D856B271};
 inline Ir77GUID GUIDIr77PVPipeline{(static_cast<unsigned __int128>(0x7B3F90D2C5A418E6) << 64) | 0x4A8E610F93B2D75C};
+inline Ir77GUID GUIDIr77PVPipelineCache{(static_cast<unsigned __int128>(0x4A8BE9D7C5864E4E) << 64) | 0x9DAF83B8725FE597};
 inline Ir77GUID GUIDIr77PVPipelineCPT{(static_cast<unsigned __int128>(0x57FC2CBC7273408B) << 64) | 0x9A8AB5F638EA5DBB};
 inline Ir77GUID GUIDIr77PVPipelineRay{(static_cast<unsigned __int128>(0x6840B8B4F51A4C90) << 64) | 0xB774318E8E8DA57A};
 inline Ir77GUID GUIDIr77PVCmdBuffer{(static_cast<unsigned __int128>(0x83E6A0D2F1794C5B) << 64) | 0xC1A4E7930F2D85B6};
@@ -45,7 +44,7 @@ inline Ir77GUID GUIDIr77PVShader{(static_cast<unsigned __int128>(0xC6E4819A3F720
 inline Ir77GUID GUIDIr77PVMaterial{(static_cast<unsigned __int128>(0x3A5D72F1E9C840B6) << 64) | 0x8F2BC4A1057E93D6};
 inline Ir77GUID GUIDIr77PVMesh{(static_cast<unsigned __int128>(0x6E8C30A1D4F97B25) << 64) | 0x2B7D4F9A61E30C85};
 
-class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std::enable_shared_from_this<IDIIr77MPVM> {
+class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std::enable_shared_from_this<IDIr77PeregrineV> {
    public:
     IDIr77PeregrineV() {
         m_enlisted = std::chrono::system_clock::now();
@@ -107,6 +106,10 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
         {"GUIDIr77PVInstance", &GUIDIr77PVInstance},
         {"GUIDIr77PVDevice", &GUIDIr77PVDevice},
         {"GUIDIr77PVSwapchain", &GUIDIr77PVSwapchain},
+        {"GUIDIr77PVPipeline", &GUIDIr77PVPipeline},
+        {"GUIDIr77PVPipelineCache", &GUIDIr77PVPipelineCache},
+        {"GUIDIr77PVPipelineCPT", &GUIDIr77PVPipelineCPT},
+        {"GUIDIr77PVPipelineRay", &GUIDIr77PVPipelineRay},
         {"GUIDIr77PVRenderPass", &GUIDIr77PVRenderPass},
         {"GUIDIr77PVOverlay", &GUIDIr77PVOverlay},
         {"GUIDIr77PVBuffer", &GUIDIr77PVBuffer},

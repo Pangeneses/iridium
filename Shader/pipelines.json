@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "roles": {
+    "static": "static",
+    "skinned": "skinned",
+    "transparent": "transparent",
+    "skinned.transparent": "skinned.transparent",
+    "mesh": "mesh",
+    "cef": "cef",
+    "shadow": "shadow",
+    "shadow.skinned": "shadow.skinned"
+  },
+  "pipelines": {
+    "static": {
+      "vertex": "vert",
+      "fragment": "frag",
+      "pass": "main",
+      "blend": "opaque",
+      "cull": "back",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": true,
+      "user": []
+    },
+    "skinned": {
+      "vertex": "skinned.vert",
+      "fragment": "frag",
+      "pass": "main",
+      "blend": "opaque",
+      "cull": "back",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": true,
+      "user": []
+    },
+    "transparent": {
+      "vertex": "vert",
+      "fragment": "frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "back",
+      "depth_test": true,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": []
+    },
+    "skinned.transparent": {
+      "vertex": "skinned.vert",
+      "fragment": "frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "back",
+      "depth_test": true,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": []
+    },
+    "mesh": {
+      "task": "mesh.task",
+      "mesh": "mesh.mesh",
+      "fragment": "frag",
+      "pass": "main",
+      "blend": "opaque",
+      "cull": "back",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": true,
+      "user": []
+    },
+    "cef": {
+      "vertex": "cef.vert",
+      "fragment": "cef.frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "none",
+      "depth_test": false,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": true,
+      "user": []
+    },
+    "shadow": {
+      "vertex": "shadow.vert",
+      "pass": "shadow",
+      "blend": "opaque",
+      "cull": "front",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": true,
+      "flip_back_faces": true,
+      "user": []
+    },
+    "shadow.skinned": {
+      "vertex": "shadow_skinned.vert",
+      "pass": "shadow",
+      "blend": "opaque",
+      "cull": "front",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": true,
+      "flip_back_faces": true,
+      "user": []
+    },
+    "ripple": {
+      "vertex": "ripple.vert",
+      "fragment": "frag",
+      "pass": "main",
+      "blend": "opaque",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": true,
+      "user": []
+    }
+  }
+}

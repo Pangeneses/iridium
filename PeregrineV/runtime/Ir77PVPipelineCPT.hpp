@@ -11,7 +11,6 @@
 
 #include "../dictionary/IDIIr77PeregrineV.hpp"
 #include "../dictionary/IDIr77PeregrineV.hpp"
-#include "../dictionary/IDIr77PVContext.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -28,9 +27,9 @@ using namespace NSIr77RT;
 namespace NSIr77PeregrineV {
 
 // =============================================================================================================================================
-// Ir77PVPipelineCPT -- one compute pipeline for one Ir77PVComputeKind.
+// Ir77PVPipelineCPT -- one compute pipeline for one compute shader from the device's shader registry.
 //
-//   configure: SetDevice / SetLayout / SetShader / SetKind
+//   configure: SetDevice / SetLayout / SetShader (the registry) / SetComputeShader (a handle, e.g. FindShader("culling.comp"))
 //   create:    CreatePipeline -> DefineShaderStage -> DefinePipeline
 // =============================================================================================================================================
 class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public std::enable_shared_from_this<Ir77PVPipelineCPT> {
@@ -118,8 +117,8 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetKind(Ir77PVComputeKind const& kind) {
-        m_kind = kind;
+    std::shared_ptr<IIr77Return const> SetComputeShader(Ir77PVShaderHandle const& handle) {
+        m_compute_shader = handle;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -152,8 +151,8 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetKind(Ir77PVComputeKind* kind) {
-        *kind = m_kind;
+    std::shared_ptr<IIr77Return const> GetComputeShader(Ir77PVShaderHandle* handle) {
+        *handle = m_compute_shader;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -162,35 +161,17 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
     // steps
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
-    // Exactly one compute stage per kind
+    // The one compute stage -- the handle must name a registered compute shader
     std::shared_ptr<IIr77Return const> DefineShaderStage() {
+        if (m_compute_shader == IR77PV_NO_SHADER) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: SetComputeShader not called.");
+
         std::vector<VkPipelineShaderStageCreateInfo> shader_stages{};
 
-        switch (m_kind) {
-            case Ir77PVComputeKind::Culling:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_CULLING_COMP});
-                break;
+        auto const result = m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {m_compute_shader});
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-            case Ir77PVComputeKind::SkinningUpdate:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_SKINNING_COMP});
-                break;
-
-            case Ir77PVComputeKind::MorphUpdate:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_MORPH_COMP});
-                break;
-
-            case Ir77PVComputeKind::ClothSim:
-                m_shader_stack->GetPipelineShaderStageInfos(shader_stages, {ID_SHADER_CLOTH_COMP});
-                break;
-
-            default:
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: unknown compute kind.");
-        }
-
-        if (shader_stages.size() != 1) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: expected exactly one compute shader stage.");
-
-        if (shader_stages[0].stage != VK_SHADER_STAGE_COMPUTE_BIT)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: shader stage is not a compute stage.");
+        if (shader_stages.size() != 1 || shader_stages[0].stage != VK_SHADER_STAGE_COMPUTE_BIT)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: the shader is not a compute shader.");
 
         m_shader_stage = shader_stages[0];
 
@@ -229,7 +210,7 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
 
     std::shared_ptr<IIr77PVShader> m_shader_stack{};
 
-    Ir77PVComputeKind m_kind{Ir77PVComputeKind::Culling};
+    Ir77PVShaderHandle m_compute_shader{IR77PV_NO_SHADER};
 
     VkPipelineShaderStageCreateInfo m_shader_stage{};
 

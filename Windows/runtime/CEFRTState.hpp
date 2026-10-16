@@ -33,7 +33,9 @@ class CEFRTState {
     void Initialize(int argc, char* argv[]) {
         CefMainArgs cef_args(argc, argv);
 
-        int exit_code = CefExecuteProcess(cef_args, nullptr, nullptr);
+        m_app = new CEFApp();  // the renderer subprocesses need it too -- CEFRenderProcessHandler installs window.cefQuery
+
+        int exit_code = CefExecuteProcess(cef_args, m_app, nullptr);
         if (exit_code >= 0) throw std::runtime_error{"__cef_subprocess__:" + std::to_string(exit_code)};
 
         std::filesystem::path exe_dir = std::filesystem::canonical("/proc/self/exe").parent_path();
@@ -51,8 +53,6 @@ class CEFRTState {
 
         settings.log_severity = LOGSEVERITY_WARNING;  // errors, crashes, GPU / renderer failures -- without the updater noise
         CefString(&settings.log_file).FromASCII("/tmp/cef_debug.log");
-
-        m_app = new CEFApp();
 
         std::filesystem::remove_all("/tmp/iridium_cef_cache");
 
@@ -91,8 +91,9 @@ class CEFRTState {
 
         //
         // "https://google.com"
-        m_browser = CefBrowserHost::CreateBrowserSync(window_info, new CEFClient(m_render_handler), "http://localhost:50003/landing", browser_settings, nullptr,
-                                                      nullptr);
+        m_client = new CEFClient(m_render_handler);
+
+        m_browser = CefBrowserHost::CreateBrowserSync(window_info, m_client, "http://localhost:50003/landing", browser_settings, nullptr, nullptr);
 
         if (!m_browser) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CreateBrowserSync failed");
@@ -109,12 +110,16 @@ class CEFRTState {
 
     CefRefPtr<CEFRenderHandler> GetRenderHandler() { return m_render_handler; }
 
+    CefRefPtr<CEFClient> GetClient() { return m_client; }
+
     void DestroyRTState() {
         m_window = nullptr;
 
         m_app = nullptr;
 
         m_render_handler = nullptr;
+
+        m_client = nullptr;
 
         m_browser = nullptr;
     }
@@ -125,6 +130,8 @@ class CEFRTState {
     CefRefPtr<CEFApp> m_app{nullptr};
 
     CefRefPtr<CEFRenderHandler> m_render_handler{nullptr};
+
+    CefRefPtr<CEFClient> m_client{nullptr};
 
     CefRefPtr<CefBrowser> m_browser{nullptr};
 };

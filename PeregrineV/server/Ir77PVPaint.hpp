@@ -87,7 +87,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // setup -- after CreateDescriptorSets and CreatePipelines. Overlays are optional (wired if Ir77PVCEF created them).
+    // setup -- after CreateDescriptorSets and CreatePipelines (the CEF pipeline comes from the device's pipeline cache). Overlays are optional (wired if Ir77PVCEF created them).
     // Every command buffer shares the device's bindless layout + table; each gets its window's frame slots.
     // -------------------------------------------------------------------------------------------------------------------------------------
     std::shared_ptr<IIr77Return const> CreateCommandBuffers() {
@@ -115,6 +115,14 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
         if (m_context->GetMaterialTableSlot(material_table)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: material table missing -- call CreateDescriptorSets first.");
 
+        auto const pipeline_cache = m_context->m_pipeline_caches.find(device_id);
+        if (pipeline_cache == m_context->m_pipeline_caches.end())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: pipeline cache missing -- call CreatePipelines first.");
+
+        // the CEF role's handle -- re-resolved every frame, so a manifest reload re-points the overlay too
+        Ir77PVPipelineHandle pipeline_cef{IR77PV_NO_PIPELINE};
+        pipeline_cache->second->FindPipeline(Ir77PVPipelineKind::CEF, pipeline_cef);
+
         for (std::size_t w = 0; w < windows; w++) {
             auto cmd_buffer = std::static_pointer_cast<IIr77PVCmdBuffer>(std::make_shared<Ir77PVCmdBuffer>());
 
@@ -130,6 +138,8 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             cmd_buffer->SetMaterialTable(material_table);
 
+            cmd_buffer->SetPipelineCache(pipeline_cache->second);
+
             std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT> frame_slots{};
 
             auto const slots_result = m_context->GetFrameSlots(w, frame_slots);
@@ -137,12 +147,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
 
             cmd_buffer->SetFrameSlots(frame_slots);
 
-            if (has_overlays) {
-                std::shared_ptr<IIr77PVPipeline> pipeline_cef{};
-
-                if (m_context->GetPipeline(w, Ir77PVPipelineKind::CEF, pipeline_cef)->ID() == GUIDIr77OperationSucceeded)
-                    cmd_buffer->SetOverlay(overlays->second.at(w), pipeline_cef);
-            }
+            if (has_overlays) cmd_buffer->SetOverlay(overlays->second.at(w), pipeline_cef);
 
             if (cmd_buffer->CreateCommandBuffer()->ID() != GUIDIr77OperationSucceeded) {
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: command buffer setup failed.");
@@ -187,6 +192,24 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
 
         return found->second[window]->SetDraws(pass, draws);
+    }
+
+    // Replaces a window's compute list -- one Ir77PVDispatch per compute run, recorded in order by its Compute pass every frame. Persists until replaced.
+    std::shared_ptr<IIr77Return const> SetDispatches(std::size_t const& window, std::vector<Ir77PVDispatch> const& dispatches) {
+        auto const found = m_context->m_command_buffers.find(m_context->m_current_device);
+        if (found == m_context->m_command_buffers.end() || window >= found->second.size())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
+
+        return found->second[window]->SetDispatches(dispatches);
+    }
+
+    // Replaces a window's pass list -- what its command buffer records each frame, in order. Exactly one pass must target the swapchain.
+    std::shared_ptr<IIr77Return const> SetPassList(std::size_t const& window, std::vector<Ir77PVPassDesc> const& passes) {
+        auto const found = m_context->m_command_buffers.find(m_context->m_current_device);
+        if (found == m_context->m_command_buffers.end() || window >= found->second.size())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
+
+        return found->second[window]->SetPassList(passes);
     }
 
     std::shared_ptr<IIr77Return const> ClearDraws(std::size_t const& window) {

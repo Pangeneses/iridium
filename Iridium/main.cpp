@@ -84,9 +84,16 @@ int main(int argc, char* argv[]) {
 
     while (iridium.IsRunning()) {
         iridium.WindowStep();
+        //Ir77RETURN<Ir77OperationSucceeded>(nullptr, "window");
+
         iridium.ChromeStep();
+        //Ir77RETURN<Ir77OperationSucceeded>(nullptr, "chrome");
+
         iridium.IridiumStep();
+        //Ir77RETURN<Ir77OperationSucceeded>(nullptr, "iridium");
+
         iridium.VulkanStep();
+        //Ir77RETURN<Ir77OperationSucceeded>(nullptr, "vulkan");
     }
 
     iridium.Shutdown();

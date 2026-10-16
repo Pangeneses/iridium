@@ -246,9 +246,18 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     std::shared_ptr<IIr77Return const> DefineDeviceInfo() {
         if (m_extensions.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: QueryDeviceExtensionSupport not called.");
 
-        // query: features2 -> mesh -> vulkan11
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(m_phys_device, &properties);
+
+        if (properties.apiVersion < VK_API_VERSION_1_3) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: Vulkan 1.3 required (dynamic rendering).");
+
+        // query: features2 -> mesh -> vulkan11 -> vulkan12 -> vulkan13
+        VkPhysicalDeviceVulkan13Features v13_supported{};
+        v13_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+
         VkPhysicalDeviceVulkan12Features v12_supported{};
         v12_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        v12_supported.pNext = &v13_supported;
 
         VkPhysicalDeviceVulkan11Features v11_supported{};
         v11_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
@@ -275,6 +284,11 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
         if (!bindless) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: descriptor indexing (bindless) not supported.");
 
+        // dynamic rendering (no VkRenderPass / framebuffers) + vkCmdPipelineBarrier2
+        if (!v13_supported.dynamicRendering || !v13_supported.synchronization2 || !v13_supported.maintenance4 ||
+            !v13_supported.shaderDemoteToHelperInvocation)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: dynamicRendering / synchronization2 / maintenance4 / demote not supported.");
+
         m_phys_device_features = VkPhysicalDeviceFeatures{};
         m_phys_device_features.samplerAnisotropy = supported.features.samplerAnisotropy;
         m_phys_device_features.geometryShader = supported.features.geometryShader;
@@ -296,7 +310,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_mesh_features.meshShader = m_mesh_shading ? VK_TRUE : VK_FALSE;
         m_mesh_features.pNext = nullptr;
 
-        // enable: create info -> features2 -> vulkan11 -> vulkan12 -> [mesh]
+        // enable: create info -> features2 -> vulkan11 -> vulkan12 -> vulkan13 -> [mesh]
         m_vulkan11 = VkPhysicalDeviceVulkan11Features{};
         m_vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         m_vulkan11.shaderDrawParameters = v11_supported.shaderDrawParameters;
@@ -313,7 +327,15 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_vulkan12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         m_vulkan12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
         m_vulkan12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
-        m_vulkan12.pNext = m_mesh_shading ? &m_mesh_features : nullptr;
+        m_vulkan12.pNext = &m_vulkan13;
+
+        m_vulkan13 = VkPhysicalDeviceVulkan13Features{};
+        m_vulkan13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        m_vulkan13.dynamicRendering = VK_TRUE;
+        m_vulkan13.synchronization2 = VK_TRUE;
+        m_vulkan13.maintenance4 = VK_TRUE;                    // LocalSizeId -- task / mesh / compute built for vulkan1.3
+        m_vulkan13.shaderDemoteToHelperInvocation = VK_TRUE;  // discard in vulkan1.3 SPIR-V
+        m_vulkan13.pNext = m_mesh_shading ? &m_mesh_features : nullptr;
 
         m_features2 = VkPhysicalDeviceFeatures2{};
         m_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -485,6 +507,8 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     VkPhysicalDeviceVulkan11Features m_vulkan11{};
 
     VkPhysicalDeviceVulkan12Features m_vulkan12{};
+
+    VkPhysicalDeviceVulkan13Features m_vulkan13{};
 
     VkPhysicalDeviceVulkan12Properties m_vulkan12_properties{};    
 

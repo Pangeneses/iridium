@@ -55,7 +55,15 @@ FetchContent_Declare(
     GIT_TAG        v0.23
 )
 
-FetchContent_MakeAvailable(vma glm meshoptimizer)
+FetchContent_Declare(
+    simdjson
+    GIT_REPOSITORY https://github.com/simdjson/simdjson.git
+    GIT_TAG        v3.10.1
+    SYSTEM
+    OVERRIDE_FIND_PACKAGE
+)
+
+FetchContent_MakeAvailable(vma glm meshoptimizer simdjson)
 
 # -----------------------------------------------------------------------------
 # linkage -- PUBLIC because the headers that use these are included by consumers
@@ -67,5 +75,6 @@ target_link_libraries(PeregrineV PUBLIC
     SDL3::SDL3
     glm::glm
     meshoptimizer
+    simdjson::simdjson
     Ir77RT
 )
