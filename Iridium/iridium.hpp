@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -32,14 +34,11 @@
 #include "../Windows/runtime/CEFClient.hpp"
 #include "../Windows/runtime/CEFMouseEvent.hpp"
 
-#include "../PeregrineV/server/Ir77PVInit.hpp"
-#include "../PeregrineV/server/Ir77PVCEF.hpp"
-#include "../PeregrineV/server/Ir77PVPaint.hpp"
-#include "../PeregrineV/server/Ir77PVAsset.hpp"
+#include "../PeregrineV/server/Ir77PeregrineV.hpp"
 
 #include "../PeregrineV/types/Ir77PVTypes.hpp"
 
-#include "../Scene/server/Ir77Animate.hpp"
+#include "../Scene/server/Ir77Scene.hpp"
 
 #include "./types/Ir77Config.hpp"
 
@@ -97,61 +96,31 @@ class iridium {
 
         std::vector<SDL_Window*> windows{m_window};
 
-        m_vulkan = std::make_shared<Ir77PVInit>();
-        m_cef = std::make_shared<Ir77PVCEF>();
-        m_paint = std::make_shared<Ir77PVPaint>();
-        m_asset = std::make_shared<Ir77PVAsset>();
-
-        m_cef->SetPVInit(m_vulkan);
-        m_paint->SetPVInit(m_vulkan);
-        m_asset->SetPVInit(m_vulkan);
-
-        // instance / device
-        m_vulkan->CreateInstance();
-
-        m_vulkan->EnumeratePhysicalDevices();
-        Require(m_vulkan->CreateDisplayDevice(windows, m_device_id), "Create display device.");
+        // renderer -- instance through pipelines
+        m_peregrine = std::make_shared<Ir77PeregrineV>();
+        Require(m_peregrine->CreateRenderer(windows, m_config.shader_root, m_device_id), "Create renderer.");
         m_windows.emplace(m_device_id, windows);
-        Require(m_vulkan->CreateSurfaces(m_windows), "Create surfaces.");
-        m_vulkan->CreateAllocator();
 
-        // layouts + passes (Main only; Shadow pipelines are skipped until CreateRenderPass(Shadow) is called)
-        Require(m_vulkan->CreateLayouts());
-        Require(m_vulkan->CreateRenderPasses());
-        Require(m_vulkan->CreateSwapchains());
-
-        // frame resources -- the placeholder texture must exist before the descriptor sets and materials bind it
-        Require(m_vulkan->CreatePlaceholderTexture());
-        Require(m_vulkan->CreateFrameBuffers());
-        Require(m_vulkan->CreateDescriptorSets());
-
-        // CEF overlay -- one per window, uses the CEF layout from CreateLayouts and each window's swapchain
-        Require(m_cef->CreateOverlays());
-
+        // direct links -- CEF paints into the overlay; Scene uploads through Asset and hands frames to Paint
         std::shared_ptr<IIr77PVOverlay> overlay{};
-        Require(m_cef->GetOverlay(0, overlay), "Get overlay.");
+        Require(m_peregrine->GetOverlay(0, overlay), "Get overlay.");
+        m_rt_state->SetOverlay(overlay);
 
-        m_rt_state->SetOverlay(overlay);  // CEF paints go straight into the overlay
-
-        // pipelines need shaders, layouts and the Main pass
-        m_asset->SetShaderRoot(m_config.shader_root);
-        Require(m_asset->CreateShaders(), "Create shaders.");
-
-        std::vector<Ir77PVPipelineKind> kinds;
-        Require(m_asset->GetPipelineKinds(kinds));
-
-        Require(m_vulkan->CreatePipelines(kinds));
+        std::shared_ptr<Ir77PVAsset> asset{};
+        std::shared_ptr<Ir77PVPaint> paint{};
+        Require(m_peregrine->GetAsset(asset), "Get asset.");
+        Require(m_peregrine->GetPaint(paint), "Get paint.");
 
         // scene -- direct link to PeregrineV (Asset for uploads, Paint for frames)
-        m_scene = std::make_shared<Ir77Animate>();
-        m_scene->SetAsset(m_asset);
-        m_scene->SetPaint(m_paint);
+        m_scene = std::make_shared<Ir77Scene>();
+        m_scene->SetAsset(asset);
+        m_scene->SetPaint(paint);
         m_scene->SetViewSize(m_windows.at(m_device_id).size(), m_window_width, m_window_height);
 
         // the static runs' pipeline -- startup.pipeline from the manifest; unset -> the scene uses the "static" role
         if (!m_config.startup_pipeline.empty()) {
             Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
-            Require(m_asset->FindPipeline(m_config.startup_pipeline, pipeline), "Find startup.pipeline.");
+            Require(asset->FindPipeline(m_config.startup_pipeline, pipeline), "Find startup.pipeline.");
             m_scene->SetPipeline(pipeline);
         }
 
@@ -161,8 +130,16 @@ class iridium {
             throw std::runtime_error{"CreateScene failed"};
         }
 
-        // command buffers wire the overlay, so they come after CreateBufferCEF and CreatePipelines
-        Require(m_paint->CreateCommandBuffers());
+        // command buffers wire the overlay and the pipelines -- after the content
+        Require(m_peregrine->CreateCommandBuffers(), "Create command buffers.");
+
+        // the pipe -- every module's door, and where each posts back to
+        m_scene->SetPost([this](std::string json) { Post(std::move(json)); });
+        m_peregrine->SetPost([this](std::string json) { Post(std::move(json)); });
+
+        m_sinks["scene"] = [this](std::string json) { m_scene->Sink(std::move(json)); };
+        m_sinks["peregrinev"] = [this](std::string json) { m_peregrine->Sink(std::move(json)); };
+        m_sinks["ui"] = [this](std::string json) { DefineUIReply(json); };
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
     }
@@ -224,11 +201,20 @@ class iridium {
     // CEF -- pump, resize handshake, paints straight into the overlay
     void ChromeStep() { m_rt_state->CEFStep(); }
 
-    // Angular -> Iridium: every window.cefQuery request since the last frame, applied in arrival order before the frame is built
+    // The router. Angular's window.cefQuery requests join the queue, then everything queued since the last frame goes to the sink its "to"
+    // names, in arrival order, before the frame is built.
     void IridiumStep() {
         m_rt_state->GetClient()->TakeQueries(m_queries);
 
-        for (std::string const& query : m_queries) ApplyQuery(query);
+        for (std::string const& query : m_queries) Post(DefineEnvelope(query));
+
+        DefineRoutes();
+    }
+
+    // Any module, any thread -- a message for the router. Delivered on the next IridiumStep.
+    void Post(std::string json) {
+        std::lock_guard lock{m_post_mutex};
+        m_posted.push_back(std::move(json));
     }
 
     void VulkanStep() {
@@ -236,7 +222,7 @@ class iridium {
         float const seconds = std::chrono::duration<float>(frame_start - m_start_time).count();
 
         // uploads, indirect show/hide writes, graveyard -- before anything records
-        m_asset->Tick(m_frame);
+        m_peregrine->Tick();
 
         float const dt = m_vstep_seconds > 0.0f ? seconds - m_vstep_seconds : 0.0f;
         m_vstep_seconds = seconds;
@@ -249,21 +235,17 @@ class iridium {
         }
 
         auto const draw_start = std::chrono::steady_clock::now();
-        m_paint->Draw();
+        m_peregrine->Draw();
         auto const draw_end = std::chrono::steady_clock::now();
 
         UpdateFrameStats(dt, frame_start, draw_start, draw_end);
-
-        // assumes Paint advances one frame-in-flight per Draw -- swap for Paint's own index if it exposes one
-        m_frame = (m_frame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
     void Shutdown() {
         m_scene.reset();
-        m_paint.reset();
-        m_asset.reset();
-        m_cef.reset();
-        m_vulkan.reset();
+
+        if (m_peregrine) m_peregrine->DestroyRenderer();
+        m_peregrine.reset();
 
         if (m_window) {
             SDL_DestroyWindow(m_window);
@@ -299,56 +281,65 @@ class iridium {
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // UI commands -- window.cefQuery requests from Angular, JSON: {"camera": "<command>", ...}
-    //   move  forward / right / up in -1..1 -- held-key state, applied every frame (0 on key up)
-    //   look  dx / dy in pixels             -- mouse drag; turns the fly camera / swings the orbit camera
-    //   zoom  delta in wheel steps          -- orbit distance, 10% per step
-    //   speed value                         -- multiplies move speed
-    //   mode  value "orbit" | "fly" | "file" -- orbit / fly start from the current view, so switching never jumps
-    //   next                                -- next file camera, then the controlled camera (F2)
-    //   reset                               -- orbit framed on the scene
+    // router
     // -------------------------------------------------------------------------------------------------------------------------------------
-    void ApplyQuery(std::string const& query) {
-        simdjson::dom::element root{};
-        std::string_view command{};
 
-        if (m_query_parser.parse(query).get(root) != simdjson::SUCCESS || root["camera"].get(command) != simdjson::SUCCESS) {
-            std::printf("[WARN] UI query ignored: %s\n", query.c_str());
-            return;
+    // Everything posted so far, to the sink its "to" names. Swapped out under the lock, so a sink posting while it runs lands in the next pass.
+    void DefineRoutes() {
+        std::vector<std::string> batch{};
+        {
+            std::lock_guard lock{m_post_mutex};
+            batch.swap(m_posted);
         }
+
+        for (std::string& json : batch) {
+            simdjson::dom::element root{};
+            std::string_view to_view{};
+
+            if (m_route_parser.parse(json).get(root) != simdjson::SUCCESS || root["to"].get(to_view) != simdjson::SUCCESS) {
+                std::printf("[WARN] router: no \"to\": %s\n", json.c_str());
+                continue;
+            }
+
+            std::string const to{to_view};  // the parser is reused by the sink below
+
+            auto const sink = m_sinks.find(to);
+            if (sink == m_sinks.end()) {
+                std::printf("[WARN] router: no sink '%s': %s\n", to.c_str(), json.c_str());
+                continue;
+            }
+
+            sink->second(std::move(json));
+        }
+    }
+
+    // Until the Angular side sends envelopes: the old {"camera":"move", ...} becomes {"from":"ui","to":"scene","op":"camera.move","args":{...}}.
+    // A message that already has a "to" passes untouched.
+    std::string DefineEnvelope(std::string const& query) {
+        simdjson::dom::element root{};
+        if (m_route_parser.parse(query).get(root) != simdjson::SUCCESS) return query;  // the router reports it
+
+        std::string_view to{};
+        if (root["to"].get(to) == simdjson::SUCCESS) return query;
+
+        std::string_view camera{};
+        if (root["camera"].get(camera) != simdjson::SUCCESS) return query;
 
         if (!m_query_seen) {
             std::printf("[UI] first query: %s\n", query.c_str());
             m_query_seen = true;
         }
 
-        auto const number = [&root](char const* key) {
-            double value{0.0};
-            if (root[key].get(value) != simdjson::SUCCESS) value = 0.0;  // missing / not a number -> 0
-            return static_cast<float>(value);
-        };
+        return "{\"from\":\"ui\",\"to\":\"scene\",\"op\":\"camera." + std::string{camera} + "\",\"args\":" + query + "}";
+    }
 
-        // camera commands go to the scene -- it owns the cameras (and takes over from a file camera on move / look / zoom)
-        if (command == "move") {
-            m_scene->SetCameraMove(glm::vec3(number("right"), number("up"), number("forward")));
-        } else if (command == "look") {
-            m_scene->SetCameraLook(number("dx"), number("dy"));
-        } else if (command == "zoom") {
-            m_scene->SetCameraZoom(number("delta"));
-        } else if (command == "speed") {
-            m_scene->SetCameraSpeed(number("value"));
-        } else if (command == "mode") {
-            std::string_view mode{};
-            if (root["value"].get(mode) != simdjson::SUCCESS) mode = {};
+    // Replies for the UI -- logged when they fail, until CEF answers cefQuery callbacks by id
+    void DefineUIReply(std::string const& json) {
+        simdjson::dom::element root{};
+        bool ok{true};
 
-            m_scene->SetCameraMode(mode);
-        } else if (command == "next") {
-            m_scene->NextCamera();
-        } else if (command == "reset") {
-            m_scene->ResetCamera();
-        } else {
-            std::printf("[WARN] UI camera command unknown: %s\n", query.c_str());
-        }
+        if (m_route_parser.parse(json).get(root) != simdjson::SUCCESS || root["ok"].get(ok) != simdjson::SUCCESS) return;
+        if (!ok) std::printf("[WARN] ui reply: %s\n", json.c_str());
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -458,18 +449,10 @@ class iridium {
    private:
     std::shared_ptr<CEFRTState> m_rt_state;
 
-    std::shared_ptr<Ir77PVInit> m_vulkan;
-
-    std::shared_ptr<Ir77PVCEF> m_cef;
-
-    std::shared_ptr<Ir77PVPaint> m_paint;
-
-    std::shared_ptr<Ir77PVAsset> m_asset;
+    std::shared_ptr<Ir77PeregrineV> m_peregrine{};
 
     // one id for both the window map and SetCurrentDevice -- they must match
     std::uint64_t m_device_id{0};
-
-    std::uint32_t m_frame{0};  // frame in flight, for Asset::Tick
 
     float m_vstep_seconds{0.0f};  // previous frame's clock, for the scene's dt
 
@@ -485,16 +468,22 @@ class iridium {
     // scene
     std::string m_scene_path{};  // <projects>/<startup.project>/Models/<startup.scene>
 
-    std::shared_ptr<Ir77Animate> m_scene{};
+    std::shared_ptr<Ir77Scene> m_scene{};
 
     bool m_upload_error_logged{false};
 
     Ir77FrameStats m_frame_stats{};  // refreshed every frame
 
-    // UI queries -- drained each frame by IridiumStep
-    std::vector<std::string> m_queries{};
+    // router -- every module posts here; IridiumStep delivers by "to"
+    std::vector<std::string> m_queries{};  // cefQuery requests, taken from CEF each frame
 
-    simdjson::dom::parser m_query_parser{};
+    std::mutex m_post_mutex{};
+
+    std::vector<std::string> m_posted{};
+
+    std::map<std::string, std::function<void(std::string)>> m_sinks{};
+
+    simdjson::dom::parser m_route_parser{};
 
     bool m_query_seen{false};  // [UI] first query logged
 
