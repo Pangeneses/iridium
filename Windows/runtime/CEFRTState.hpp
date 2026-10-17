@@ -1,7 +1,9 @@
 #pragma once
 
 #include <limits.h>
+#include <chrono>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <filesystem>
@@ -21,15 +23,22 @@
 #include "./CEFApp.hpp"
 #include "./CEFClient.hpp"
 #include "./CEFRenderHandler.hpp"
+#include "./CEFMessageLoop.hpp"
+
+#include "../../PeregrineV/interface/IIr77PVOverlay.hpp"
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
 using namespace NSIr77RT;
+using namespace NSIr77PeregrineV;
 
 namespace CEF {
 
 // CEF process state. Configure with SetStartUrl / SetDebugPort / SetViewSize (defaults below), then Initialize -- which returns only in the
 // browser process; a CEF subprocess throws "__cef_subprocess__:<exit code>" out of it.
+//
+// Direct link to PeregrineV: SetOverlay hands CEF the window's overlay, and every paint goes straight into it -- no router in between.
+// CEFStep, once per loop, pumps CEF and runs the resize handshake.
 class CEFRTState {
    public:
     CEFRTState() = default;
@@ -40,10 +49,28 @@ class CEFRTState {
     // DevTools (chrome://inspect -> localhost:<port>); 0 turns it off
     void SetDebugPort(std::uint16_t const port) { m_debug_port = port; }
 
-    // the view size CEF lays the first page out at -- the window's size
+    // Before Initialize: the size CEF lays the first page out at. After: a resize request -- CEFStep sends it to CEF once CEF has painted
+    // the last size it was given (or that paint timed out).
     void SetViewSize(int const width, int const height) {
-        m_view_width = width;
-        m_view_height = height;
+        m_pending_width = width;
+        m_pending_height = height;
+        m_resize_pending = true;
+    }
+
+    // The overlay paints upload into -- held weakly, so a rebuilt or destroyed overlay just drops paints until the next SetOverlay
+    void SetOverlay(std::shared_ptr<IIr77PVOverlay> const& overlay) {
+        m_overlay = overlay;
+        m_cef_repaint = true;  // anything painted before the overlay existed was dropped
+    }
+
+    // Once per loop: the resize handshake, a repaint if one was dropped, then ~2 ms of CEF's message loop (paints arrive in here)
+    void CEFStep() {
+        DefineResize();
+
+        auto const until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
+
+        do m_message_loop->CEFDoMessageLoop(m_browser);
+        while (std::chrono::steady_clock::now() < until);
     }
 
     void Initialize(int argc, char* argv[]) {
@@ -90,14 +117,24 @@ class CEFRTState {
             ::write(fd, msg, strlen(msg));
             ::close(fd);
         }
+        // the first size is the one CEF starts at -- nothing to hand shake
+        m_cef_width = m_pending_width;
+        m_cef_height = m_pending_height;
+        m_resize_pending = false;
+
         m_render_handler = new CEFRenderHandler();
-        m_render_handler->SetViewSize(m_view_width, m_view_height);
+        m_render_handler->SetViewSize(m_cef_width, m_cef_height);
 
         if (!m_render_handler) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CEFRenderHandler alloc failed");
             throw std::runtime_error{"CEF: CEFRenderHandler alloc failed"};
         }
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "CEF: CEFRenderHandler created");
+
+        // CEF paint -> overlay, direct. Paints arrive on this thread, inside CEFStep's message loop.
+        m_render_handler->SetPaintCallback([this](void const* buffer, int const width, int const height) { DefinePaint(buffer, width, height); });
+
+        m_message_loop = std::make_shared<CEFMessageLoop>();
 
         CefWindowInfo window_info{};
         window_info.SetAsWindowless(0);
@@ -129,6 +166,10 @@ class CEFRTState {
     void DestroyRTState() {
         m_window = nullptr;
 
+        m_overlay.reset();
+
+        m_message_loop.reset();
+
         m_app = nullptr;
 
         m_render_handler = nullptr;
@@ -139,13 +180,99 @@ class CEFRTState {
     }
 
    private:
+    // One paint. While a resize is in flight, a paint at any other size is stale -- dropped, and the last good frame stays up.
+    void DefinePaint(void const* buffer, int const width, int const height) {
+        auto const overlay = m_overlay.lock();
+        if (!overlay) {
+            m_cef_repaint = true;
+            return;
+        }
+
+        // overlay mid-rebuild -- this paint is lost; CEFStep asks for another
+        bool resizing{false};
+        overlay->IsResizing(resizing);
+        if (resizing) {
+            m_cef_repaint = true;
+            return;
+        }
+
+        if (m_cef_in_flight) {
+            auto const waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_cef_resize).count();
+
+            // stale size -- drop it, unless CEF has had long enough and still hasn't painted the requested size
+            if ((width != m_cef_width || height != m_cef_height) && waited < CEF_RESIZE_TIMEOUT_MS) {
+                m_cef_repaint = true;
+                return;
+            }
+
+            m_cef_in_flight = false;  // CEF has caught up -- the next size may go
+        }
+
+        overlay->UploadFrame(buffer, width, height);
+
+        m_cef_repaint = false;
+    }
+
+    // The handshake -- the next size goes to CEF only after CEF has painted the last one (or it timed out). A dropped paint on a static page
+    // is never repeated, so once nothing is in flight CEF is asked to paint again.
+    void DefineResize() {
+        auto const now = std::chrono::steady_clock::now();
+        auto const since_applied = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_cef_resize).count();
+
+        if (m_resize_pending && (!m_cef_in_flight || since_applied >= CEF_RESIZE_TIMEOUT_MS)) {
+            m_resize_pending = false;
+
+            if (m_pending_width != m_cef_width || m_pending_height != m_cef_height) {
+                m_last_cef_resize = now;
+
+                m_cef_width = m_pending_width;
+                m_cef_height = m_pending_height;
+                m_cef_in_flight = true;
+
+                m_render_handler->SetViewSize(m_cef_width, m_cef_height);
+                m_browser->GetHost()->WasResized();
+                m_browser->GetHost()->Invalidate(PET_VIEW);
+            }
+        }
+
+        auto const waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_cef_resize).count();
+
+        if (m_cef_in_flight && waited >= CEF_RESIZE_TIMEOUT_MS) {
+            m_cef_in_flight = false;
+            m_cef_repaint = true;
+        }
+
+        if (m_cef_repaint && !m_cef_in_flight) {
+            m_cef_repaint = false;
+            m_browser->GetHost()->Invalidate(PET_VIEW);
+        }
+    }
+
+    static constexpr long long CEF_RESIZE_TIMEOUT_MS{100};  // give up waiting for CEF's paint at the requested size after this long
+
     std::string m_start_url{"http://localhost:50003/landing"};
 
     std::uint16_t m_debug_port{9222};
 
-    int m_view_width{1280};
+    int m_cef_width{1280};  // the size CEF was last given
 
-    int m_view_height{720};
+    int m_cef_height{720};
+
+    int m_pending_width{1280};  // the size asked for
+
+    int m_pending_height{720};
+
+    bool m_resize_pending{false};
+
+    bool m_cef_in_flight{false};  // a size was sent to CEF and its paint at that size hasn't arrived yet
+
+    bool m_cef_repaint{false};
+
+    std::chrono::steady_clock::time_point m_last_cef_resize{};
+
+    std::weak_ptr<IIr77PVOverlay> m_overlay{};
+
+    std::shared_ptr<CEFMessageLoop> m_message_loop{};
 
     SDL_Window* m_window = nullptr;
 

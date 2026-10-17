@@ -62,7 +62,6 @@ namespace Ir77 {
 class iridium {
    public:
     iridium() {
-        m_message_loop = std::make_shared<CEFMessageLoop>();
         m_rt_state = std::make_shared<CEFRTState>();
     }
 
@@ -90,8 +89,8 @@ class iridium {
             throw std::runtime_error{"SDL_Init failed: " + std::string{SDL_GetError()}};
         }
 
-        m_window_width = m_pending_width = m_cef_width = m_config.width;
-        m_window_height = m_pending_height = m_cef_height = m_config.height;
+        m_window_width = m_config.width;
+        m_window_height = m_config.height;
 
         m_window = SDL_CreateWindow(m_config.title.c_str(), m_config.width, m_config.height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 
@@ -140,58 +139,7 @@ class iridium {
         std::shared_ptr<IIr77PVOverlay> overlay{};
         Require(m_cef->GetOverlay(0, overlay), "Get overlay.");
 
-        std::weak_ptr<IIr77PVOverlay> weak_overlay = overlay;
-
-        // CEF paint -> overlay. During a resize only the paint at the requested size is shown, and it is presented right here,
-        // inside the paint, rather than on the next loop iteration.
-        m_rt_state->GetRenderHandler()->SetPaintCallback([this, weak_overlay](const void* buffer, int w, int h) {
-            // while a resize is in flight, a paint at any other size is stale -- drop it and keep showing the last good frame
-            // std::cerr << "in flight: " << m_cef_in_flight << " cef w x h: " << m_cef_width << " x " << m_cef_height << " vs w x h: " << w << "x" << h <<
-            // "\n";
-
-            m_ui_paints++;
-
-            auto const locked = weak_overlay.lock();
-            if (!locked) return;
-
-            // overlay mid-rebuild -- this paint is lost; WindowStep asks CEF for another
-            bool resizing{false};
-            locked->IsResizing(resizing);
-            if (resizing) {
-                m_cef_repaint = true;
-                m_ui_dropped_resizing++;
-                return;
-            }
-
-            if (m_cef_in_flight) {
-                auto const waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_cef_resize).count();
-
-                // stale size -- drop it, unless CEF has had long enough and still hasn't painted the requested size
-                if ((w != m_cef_width || h != m_cef_height) && waited < CEF_RESIZE_TIMEOUT_MS) {
-                    m_cef_repaint = true;
-                    m_ui_dropped_stale++;
-                    return;
-                }
-
-                m_cef_in_flight = false;  // CEF has caught up -- WindowStep may send the next size
-            }
-
-            if (locked->UploadFrame(buffer, w, h)->ID() == GUIDIr77OperationSucceeded) {
-                if (m_ui_uploads == 0)
-                    std::printf(
-                        "[UI] first frame %dx%d after %lld ms\n", w, h,
-                        static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_start_time).count()));
-                m_ui_uploads++;
-            } else
-                m_ui_upload_failed++;
-
-            m_ui_last_paint = std::to_string(w) + "x" + std::to_string(h);
-            m_cef_repaint = false;
-
-            if (!m_render_ready) return;
-
-            auto const since_resize = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_resize_event).count();
-        });
+        m_rt_state->SetOverlay(overlay);  // CEF paints go straight into the overlay
 
         // pipelines need shaders, layouts and the Main pass
         m_asset->SetShaderRoot(m_config.shader_root);
@@ -219,8 +167,6 @@ class iridium {
         // command buffers wire the overlay, so they come after CreateBufferCEF and CreatePipelines
         Require(m_paint->CreateCommandBuffers());
 
-        m_render_ready = true;  // from here on a CEF paint may present a frame directly
-
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
     }
 
@@ -238,11 +184,7 @@ class iridium {
                 case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
                     SDL_GetWindowSizeInPixels(m_window, &m_window_width, &m_window_height);
 
-                    m_pending_width = m_window_width;
-                    m_pending_height = m_window_height;
-
-                    m_last_resize_event = std::chrono::steady_clock::now();
-                    m_resize_pending = true;
+                    m_rt_state->SetViewSize(m_window_width, m_window_height);
 
                     break;
                 }
@@ -279,85 +221,10 @@ class iridium {
                     break;
             }
         }
-
-        if (m_resize_pending) {
-            auto const now = std::chrono::steady_clock::now();
-            auto const since_applied = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_cef_resize).count();
-
-            // handshake -- the next size goes to CEF only after CEF has painted the last one (or it timed out)
-            if (!m_cef_in_flight || since_applied >= CEF_RESIZE_TIMEOUT_MS) {
-                m_resize_pending = false;
-
-                if (m_pending_width != m_cef_width || m_pending_height != m_cef_height) {
-                    m_last_cef_resize = now;
-
-                    m_cef_width = m_pending_width;
-                    m_cef_height = m_pending_height;
-                    m_cef_in_flight = true;
-
-                    m_rt_state->GetRenderHandler()->SetViewSize(m_cef_width, m_cef_height);
-                    m_rt_state->GetBrowser()->GetHost()->WasResized();
-                    m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
-                }
-            }
-        }
-
-        // a dropped paint on a static page is never repeated -- once nothing is in flight, ask CEF to paint again
-        if (m_cef_in_flight) {
-            auto const waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_cef_resize).count();
-
-            if (waited >= CEF_RESIZE_TIMEOUT_MS) {
-                m_cef_in_flight = false;
-                m_cef_repaint = true;
-            }
-        }
-
-        if (m_cef_repaint && !m_cef_in_flight) {
-            m_cef_repaint = false;
-            m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
-        }
-
-        // [UI] status until the first upload -- tells which stage a blank UI is stuck at
-        if (m_ui_uploads == 0) {
-            auto const now = std::chrono::steady_clock::now();
-            if (now - m_ui_last_status >= std::chrono::seconds(1)) {
-                auto const elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_start_time).count();
-                // nothing painted yet -- poke CEF once; if the UI appears after this line, it was a missed first paint, not a load failure
-                // stage 1 (2 s): resize + invalidate. stage 2 (5 s): reload -- a stalled compositor never recovers on its own
-                if (m_ui_paints == 0 && elapsed_ms >= 2000 && m_ui_kicked == 0) {
-                    std::cerr << "[UI] no paint after 2 s -- WasResized + Invalidate" << std::endl;
-                    m_rt_state->GetBrowser()->GetHost()->WasResized();
-                    m_rt_state->GetBrowser()->GetHost()->Invalidate(PET_VIEW);
-                    m_ui_kicked = 1;
-                } else if (m_ui_paints == 0 && elapsed_ms >= 5000 && m_ui_kicked == 1) {
-                    // keep this run's CEF log before anything else can overwrite it
-                    std::string const snapshot{"/tmp/ir77_blank_" + std::to_string(std::time(nullptr)) + ".log"};
-                    std::error_code ec{};
-                    std::filesystem::copy_file("/tmp/cef_debug.log", snapshot, std::filesystem::copy_options::overwrite_existing, ec);
-
-                    std::cerr << "[UI] no paint after 5 s -- Reload (CEF log saved to " << snapshot << ")" << std::endl;
-                    m_rt_state->GetBrowser()->ReloadIgnoreCache();
-                    m_ui_kicked = 2;
-                }
-
-                m_ui_last_status = now;
-
-                std::printf(
-                    "[UI] paints %u, uploads %u, upload failed %u, dropped stale %u, dropped resizing %u, in flight %d, repaint %d, "
-                    "cef %dx%d, window %dx%d, last paint %s\n",
-                    m_ui_paints, m_ui_uploads, m_ui_upload_failed, m_ui_dropped_stale, m_ui_dropped_resizing, m_cef_in_flight, m_cef_repaint, m_cef_width,
-                    m_cef_height, m_window_width, m_window_height, m_ui_last_paint.c_str());
-            }
-        }
     }
 
-    // TEST: pump CEF for ~2 ms per frame instead of one call -- if blanks stop, the cause is message-loop starvation
-    void ChromeStep() {
-        auto const until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
-
-        do m_message_loop->CEFDoMessageLoop(m_rt_state->GetBrowser());
-        while (std::chrono::steady_clock::now() < until);
-    }
+    // CEF -- pump, resize handshake, paints straight into the overlay
+    void ChromeStep() { m_rt_state->CEFStep(); }
 
     // Angular -> Iridium: every window.cefQuery request since the last frame, applied in arrival order before the frame is built
     void IridiumStep() {
@@ -1160,16 +1027,6 @@ class iridium {
     }
 
    private:
-    // [UI] diagnostics -- remove once the blank-UI case is found
-    std::uint32_t m_ui_paints{0};
-    std::uint32_t m_ui_uploads{0};
-    std::uint32_t m_ui_upload_failed{0};
-    std::uint32_t m_ui_dropped_stale{0};
-    std::uint32_t m_ui_dropped_resizing{0};
-    std::string m_ui_last_paint{"none"};
-    std::chrono::steady_clock::time_point m_ui_last_status{};
-    std::uint32_t m_ui_kicked{0};
-
     // one material run -- contiguous indirect commands sharing a glTF material
     struct Ir77SceneRun {
         std::uint32_t gltf_material{UINT32_MAX};
@@ -1184,8 +1041,6 @@ class iridium {
         std::uint32_t first_instance{0};  // models[] slot -- its translation is the sort position
         bool skinned{false};
     };
-
-    std::shared_ptr<CEFMessageLoop> m_message_loop;
 
     std::shared_ptr<CEFRTState> m_rt_state;
 
@@ -1313,28 +1168,6 @@ class iridium {
     int m_window_width{1280};
 
     int m_window_height{720};
-
-    int m_cef_width{1280};
-
-    int m_cef_height{720};
-
-    int m_pending_width{1280};
-
-    int m_pending_height{720};
-
-    bool m_resize_pending = false;
-
-    bool m_cef_in_flight{false};  // a size was sent to CEF and its paint at that size hasn't arrived yet
-
-    bool m_cef_repaint{false};
-
-    static constexpr long long CEF_RESIZE_TIMEOUT_MS{100};  // give up waiting for CEF's paint at the requested size after this long
-
-    bool m_render_ready{false};  // Vulkan + Paint fully set up
-
-    std::chrono::steady_clock::time_point m_last_cef_resize{};
-
-    std::chrono::steady_clock::time_point m_last_resize_event{};
 
     std::chrono::steady_clock::time_point m_start_time{std::chrono::steady_clock::now()};
 };
