@@ -6,7 +6,7 @@
 
 #include "../PeregrineV/types/Ir77PVTypes.hpp" // Ir77PVLight -- same include iridium.hpp uses
 
-namespace Ir77 {
+namespace NSIr77Scene {
 
 // One playing clip, as of this frame
 typedef struct Ir77ClipStat {

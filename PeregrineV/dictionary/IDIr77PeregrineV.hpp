@@ -20,6 +20,7 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 inline Ir77GUID GUIDIr77PeregrineV{(static_cast<unsigned __int128>(0x3F9A72C4E1B85D06) << 64) | 0xA2C7F03951E84B1D};
+inline Ir77GUID GUIDIr77PVInit{(static_cast<unsigned __int128>(0xB66FDDEFE1EC4218) << 64) | 0x942E76082EC2524C};
 inline Ir77GUID GUIDIr77PVPaint{(static_cast<unsigned __int128>(0x77FB47B81DF7493A) << 64) | 0x8712AF66E15B484F};
 inline Ir77GUID GUIDIr77PVAsset{(static_cast<unsigned __int128>(0x559D9163200142C6) << 64) | 0xA76F0961028593E0};
 inline Ir77GUID GUIDIr77PVCEF{(static_cast<unsigned __int128>(0x001A7E1589804075) << 64) | 0xB2175618901D9C92};
@@ -100,6 +101,7 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
    private:
     std::map<std::string, IIr77GUID const*> m_index{
         {"GUIDIr77PeregrineV", &GUIDIr77PeregrineV},
+        {"GUIDIr77PVInit", &GUIDIr77PVInit},
         {"GUIDIr77PVPaint", &GUIDIr77PVPaint},
         {"GUIDIr77PVAsset", &GUIDIr77PVAsset},
         {"GUIDIr77PVCEF", &GUIDIr77PVCEF},

@@ -21,6 +21,8 @@ using namespace NSIr77RT;
 namespace NSIr77Scene {
 
 inline Ir77GUID GUIDIIr77Scene{(static_cast<unsigned __int128>(0xFF3BBC89C52846C6) << 64) | 0xB7ABC31A43D1E78D};
+
+/***************************************************************************************************************************************************************/
 inline Ir77GUID GUIDIIr77Mesh{(static_cast<unsigned __int128>(0x559950d115614816) << 64) | 0x8b5d9a80f77061bf};
 inline Ir77GUID GUIDIIr77Light{(static_cast<unsigned __int128>(0x2b6d55d6cb7b4270) << 64) | 0xb3877cf6e50f2e42};
 inline Ir77GUID GUIDIIr77Camera{(static_cast<unsigned __int128>(0xbbfc4c525bd04207) << 64) | 0x80a4b9735bbb388f};

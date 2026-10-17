@@ -34,7 +34,7 @@
 
 #include "../interface/IIr77PVShader.hpp"
 
-#include "Ir77PeregrineV.hpp"
+#include "Ir77PVInit.hpp"
 
 #include "../runtime/Ir77PVBuffer.hpp"
 #include "../runtime/Ir77PVDescriptorSet.hpp"
@@ -139,7 +139,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetPeregrineV(std::shared_ptr<Ir77PeregrineV>& context) {
+    std::shared_ptr<IIr77Return const> SetPVInit(std::shared_ptr<Ir77PVInit>& context) {
         m_context = context;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -1329,7 +1329,7 @@ class Ir77PVAsset : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
    private:
-    std::shared_ptr<Ir77PeregrineV> m_context{nullptr};
+    std::shared_ptr<Ir77PVInit> m_context{nullptr};
 
     std::string m_shader_root{"/home/alpha/workspace/iridium/Shader"};
 

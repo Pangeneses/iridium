@@ -21,7 +21,7 @@
 
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "Ir77PeregrineV.hpp"
+#include "Ir77PVInit.hpp"
 
 #include "../runtime/Ir77PVCmdBuffer.hpp"
 
@@ -80,7 +80,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetPeregrineV(std::shared_ptr<Ir77PeregrineV>& context) {
+    std::shared_ptr<IIr77Return const> SetPVInit(std::shared_ptr<Ir77PVInit>& context) {
         m_context = context;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -334,7 +334,7 @@ class Ir77PVPaint : public Ir77Enlisted, public std::enable_shared_from_this<Ir7
     }
 
    private:
-    std::shared_ptr<Ir77PeregrineV> m_context{nullptr};
+    std::shared_ptr<Ir77PVInit> m_context{nullptr};
 
     // [device][window][slot]
     std::map<std::uint64_t, std::vector<std::map<Ir77PVBufferSlot, Ir77PVFrameWrite>>> m_frame_data{};

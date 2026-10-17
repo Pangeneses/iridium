@@ -16,7 +16,7 @@
 
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
-#include "Ir77PeregrineV.hpp"
+#include "Ir77PVInit.hpp"
 
 #include "../interface/IIr77PVOverlay.hpp"
 #include "../runtime/Ir77PVOverlay.hpp"
@@ -76,7 +76,7 @@ class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77P
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetPeregrineV(std::shared_ptr<Ir77PeregrineV>& context) {
+    std::shared_ptr<IIr77Return const> SetPVInit(std::shared_ptr<Ir77PVInit>& context) {
         m_context = context;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -129,6 +129,6 @@ class Ir77PVCEF : public Ir77Enlisted, public std::enable_shared_from_this<Ir77P
     }
 
    private:
-    std::shared_ptr<Ir77PeregrineV> m_context{nullptr};
+    std::shared_ptr<Ir77PVInit> m_context{nullptr};
 };
 }  // namespace NSIr77PeregrineV

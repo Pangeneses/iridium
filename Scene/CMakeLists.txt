@@ -84,3 +84,5 @@ find_package(SDL3 REQUIRED)
 target_link_libraries(Ir77Scene PRIVATE SDL3::SDL3)
 
 target_link_libraries(Ir77Scene PUBLIC Ir77RT)
+
+target_link_libraries(Ir77Scene PUBLIC PeregrineV)

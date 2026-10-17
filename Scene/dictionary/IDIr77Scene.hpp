@@ -21,6 +21,9 @@ using namespace NSIr77RT;
 namespace NSIr77Scene {
 
 inline Ir77GUID GUIDIr77Scene{(static_cast<unsigned __int128>(0xabadfc86518e2664) << 64) | 0x09813be0211a4d9e};
+inline Ir77GUID GUIDIr77Animate{(static_cast<unsigned __int128>(0xB2C287207629458B) << 64) | 0x8FB543760880BF14};
+
+/********************************************************************************************************************************************************/
 inline Ir77GUID GUIDIr77Mesh{(static_cast<unsigned __int128>(0xaa985f8a3bbe5cf8) << 64) | 0x86c82e36a2794449};
 inline Ir77GUID GUIDIr77Light{(static_cast<unsigned __int128>(0xba8d1aff87f08a38) << 64) | 0xf52443cbe3004579};
 inline Ir77GUID GUIDIr77Camera{(static_cast<unsigned __int128>(0x867f03c5567dcaa8) << 64) | 0xe1523d005da94cc5};
@@ -101,9 +104,9 @@ class IDIr77Scene : public Ir77Enlisted, public IIr77Dictionary, public std::ena
     std::shared_ptr<IIr77Return const> m_invalidation_condition{nullptr};
 
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDIr77Scene", &GUIDIr77Scene},         {"GUIDIr77Mesh", &GUIDIr77Mesh},         {"GUIDIr77Light", &GUIDIr77Light},
-        {"GUIDIr77Camera", &GUIDIr77Camera},       {"GUIDIr77Material", &GUIDIr77Material}, {"GUIDIr77Texture", &GUIDIr77Texture},
-        {"GUIDIr77Animation", &GUIDIr77Animation},
+        {"GUIDIr77Scene", &GUIDIr77Scene},     {"GUIDIr77Scene", &GUIDIr77Scene},         {"GUIDIr77Mesh", &GUIDIr77Mesh},
+        {"GUIDIr77Light", &GUIDIr77Light},     {"GUIDIr77Camera", &GUIDIr77Camera},       {"GUIDIr77Material", &GUIDIr77Material},
+        {"GUIDIr77Texture", &GUIDIr77Texture}, {"GUIDIr77Animation", &GUIDIr77Animation},
     };
 };
 
