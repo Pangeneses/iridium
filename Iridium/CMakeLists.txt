@@ -50,6 +50,16 @@ target_link_libraries(Ir77 PRIVATE
 
 target_compile_definitions(Ir77 PRIVATE WRAPPING_CEF_SHARED)
 
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    SYSTEM
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
+target_link_libraries(Ir77 PRIVATE nlohmann_json::nlohmann_json)
+
 # Copy CEF's runtime next to the executable -- every .so / .bin / .json in Release, plus Resources
 add_custom_command(TARGET Ir77 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CEF_ROOT}/Release $<TARGET_FILE_DIR:Ir77>
@@ -67,3 +77,5 @@ target_link_libraries(Ir77 PRIVATE
     Windows
     Ir77Scene
 )
+
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/iridium.json ${CMAKE_CURRENT_BINARY_DIR}/iridium.json COPYONLY)

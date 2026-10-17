@@ -21,17 +21,10 @@ void crash_handler(int sig) {
 }
 /**********************************************************************************/
 
-struct IridiumArgs {
-    std::string url{};
-    std::string config{};
-    std::string log{};
-    bool debug{false};
-    uint16_t debug_port{};
-};
-
-static IridiumArgs ParseArgs(int argc, char* argv[]) {
-    IridiumArgs args{};
-    for (std::size_t i = 1; i < argc; ++i) {
+// --config=<path> --url=<url> --debug-port=<n> --log=<path> --debug -- anything else (CEF's own switches in subprocesses) is ignored
+static Ir77::Ir77Args ParseArgs(int argc, char* argv[]) {
+    Ir77::Ir77Args args{};
+    for (int i = 1; i < argc; ++i) {
         std::string arg{argv[i]};
         if (arg.starts_with("--url="))
             args.url = arg.substr(6);
@@ -61,6 +54,9 @@ int main(int argc, char* argv[]) {
         ::close(fd);
     }
 
+    // before init -- iridium.json and the command line decide the window, the UI and the startup scene
+    iridium.SetArgs(ParseArgs(argc, argv));
+
     try {
         iridium.InitializePipeline(argc, argv);
     } catch (std::runtime_error& error) {
@@ -76,11 +72,9 @@ int main(int argc, char* argv[]) {
             }
             return 0;
         }
-        Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitCEF");
+        Ir77RETURN<Ir77OperationFailed>(nullptr, "Failed: InitializePipeline -- " + what);
         return 1;
     }
-
-    IridiumArgs args = ParseArgs(argc, argv);
 
     while (iridium.IsRunning()) {
         iridium.WindowStep();

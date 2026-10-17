@@ -1,7 +1,9 @@
 #pragma once
 
 #include <limits.h>
+#include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <filesystem>
 #include <iostream>
 
@@ -26,9 +28,23 @@ using namespace NSIr77RT;
 
 namespace CEF {
 
+// CEF process state. Configure with SetStartUrl / SetDebugPort / SetViewSize (defaults below), then Initialize -- which returns only in the
+// browser process; a CEF subprocess throws "__cef_subprocess__:<exit code>" out of it.
 class CEFRTState {
    public:
     CEFRTState() = default;
+
+    // the page the browser opens
+    void SetStartUrl(std::string const& url) { m_start_url = url; }
+
+    // DevTools (chrome://inspect -> localhost:<port>); 0 turns it off
+    void SetDebugPort(std::uint16_t const port) { m_debug_port = port; }
+
+    // the view size CEF lays the first page out at -- the window's size
+    void SetViewSize(int const width, int const height) {
+        m_view_width = width;
+        m_view_height = height;
+    }
 
     void Initialize(int argc, char* argv[]) {
         CefMainArgs cef_args(argc, argv);
@@ -43,7 +59,7 @@ class CEFRTState {
         std::cerr << "[DEBUG] resources_dir_path will be = " << exe_dir.string() << std::endl;
 
         CefSettings settings{};
-        settings.remote_debugging_port = 9222;
+        settings.remote_debugging_port = m_debug_port;
         settings.multi_threaded_message_loop = false;
         settings.no_sandbox = true;
         settings.windowless_rendering_enabled = true;
@@ -75,7 +91,7 @@ class CEFRTState {
             ::close(fd);
         }
         m_render_handler = new CEFRenderHandler();
-        m_render_handler->SetViewSize(1280, 720);
+        m_render_handler->SetViewSize(m_view_width, m_view_height);
 
         if (!m_render_handler) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CEFRenderHandler alloc failed");
@@ -89,11 +105,9 @@ class CEFRTState {
         CefBrowserSettings browser_settings{};
         browser_settings.windowless_frame_rate = 60;
 
-        //
-        // "https://google.com"
         m_client = new CEFClient(m_render_handler);
 
-        m_browser = CefBrowserHost::CreateBrowserSync(window_info, m_client, "http://localhost:50003/landing", browser_settings, nullptr, nullptr);
+        m_browser = CefBrowserHost::CreateBrowserSync(window_info, m_client, m_start_url, browser_settings, nullptr, nullptr);
 
         if (!m_browser) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CreateBrowserSync failed");
@@ -125,6 +139,14 @@ class CEFRTState {
     }
 
    private:
+    std::string m_start_url{"http://localhost:50003/landing"};
+
+    std::uint16_t m_debug_port{9222};
+
+    int m_view_width{1280};
+
+    int m_view_height{720};
+
     SDL_Window* m_window = nullptr;
 
     CefRefPtr<CEFApp> m_app{nullptr};

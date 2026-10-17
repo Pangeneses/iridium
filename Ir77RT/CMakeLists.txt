@@ -23,13 +23,3 @@ target_include_directories(Ir77RT
 target_compile_features(Ir77RT PRIVATE cxx_std_20)
 
 include(FetchContent)
-
-#FetchContent_Declare(
-#    nlohmann_json
-#    GIT_REPOSITORY https://github.com/nlohmann/json.git
-#    GIT_TAG        v3.11.3
-#)
-#
-#FetchContent_MakeAvailable(nlohmann_json)
-#
-#target_link_libraries(Ir77RT PUBLIC nlohmann_json::nlohmann_json)

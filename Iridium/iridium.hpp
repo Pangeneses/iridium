@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -14,6 +15,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <type_traits>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -47,6 +50,7 @@
 
 #include "../Scene/server/Ir77Scene.hpp"
 
+#include "./types/Ir77Config.hpp"
 #include "./types/Ir77Stats.hpp"
 
 using namespace CEF;
@@ -65,8 +69,19 @@ class iridium {
     // -------------------------------------------------------------------------------------------------------------------------------------
     // init
     // -------------------------------------------------------------------------------------------------------------------------------------
+    // The command line -- before InitializePipeline. --config picks iridium.json; --url / --debug-port override it.
+    void SetArgs(Ir77Args const& args) { m_args = args; }
+
     void InitializePipeline(int argc, char* argv[]) {
-        m_rt_state->Initialize(argc, argv);
+        Require(DefineConfig(), "Read iridium.json.");
+
+        m_rt_state->SetStartUrl(m_config.url);
+        m_rt_state->SetDebugPort(m_config.debug_port);
+        m_rt_state->SetViewSize(m_config.width, m_config.height);
+
+        m_rt_state->Initialize(argc, argv);  // a CEF subprocess leaves here -- everything below is the browser process only
+
+        std::printf("%s\n", m_config_report.c_str());
 
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
 
@@ -75,7 +90,10 @@ class iridium {
             throw std::runtime_error{"SDL_Init failed: " + std::string{SDL_GetError()}};
         }
 
-        m_window = SDL_CreateWindow("Iridium", 1280, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+        m_window_width = m_pending_width = m_cef_width = m_config.width;
+        m_window_height = m_pending_height = m_cef_height = m_config.height;
+
+        m_window = SDL_CreateWindow(m_config.title.c_str(), m_config.width, m_config.height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 
         if (!m_window) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "SDL_CreateWindow failed: " + std::string{SDL_GetError()});
@@ -176,6 +194,7 @@ class iridium {
         });
 
         // pipelines need shaders, layouts and the Main pass
+        m_asset->SetShaderRoot(m_config.shader_root);
         Require(m_asset->CreateShaders(), "Create shaders.");
 
         std::vector<Ir77PVPipelineKind> kinds;
@@ -183,10 +202,14 @@ class iridium {
 
         Require(m_vulkan->CreatePipelines(kinds));
 
-        // content -- the glTF scene
-        m_scene_ready = LoadScene(m_scene_path, false)->ID() == GUIDIr77OperationSucceeded;
+        // content -- the startup scene from iridium.json, until the Angular app opens projects itself
+        m_scene_ready = LoadScene(m_scene_path, m_config.mesh_path)->ID() == GUIDIr77OperationSucceeded;
 
-        Require(m_asset->FindPipeline(std::string{"ripple"}, m_scene_pipeline));
+        // the static runs' pipeline -- startup.pipeline from the manifest, or the "static" role
+        if (m_config.startup_pipeline.empty())
+            Require(m_asset->FindPipeline(Ir77PVPipelineKind::Static, m_scene_pipeline), "Find the static pipeline.");
+        else
+            Require(m_asset->FindPipeline(m_config.startup_pipeline, m_scene_pipeline), "Find startup.pipeline.");
 
         if (!m_scene_ready) {
             std::cerr << "Iridium: scene '" << m_scene_path << "' failed to load \n";
@@ -1011,6 +1034,103 @@ class iridium {
         return Ir77PVAsset::MakeCamera(eye, eye + forward, m_camera_fov, aspect, znear, zfar);
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // config
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // iridium.json -> m_config. --config=<path> names the file, otherwise <executable folder>/iridium.json. A missing file keeps the
+    // built-in defaults; a malformed one stops startup. Relative paths resolve against the file's folder. --url / --debug-port override.
+    // Prints nothing -- CEF subprocesses run this too; m_config_report is printed once, by the browser process.
+    std::shared_ptr<IIr77Return const> DefineConfig() {
+        std::error_code error{};
+
+        std::filesystem::path const exe_dir = std::filesystem::canonical("/proc/self/exe", error).parent_path();
+        std::filesystem::path const file = std::filesystem::absolute(m_args.config.empty() ? exe_dir / "iridium.json" : std::filesystem::path{m_args.config});
+        std::filesystem::path const base = file.parent_path();
+
+        if (std::filesystem::is_regular_file(file, error)) {
+            simdjson::dom::parser parser{};
+            simdjson::dom::element root{};
+
+            if (parser.load(file.string()).get(root) != simdjson::SUCCESS)
+                return Ir77RETURN<Ir77NotConfigured>(nullptr, "Iridium: " + file.string() + " is not valid JSON.");
+
+            // a key that is missing (or the wrong type) keeps its default
+            auto const read_string = [&root](char const* pointer, std::string& value) {
+                std::string_view found{};
+                if (root.at_pointer(pointer).get(found) == simdjson::SUCCESS) value = std::string{found};
+            };
+            auto const read_integer = [&root](char const* pointer, auto& value) {
+                std::int64_t found{0};
+                if (root.at_pointer(pointer).get(found) == simdjson::SUCCESS) value = static_cast<std::remove_reference_t<decltype(value)>>(found);
+            };
+            auto const read_bool = [&root](char const* pointer, bool& value) {
+                bool found{false};
+                if (root.at_pointer(pointer).get(found) == simdjson::SUCCESS) value = found;
+            };
+
+            std::int64_t version{CONFIG_VERSION};
+            read_integer("/version", version);
+            if (version != CONFIG_VERSION)
+                return Ir77RETURN<Ir77NotConfigured>(nullptr, "Iridium: " + file.string() + " -- \"version\" must be " + std::to_string(CONFIG_VERSION) + ".");
+
+            read_string("/window/title", m_config.title);
+            read_integer("/window/width", m_config.width);
+            read_integer("/window/height", m_config.height);
+
+            read_string("/ui/url", m_config.url);
+            read_integer("/ui/debug_port", m_config.debug_port);
+
+            read_string("/render/shader_root", m_config.shader_root);
+            read_bool("/render/mesh_path", m_config.mesh_path);
+
+            std::string mode{"selfserve"};
+            read_string("/iridium/mode", mode);
+
+            if (mode == "selfserve") m_config.mode = Ir77ServerMode::SelfServe;
+            else if (mode == "server") m_config.mode = Ir77ServerMode::Server;
+            else if (mode == "client") m_config.mode = Ir77ServerMode::Client;
+            else return Ir77RETURN<Ir77NotConfigured>(nullptr, "Iridium: " + file.string() + " -- \"iridium.mode\" must be selfserve, server or client.");
+
+            read_string("/iridium/server/host", m_config.server_host);
+            read_integer("/iridium/server/port", m_config.server_port);
+
+            read_string("/projects", m_config.projects);
+
+            read_string("/startup/project", m_config.startup_project);
+            read_string("/startup/scene", m_config.startup_scene);
+            read_string("/startup/pipeline", m_config.startup_pipeline);
+
+            if (m_config.width <= 0 || m_config.height <= 0)
+                return Ir77RETURN<Ir77NotConfigured>(nullptr, "Iridium: " + file.string() + " -- window width / height must be above 0.");
+
+            m_config.path = file.string();
+            m_config_report = "[CONFIG] " + file.string();
+        } else {
+            m_config_report = "[CONFIG] no " + file.string() + " -- built-in defaults";
+        }
+
+        // relative -> absolute, against the config file's folder
+        auto const resolve = [&base](std::string& path) {
+            if (!path.empty() && std::filesystem::path{path}.is_relative()) path = (base / path).lexically_normal().string();
+        };
+
+        resolve(m_config.shader_root);
+        resolve(m_config.projects);
+
+        // the command line wins
+        if (!m_args.url.empty()) m_config.url = m_args.url;
+        if (m_args.debug_port != 0) m_config.debug_port = m_args.debug_port;
+
+        // <projects>/<startup.project>/Models/<startup.scene>
+        if (!m_config.startup_scene.empty())
+            m_scene_path = (std::filesystem::path{m_config.projects} / m_config.startup_project / "Models" / m_config.startup_scene).lexically_normal().string();
+
+        m_config_report += "\n[CONFIG] ui " + m_config.url + ", shaders " + m_config.shader_root + ", scene " +
+                           (m_scene_path.empty() ? std::string{"(none)"} : m_scene_path);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // The scene stats as console lines -- the printf replacement until the app displays them
     void PrintSceneStats() const {
         Ir77SceneStats const& s = m_scene_stats;
@@ -1088,8 +1208,17 @@ class iridium {
 
     float m_vstep_seconds{0.0f};  // previous frame's clock, for the scene's dt
 
+    // config -- iridium.json + the command line, read once by DefineConfig
+    Ir77Args m_args{};
+
+    Ir77Config m_config{};
+
+    std::string m_config_report{};  // what DefineConfig found -- printed by the browser process only
+
+    static constexpr std::int64_t CONFIG_VERSION{1};
+
     // scene
-    std::string m_scene_path{"/home/alpha/workspace/iridium/Public/sheet.glb"};  // set to your model
+    std::string m_scene_path{};  // <projects>/<startup.project>/Models/<startup.scene>
 
     std::shared_ptr<Ir77Scene> m_scene{};
 

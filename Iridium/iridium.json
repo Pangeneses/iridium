@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "window":  { "title": "Iridium", "width": 1280, "height": 720 },
+  "ui":      { "url": "http://localhost:50003/landing", "debug_port": 9222 },
+  "render":  { "shader_root": "/home/alpha/workspace/iridium/Shaders", "mesh_path": false },
+  "iridium": { "mode": "selfserve", "server": { "host": "127.0.0.1", "port": 50001 } },
+  "projects": "/home/alpha/workspace/iridium/Projects",
+  "startup": { "project": "Project001", "scene": "sheet.glb", "pipeline": "ripple" }
+}
