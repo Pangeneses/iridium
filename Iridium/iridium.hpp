@@ -30,31 +30,27 @@
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
-#include "../Windows/runtime/CEFRTState.hpp"
-#include "../Windows/runtime/CEFClient.hpp"
-#include "../Windows/runtime/CEFMouseEvent.hpp"
-
-#include "../PeregrineV/server/Ir77PeregrineV.hpp"
+// every module's switchboard is <module>/server/Ir77Server.hpp, class Ir77Server in the module's namespace -- always named qualified here,
+// the using-directives below would make a bare Ir77Server ambiguous
+#include "../Windows/server/Ir77Server.hpp"
+#include "../PeregrineV/server/Ir77Server.hpp"
+#include "../Scene/server/Ir77Server.hpp"
 
 #include "../PeregrineV/types/Ir77PVTypes.hpp"
-
-#include "../Scene/server/Ir77Scene.hpp"
 
 #include "./types/Ir77Config.hpp"
 
 #include "../Scene/types/Ir77Stats.hpp"
 
-using namespace CEF;
+using namespace NSIr77CEF;
 using namespace NSIr77PeregrineV;
 using namespace NSIr77Scene;
 
-namespace Ir77 {
+namespace NSIr77 {
 
 class iridium {
    public:
-    iridium() {
-        m_rt_state = std::make_shared<CEFRTState>();
-    }
+    iridium() { m_ui = std::make_shared<NSIr77CEF::Ir77Server>(); }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
     // init
@@ -65,11 +61,19 @@ class iridium {
     void InitializePipeline(int argc, char* argv[]) {
         Require(DefineConfig(), "Read iridium.json.");
 
-        m_rt_state->SetStartUrl(m_config.url);
-        m_rt_state->SetDebugPort(m_config.debug_port);
-        m_rt_state->SetViewSize(m_config.width, m_config.height);
+        // Iridium's own sink first -- every setup command's reply comes back through it
+        m_sinks["iridium"] = [this](std::string json) { DefineReply(json); };
 
-        m_rt_state->Initialize(argc, argv);  // a CEF subprocess leaves here -- everything below is the browser process only
+        // the windows module's pipe -- page queries are posted from the moment CEF is up
+        m_ui->SetPost([this](std::string json) { Post(std::move(json)); });
+        m_sinks["windows"] = [this](std::string json) { m_ui->Sink(std::move(json)); };
+
+        Require(DispatchOperation("windows", "page.configure",
+                                  "{\"url\":\"" + Escape(m_config.url) + "\",\"debug_port\":" + std::to_string(m_config.debug_port) +
+                                      ",\"width\":" + std::to_string(m_config.width) + ",\"height\":" + std::to_string(m_config.height) + "}"),
+                "Configure pages.");
+
+        m_ui->Initialize(argc, argv);  // a CEF subprocess leaves here -- everything below is the browser process only
 
         std::printf("%s\n", m_config_report.c_str());
 
@@ -83,63 +87,51 @@ class iridium {
         m_window_width = m_config.width;
         m_window_height = m_config.height;
 
-        m_window = SDL_CreateWindow(m_config.title.c_str(), m_config.width, m_config.height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-
-        if (!m_window) {
-            Ir77RETURN<Ir77OperationFailed>(nullptr, "SDL_CreateWindow failed: " + std::string{SDL_GetError()});
-            throw std::runtime_error{"SDL_CreateWindow failed: " + std::string{SDL_GetError()}};
-        }
-
-        SDL_ShowWindow(m_window);
-
-        SDL_StartTextInput(m_window);  // SDL_EVENT_TEXT_INPUT -> typed characters for the UI's inputs
+        Require(m_ui->CreateDisplayWindow(m_config.title, m_config.width, m_config.height, m_window), "Create window.");
 
         std::vector<SDL_Window*> windows{m_window};
 
-        // renderer -- instance through pipelines
-        m_peregrine = std::make_shared<Ir77PeregrineV>();
-        Require(m_peregrine->CreateRenderer(windows, m_config.shader_root, m_device_id), "Create renderer.");
-        m_windows.emplace(m_device_id, windows);
-
-        // direct links -- CEF paints into the overlay; Scene uploads through Asset and hands frames to Paint
-        std::shared_ptr<IIr77PVOverlay> overlay{};
-        Require(m_peregrine->GetOverlay(0, overlay), "Get overlay.");
-        m_rt_state->SetOverlay(overlay);
-
-        std::shared_ptr<Ir77PVAsset> asset{};
-        std::shared_ptr<Ir77PVPaint> paint{};
-        Require(m_peregrine->GetAsset(asset), "Get asset.");
-        Require(m_peregrine->GetPaint(paint), "Get paint.");
-
-        // scene -- direct link to PeregrineV (Asset for uploads, Paint for frames)
-        m_scene = std::make_shared<Ir77Scene>();
-        m_scene->SetAsset(asset);
-        m_scene->SetPaint(paint);
-        m_scene->SetViewSize(m_windows.at(m_device_id).size(), m_window_width, m_window_height);
-
-        // the static runs' pipeline -- startup.pipeline from the manifest; unset -> the scene uses the "static" role
-        if (!m_config.startup_pipeline.empty()) {
-            Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
-            Require(asset->FindPipeline(m_config.startup_pipeline, pipeline), "Find startup.pipeline.");
-            m_scene->SetPipeline(pipeline);
-        }
-
-        // content -- the startup scene from iridium.json, until the Angular app opens projects itself
-        if (m_scene->CreateScene(m_scene_path, m_config.mesh_path)->ID() != GUIDIr77OperationSucceeded) {
-            std::cerr << "Iridium: scene '" << m_scene_path << "' failed to load \n";
-            throw std::runtime_error{"CreateScene failed"};
-        }
-
-        // command buffers wire the overlay and the pipelines -- after the content
-        Require(m_peregrine->CreateCommandBuffers(), "Create command buffers.");
-
-        // the pipe -- every module's door, and where each posts back to
-        m_scene->SetPost([this](std::string json) { Post(std::move(json)); });
+        // the renderer's pipe first -- it is set up through it
+        m_peregrine = std::make_shared<NSIr77PeregrineV::Ir77Server>();
         m_peregrine->SetPost([this](std::string json) { Post(std::move(json)); });
 
-        m_sinks["scene"] = [this](std::string json) { m_scene->Sink(std::move(json)); };
         m_sinks["peregrinev"] = [this](std::string json) { m_peregrine->Sink(std::move(json)); };
-        m_sinks["ui"] = [this](std::string json) { DefineUIReply(json); };
+
+        // renderer -- instance through pipelines. The windows are pointers: direct link, not args.
+        Require(m_peregrine->SetWindows(windows), "Set windows.");
+        Require(DispatchOperation("peregrinev", "renderer.create", "{\"shader_root\":\"" + Escape(m_config.shader_root) + "\"}"), "Create renderer.");
+
+        simdjson::dom::element created{};
+        if (m_reply_parser.parse(m_reply_data).get(created) != simdjson::SUCCESS || created["device_id"].get(m_device_id) != simdjson::SUCCESS)
+            Require(Ir77RETURN<Ir77OperationFailed>(nullptr, "Iridium: renderer.create replied without device_id."), "Create renderer.");
+
+        m_windows.emplace(m_device_id, windows);
+
+        // direct links -- pointers, the only thing that can't go over the pipe: every other module reaches the renderer through its server
+        m_ui->SetRenderer(m_peregrine);
+
+        // the scene -- its door first, then set up through it like the renderer
+        m_scene = std::make_shared<NSIr77Scene::Ir77Server>();
+        m_scene->SetPost([this](std::string json) { Post(std::move(json)); });
+        m_sinks["scene"] = [this](std::string json) { m_scene->Sink(std::move(json)); };
+
+        m_scene->SetRenderer(m_peregrine);
+        
+        // the project the scene reads and writes (fields.json) -- <projects>/<startup.project>
+        std::string const project = (std::filesystem::path{m_config.projects} / m_config.startup_project).lexically_normal().string();
+        Require(DispatchOperation("scene", "scene.project", "{\"path\":\"" + Escape(project) + "\"}"), "Scene project.");
+        Require(DispatchOperation("scene", "scene.view_size", ViewSizeArgs()), "Scene view size.");
+
+        // the static runs' pipeline -- startup.pipeline from the manifest; unset -> the "static" role
+        Require(DispatchOperation("scene", "scene.pipeline", "{\"name\":\"" + Escape(m_config.startup_pipeline) + "\"}"), "Scene pipeline.");
+
+        // content -- the startup scene from iridium.json, until the Angular app opens projects itself
+        Require(DispatchOperation("scene", "scene.create",
+                                  "{\"path\":\"" + Escape(m_scene_path) + "\",\"use_mesh\":" + (m_config.mesh_path ? "true" : "false") + "}"),
+                "Create scene.");
+
+        // command buffers wire the overlay and the pipelines -- after the content
+        Require(DispatchOperation("peregrinev", "renderer.command_buffers"), "Create command buffers.");
 
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "Initialize adapter.");
     }
@@ -158,58 +150,28 @@ class iridium {
                 case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
                     SDL_GetWindowSizeInPixels(m_window, &m_window_width, &m_window_height);
 
-                    m_rt_state->SetViewSize(m_window_width, m_window_height);
-                    if (m_scene) m_scene->SetViewSize(m_windows.at(m_device_id).size(), m_window_width, m_window_height);
+                    // no replies wanted -- delivered on the next IridiumStep, before the frame is built
+                    Post("{\"to\":\"windows\",\"op\":\"page.view_size\",\"args\":{\"width\":" + std::to_string(m_window_width) +
+                         ",\"height\":" + std::to_string(m_window_height) + "}}");
 
-                    break;
-                }
+                    if (m_scene) Post("{\"to\":\"scene\",\"op\":\"scene.view_size\",\"args\":" + ViewSizeArgs() + "}");
 
-                // F2 cycles file cameras, then the controlled camera -- kept from CEF
-                case SDL_EVENT_KEY_DOWN: {
-                    if (event.key.key == SDLK_F2 && !event.key.repeat) {
-                        m_scene->NextCamera();
-                        break;
-                    }
-
-                    CEFInputEvent(&event, m_rt_state->GetBrowser());
-                    break;
-                }
-
-                case SDL_EVENT_MOUSE_WHEEL: {
-                    float mouseX, mouseY;
-                    SDL_GetMouseState(&mouseX, &mouseY);
-
-                    CefMouseEvent cef_event;
-                    cef_event.x = mouseX;
-                    cef_event.y = mouseY;
-
-                    const int scroll_scale = 120;
-                    int deltaX = event.wheel.x * scroll_scale;
-                    int deltaY = event.wheel.y * scroll_scale;
-
-                    m_rt_state->GetBrowser()->GetHost()->SendMouseWheelEvent(cef_event, deltaX, deltaY);
                     break;
                 }
 
                 default:
-                    CEFInputEvent(&event, m_rt_state->GetBrowser());
+                    m_ui->InputEvent(&event);
                     break;
             }
         }
     }
 
-    // CEF -- pump, resize handshake, paints straight into the overlay
-    void ChromeStep() { m_rt_state->CEFStep(); }
+    // CEF -- pump, resize handshake, paints straight into the overlay; page queries are posted from in here
+    void ChromeStep() { m_ui->Step(); }
 
-    // The router. Angular's window.cefQuery requests join the queue, then everything queued since the last frame goes to the sink its "to"
-    // names, in arrival order, before the frame is built.
-    void IridiumStep() {
-        m_rt_state->GetClient()->TakeQueries(m_queries);
-
-        for (std::string const& query : m_queries) Post(DefineEnvelope(query));
-
-        DefineRoutes();
-    }
+    // The router. Everything posted since the last frame (page queries included) goes to the sink its "to" names, in arrival order, before
+    // the frame is built.
+    void IridiumStep() { EmptyQueue(); }
 
     // Any module, any thread -- a message for the router. Delivered on the next IridiumStep.
     void Post(std::string json) {
@@ -227,10 +189,10 @@ class iridium {
         float const dt = m_vstep_seconds > 0.0f ? seconds - m_vstep_seconds : 0.0f;
         m_vstep_seconds = seconds;
 
-        m_scene->Update(dt);                               // animation, world transforms, bones, the controlled camera
+        m_scene->Update(dt);                                // animation, world transforms, bones, the controlled camera
         auto const framed = m_scene->CreateFrame(seconds);  // the frame's results -> Paint, direct
         if (framed->ID() != GUIDIr77OperationSucceeded && !m_upload_error_logged) {
-            std::printf("[ERROR] Scene CreateFrame failed -- no draws this frame\n");
+            Ir77RETURN<Ir77OperationFailed>(nullptr, "[ERROR] Scene CreateFrame failed -- no draws this frame\n");
             m_upload_error_logged = true;
         }
 
@@ -242,15 +204,20 @@ class iridium {
     }
 
     void Shutdown() {
+        // the scene first -- it holds PeregrineV's server and must not call into it once the renderer is destroyed
+        m_sinks.erase("scene");
         m_scene.reset();
 
-        if (m_peregrine) m_peregrine->DestroyRenderer();
+        if (m_peregrine) DispatchOperation("peregrinev", "renderer.destroy");  // a failure is in the return log; shutdown carries on
         m_peregrine.reset();
+        m_sinks.clear();
 
-        if (m_window) {
-            SDL_DestroyWindow(m_window);
-            m_window = nullptr;
-        }
+        // nothing routes to the pages any more -- close them and shut CEF down
+        if (m_ui) m_ui->DestroyPages();
+
+        // after the renderer -- its surfaces were on these windows
+        if (m_ui) m_ui->DestroyWindows();
+        m_window = nullptr;
 
         SDL_Quit();
     }
@@ -284,62 +251,44 @@ class iridium {
     // router
     // -------------------------------------------------------------------------------------------------------------------------------------
 
-    // Everything posted so far, to the sink its "to" names. Swapped out under the lock, so a sink posting while it runs lands in the next pass.
-    void DefineRoutes() {
-        std::vector<std::string> batch{};
-        {
-            std::lock_guard lock{m_post_mutex};
-            batch.swap(m_posted);
-        }
-
-        for (std::string& json : batch) {
-            simdjson::dom::element root{};
-            std::string_view to_view{};
-
-            if (m_route_parser.parse(json).get(root) != simdjson::SUCCESS || root["to"].get(to_view) != simdjson::SUCCESS) {
-                std::printf("[WARN] router: no \"to\": %s\n", json.c_str());
-                continue;
+    // Everything posted, to the sink its "to" names -- then whatever those sinks posted, until the queue is empty or ROUTE_PASSES runs out
+    // (left over waits for the next frame). Each pass is swapped out under the lock, so worker threads can keep posting.
+    void EmptyQueue() {
+        for (std::uint32_t pass = 0; pass < ROUTE_PASSES; pass++) {
+            std::vector<std::string> batch{};
+            {
+                std::lock_guard lock{m_post_mutex};
+                batch.swap(m_posted);
             }
 
-            std::string const to{to_view};  // the parser is reused by the sink below
+            if (batch.empty()) return;
 
-            auto const sink = m_sinks.find(to);
-            if (sink == m_sinks.end()) {
-                std::printf("[WARN] router: no sink '%s': %s\n", to.c_str(), json.c_str());
-                continue;
+            for (std::string& json : batch) {
+                simdjson::dom::element root{};
+                std::string_view to_view{};
+
+                if (m_route_parser.parse(json).get(root) != simdjson::SUCCESS || root["to"].get(to_view) != simdjson::SUCCESS) {
+                    Ir77RETURN<Ir77OperationFailed>(nullptr, "Iridium: router: no \"to\": " + json);
+                    continue;
+                }
+
+                std::string const to{to_view};  // the parser is reused by the sink below
+
+                // pages ("ui" and every "ui.<browser id>") belong to the windows module -- its sink picks the page
+                auto const sink = m_sinks.find(to == "ui" || to.rfind("ui.", 0) == 0 ? std::string{"windows"} : to);
+                if (sink == m_sinks.end()) {
+                    Ir77RETURN<Ir77OperationFailed>(nullptr, "Iridium: router: no sink '" + to + "': " + json);
+                    continue;
+                }
+
+                sink->second(std::move(json));
             }
-
-            sink->second(std::move(json));
-        }
-    }
-
-    // Until the Angular side sends envelopes: the old {"camera":"move", ...} becomes {"from":"ui","to":"scene","op":"camera.move","args":{...}}.
-    // A message that already has a "to" passes untouched.
-    std::string DefineEnvelope(std::string const& query) {
-        simdjson::dom::element root{};
-        if (m_route_parser.parse(query).get(root) != simdjson::SUCCESS) return query;  // the router reports it
-
-        std::string_view to{};
-        if (root["to"].get(to) == simdjson::SUCCESS) return query;
-
-        std::string_view camera{};
-        if (root["camera"].get(camera) != simdjson::SUCCESS) return query;
-
-        if (!m_query_seen) {
-            std::printf("[UI] first query: %s\n", query.c_str());
-            m_query_seen = true;
         }
 
-        return "{\"from\":\"ui\",\"to\":\"scene\",\"op\":\"camera." + std::string{camera} + "\",\"args\":" + query + "}";
-    }
-
-    // Replies for the UI -- logged when they fail, until CEF answers cefQuery callbacks by id
-    void DefineUIReply(std::string const& json) {
-        simdjson::dom::element root{};
-        bool ok{true};
-
-        if (m_route_parser.parse(json).get(root) != simdjson::SUCCESS || root["ok"].get(ok) != simdjson::SUCCESS) return;
-        if (!ok) std::printf("[WARN] ui reply: %s\n", json.c_str());
+        std::lock_guard lock{m_post_mutex};
+        if (!m_posted.empty())
+            Ir77RETURN<Ir77OperationFailed>(nullptr, "Iridium: router still busy after " + std::to_string(ROUTE_PASSES) + " passes -- " +
+                                                         std::to_string(m_posted.size()) + " wait a frame");
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -391,13 +340,18 @@ class iridium {
             read_string("/render/shader_root", m_config.shader_root);
             read_bool("/render/mesh_path", m_config.mesh_path);
 
-            std::string mode{"selfserve"};
+            std::string mode{"local"};
             read_string("/iridium/mode", mode);
 
-            if (mode == "selfserve") m_config.mode = Ir77ServerMode::SelfServe;
-            else if (mode == "server") m_config.mode = Ir77ServerMode::Server;
-            else if (mode == "client") m_config.mode = Ir77ServerMode::Client;
-            else return Ir77RETURN<Ir77NotConfigured>(nullptr, "Iridium: " + file.string() + " -- \"iridium.mode\" must be selfserve, server or client.");
+            if (mode == "local")
+                m_config.mode = Ir77ServerMode::Local;
+            else if (mode == "render_host")
+                m_config.mode = Ir77ServerMode::RenderHost;
+            else if (mode == "render_client")
+                m_config.mode = Ir77ServerMode::RenderClient;
+            else
+                return Ir77RETURN<Ir77NotConfigured>(nullptr,
+                                                     "Iridium: " + file.string() + " -- \"iridium.mode\" must be local, render_host or render_client.");
 
             read_string("/iridium/server/host", m_config.server_host);
             read_integer("/iridium/server/port", m_config.server_port);
@@ -431,12 +385,85 @@ class iridium {
 
         // <projects>/<startup.project>/Models/<startup.scene>
         if (!m_config.startup_scene.empty())
-            m_scene_path = (std::filesystem::path{m_config.projects} / m_config.startup_project / "Models" / m_config.startup_scene).lexically_normal().string();
+            m_scene_path =
+                (std::filesystem::path{m_config.projects} / m_config.startup_project / "Models" / m_config.startup_scene).lexically_normal().string();
 
-        m_config_report += "\n[CONFIG] ui " + m_config.url + ", shaders " + m_config.shader_root + ", scene " +
-                           (m_scene_path.empty() ? std::string{"(none)"} : m_scene_path);
+        m_config_report +=
+            "\n[CONFIG] ui " + m_config.url + ", shaders " + m_config.shader_root + ", scene " + (m_scene_path.empty() ? std::string{"(none)"} : m_scene_path);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // commands -- Iridium's own messages over the pipe
+    // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // One command, answered before this returns -- startup and shutdown, where order matters. Posted, routed now (anything else queued
+    // goes too), the reply's data left in m_reply_data.
+    std::shared_ptr<IIr77Return const> DispatchOperation(std::string const& to, std::string const& op, std::string const& args = "{}") {
+        std::int64_t const id = ++m_command_id;
+
+        m_reply_id = 0;
+        m_reply_ok = false;
+        m_reply_error.clear();
+        m_reply_data = "{}";
+
+        Post("{\"id\":" + std::to_string(id) + ",\"from\":\"iridium\",\"to\":\"" + to + "\",\"op\":\"" + op + "\",\"args\":" + args + "}");
+
+        EmptyQueue();
+
+        if (m_reply_id != id) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Iridium: no reply to " + op + ".");
+        if (!m_reply_ok) return Ir77RETURN<Ir77OperationFailed>(nullptr, "Iridium: " + op + " failed: " + m_reply_error);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The "iridium" sink -- a reply to one of DispatchOperation's commands
+    void DefineReply(std::string const& json) {
+        simdjson::dom::element root{};
+        if (m_reply_parser.parse(json).get(root) != simdjson::SUCCESS) {
+            Ir77RETURN<Ir77OperationFailed>(nullptr, "Iridium: reply not JSON: " + json);
+            return;
+        }
+
+        std::int64_t id{0};
+        if (root["id"].get(id) != simdjson::SUCCESS) return;  // an event -- nothing waits for it
+
+        bool ok{false};
+        if (root["ok"].get(ok) != simdjson::SUCCESS) ok = false;
+
+        std::string_view error{};
+        if (root["error"].get(error) != simdjson::SUCCESS) error = {};
+
+        simdjson::dom::element data{};
+        m_reply_data = root["data"].get(data) == simdjson::SUCCESS ? simdjson::minify(data) : std::string{"{}"};
+
+        m_reply_id = id;
+        m_reply_ok = ok;
+        m_reply_error = std::string{error};
+    }
+
+    // scene.view_size's args -- the display device's windows and their size now
+    std::string ViewSizeArgs() const {
+        auto const windows = m_windows.find(m_device_id);
+        std::size_t const count = windows == m_windows.end() ? 1 : windows->second.size();
+
+        return "{\"windows\":" + std::to_string(count) + ",\"width\":" + std::to_string(m_window_width) + ",\"height\":" + std::to_string(m_window_height) +
+               "}";
+    }
+
+    // JSON string escaping for args
+    std::string Escape(std::string const& text) const {
+        std::string out{};
+        out.reserve(text.size());
+
+        for (char const c : text) {
+            if (c == '"' || c == '\\') out += '\\';
+            if (static_cast<unsigned char>(c) < 0x20) continue;  // control characters dropped
+            out += c;
+        }
+
+        return out;
     }
 
     void Require(std::shared_ptr<IIr77Return const> const& result, char const* step = "") {
@@ -447,9 +474,9 @@ class iridium {
     }
 
    private:
-    std::shared_ptr<CEFRTState> m_rt_state;
+    std::shared_ptr<NSIr77CEF::Ir77Server> m_ui{};  // the windows module -- SDL windows, CEF, the pages
 
-    std::shared_ptr<Ir77PeregrineV> m_peregrine{};
+    std::shared_ptr<NSIr77PeregrineV::Ir77Server> m_peregrine{};  // the renderer module
 
     // one id for both the window map and SetCurrentDevice -- they must match
     std::uint64_t m_device_id{0};
@@ -468,24 +495,35 @@ class iridium {
     // scene
     std::string m_scene_path{};  // <projects>/<startup.project>/Models/<startup.scene>
 
-    std::shared_ptr<Ir77Scene> m_scene{};
+    std::shared_ptr<NSIr77Scene::Ir77Server> m_scene{};  // the scene module
 
     bool m_upload_error_logged{false};
 
     Ir77FrameStats m_frame_stats{};  // refreshed every frame
 
     // router -- every module posts here; IridiumStep delivers by "to"
-    std::vector<std::string> m_queries{};  // cefQuery requests, taken from CEF each frame
-
     std::mutex m_post_mutex{};
 
     std::vector<std::string> m_posted{};
 
     std::map<std::string, std::function<void(std::string)>> m_sinks{};
 
+    static constexpr std::uint32_t ROUTE_PASSES{8};  // drain passes per frame -- a request / reply chain this deep finishes in one frame
+
     simdjson::dom::parser m_route_parser{};
 
-    bool m_query_seen{false};  // [UI] first query logged
+    // DispatchOperation -- Iridium's own commands and the reply each waits for
+    std::int64_t m_command_id{0};
+
+    std::int64_t m_reply_id{0};
+
+    bool m_reply_ok{false};
+
+    std::string m_reply_error{};
+
+    std::string m_reply_data{"{}"};
+
+    simdjson::dom::parser m_reply_parser{};
 
     SDL_Window* m_window{nullptr};
 
@@ -500,4 +538,4 @@ class iridium {
     std::chrono::steady_clock::time_point m_start_time{std::chrono::steady_clock::now()};
 };
 
-}  // namespace Ir77
+}  // namespace NSIr77

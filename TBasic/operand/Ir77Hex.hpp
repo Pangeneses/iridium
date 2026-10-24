@@ -5,7 +5,7 @@
 #include <string>
 #include <mutex>
 
-#include "../../Ir77RT/dictionary/IDOPIr77MPVM.hpp"
+#include "../../Ir77RT/dictionary/IDIr77VAR.hpp"
 
 #include "../dictionary/IDOPIr77TBASIC.hpp"
 #include "../dictionary/IDMIr77TBASIC.hpp"

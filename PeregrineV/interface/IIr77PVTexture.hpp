@@ -52,6 +52,10 @@ typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> CreateDepth(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width,
                                                            std::uint32_t const& height) = 0;
 
+    // Storage kind: cleared to 0, VK_IMAGE_LAYOUT_GENERAL for good -- register as both a texture and a storage image
+    virtual std::shared_ptr<IIr77Return const> CreateStorage(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width,
+                                                             std::uint32_t const& height) = 0;                                                           
+
     virtual std::shared_ptr<IIr77Return const> GetImageInfo(VkDescriptorImageInfo* info) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetImage(VkImage* image) = 0;

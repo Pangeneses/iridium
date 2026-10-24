@@ -2,8 +2,8 @@
 
 #include <memory>
 
-#include "IIr77Enlisted.hpp"
-#include "IIr77Patch.hpp"
+#include "../interface/IIr77Enlisted.hpp"
+#include "../interface/IIr77Patch.hpp"
 
 namespace NSIr77RT {
 

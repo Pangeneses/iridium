@@ -11,8 +11,8 @@
 #include "../interface/IIr77Stack.hpp"
 #include "../interface/IIr77Iterator.hpp"
 #include "../interface/IIr77Return.hpp"
+#include "../interface/IIr77Operand.hpp"
 
-#include "IIr77Operand.hpp"
 #include "Ir77GUID.hpp"
 
 #include "Ir77Enlisted.hpp"

@@ -25,7 +25,7 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
 #include "../interface/IIr77PVDevice.hpp"
-#include "../interface/IIr77PVLayoutRay.hpp"
+#include "../interface/IIr77PVLayout.hpp"
 #include "../interface/IIr77PVPipelineRay.hpp"
 
 using namespace NSIr77RT;
@@ -106,7 +106,7 @@ class Ir77PVPipelineRay : public Ir77Enlisted, public IIr77PVPipelineRay, public
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayoutRay> layout) {
+    std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout) {
         m_layout = layout;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -198,7 +198,7 @@ class Ir77PVPipelineRay : public Ir77Enlisted, public IIr77PVPipelineRay, public
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetLayout(std::shared_ptr<IIr77PVLayoutRay>& layout) {
+    std::shared_ptr<IIr77Return const> GetLayout(std::shared_ptr<IIr77PVLayout>& layout) {
         layout = m_layout;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -375,7 +375,7 @@ class Ir77PVPipelineRay : public Ir77Enlisted, public IIr77PVPipelineRay, public
 
     VmaAllocator m_allocator{VK_NULL_HANDLE};
 
-    std::shared_ptr<IIr77PVLayoutRay> m_layout;
+    std::shared_ptr<IIr77PVLayout> m_layout;
 
     std::vector<VkPipelineShaderStageCreateInfo> m_stages{};
 

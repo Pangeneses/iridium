@@ -2,11 +2,11 @@
 
 #include "include/cef_focus_handler.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 class CEFFocusHandler : public CefFocusHandler {
    public:
-    CEFFocusHandler(){};
+    CEFFocusHandler() {};
 
    public:
     void OnTakeFocus(CefRefPtr<CefBrowser> browser, bool next) override {}
@@ -19,4 +19,4 @@ class CEFFocusHandler : public CefFocusHandler {
     IMPLEMENT_REFCOUNTING(CEFFocusHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

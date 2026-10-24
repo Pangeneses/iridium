@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 file(GLOB_RECURSE PV_SOURCES
     "*.cpp"
-    "operation/*.cpp"
-    "runtime/*.cpp"
+    "server/*.cpp"
 )
 
 add_library(Windows STATIC ${PV_SOURCES})
@@ -28,7 +27,7 @@ target_include_directories(Windows PUBLIC
 
 # SDL3
 find_package(SDL3 REQUIRED)
-target_link_libraries(Ir77 PRIVATE SDL3::SDL3)
+target_link_libraries(Windows PRIVATE SDL3::SDL3)
 
 # CEF
 set(CEF_ROOT "$ENV{HOME}/workspace/cef")
@@ -46,4 +45,9 @@ target_include_directories(Windows PUBLIC
     ${CMAKE_SOURCE_DIR}/Ir77RT/dictionary
     ${CMAKE_SOURCE_DIR}/Ir77RT/server
 )
-target_link_libraries(Windows PUBLIC Ir77RT)
+
+target_link_libraries(Windows PUBLIC 
+    Ir77RT
+    PeregrineV
+    simdjson::simdjson
+)

@@ -40,6 +40,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     ~Ir77PVDevice() {
         if (m_upload_pool != VK_NULL_HANDLE) vkDestroyCommandPool(m_device, m_upload_pool, nullptr);
+        if (m_transfer_pool != VK_NULL_HANDLE) vkDestroyCommandPool(m_device, m_transfer_pool, nullptr);
         if (m_device != VK_NULL_HANDLE) vkDestroyDevice(m_device, nullptr);
     }
 
@@ -275,6 +276,9 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         if (!supported.features.multiDrawIndirect) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: multiDrawIndirect not supported.");
         if (!supported.features.drawIndirectFirstInstance) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: drawIndirectFirstInstance not supported.");
 
+        // gl_DrawID -- the vertex shaders find each indirect command's material through it (per-draw material tables)
+        if (!v11_supported.shaderDrawParameters) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: shaderDrawParameters not supported.");
+
         // bindless -- one descriptor set of large, partially bound, update-after-bind arrays (Ir77PVLayout)
         bool const bindless = v12_supported.runtimeDescriptorArray && v12_supported.descriptorBindingPartiallyBound &&
                               v12_supported.descriptorBindingUpdateUnusedWhilePending && v12_supported.shaderSampledImageArrayNonUniformIndexing &&
@@ -285,8 +289,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         if (!bindless) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: descriptor indexing (bindless) not supported.");
 
         // dynamic rendering (no VkRenderPass / framebuffers) + vkCmdPipelineBarrier2
-        if (!v13_supported.dynamicRendering || !v13_supported.synchronization2 || !v13_supported.maintenance4 ||
-            !v13_supported.shaderDemoteToHelperInvocation)
+        if (!v13_supported.dynamicRendering || !v13_supported.synchronization2 || !v13_supported.maintenance4 || !v13_supported.shaderDemoteToHelperInvocation)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: dynamicRendering / synchronization2 / maintenance4 / demote not supported.");
 
         m_phys_device_features = VkPhysicalDeviceFeatures{};
@@ -313,7 +316,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         // enable: create info -> features2 -> vulkan11 -> vulkan12 -> vulkan13 -> [mesh]
         m_vulkan11 = VkPhysicalDeviceVulkan11Features{};
         m_vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
-        m_vulkan11.shaderDrawParameters = v11_supported.shaderDrawParameters;
+        m_vulkan11.shaderDrawParameters = VK_TRUE;  // required above
         m_vulkan11.pNext = &m_vulkan12;
 
         m_vulkan12 = VkPhysicalDeviceVulkan12Features{};
@@ -465,6 +468,47 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // first transfer-only family (the copy engine -- runs beside rendering) -- valid after DefineDevice. A GPU without one gets the present
+    // queue: compare family with GetPresentQueue's to know whether a queue-family ownership transfer is needed.
+    std::shared_ptr<IIr77Return const> GetTransferQueue(VkQueue& queue, std::uint32_t& family) {
+        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
+            std::uint64_t const type = m_queue_families[i].type;
+
+            bool const copy_only = (type & IR77_TRANSFER_BIT) && !(type & IR77_GRAPHICS_BIT) && !(type & IR77_COMPUTE_BIT);
+
+            if (copy_only && m_queue_families[i].queue != VK_NULL_HANDLE) {
+                queue = m_queue_families[i].queue;
+                family = static_cast<std::uint32_t>(i);
+                return Ir77RETURN<Ir77OperationSucceeded>();
+            }
+        }
+
+        return GetPresentQueue(queue, family);
+    }
+
+    // transient pool on the transfer family, for streaming uploads -- its own pool even when it falls back to the present family, so it
+    // never shares a pool with the upload path (pools aren't thread-safe). Created on first use, destroyed with the device.
+    std::shared_ptr<IIr77Return const> GetTransferPool(VkCommandPool& pool, VkQueue& queue) {
+        std::uint32_t family{0};
+
+        auto const result = GetTransferQueue(queue, family);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        if (m_transfer_pool == VK_NULL_HANDLE) {
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            pool_info.queueFamilyIndex = family;
+
+            if (vkCreateCommandPool(m_device, &pool_info, nullptr, &m_transfer_pool) != VK_SUCCESS)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: transfer pool creation failed.");
+        }
+
+        pool = m_transfer_pool;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
    private:
     bool HasExtension(char const* name) const {
         return std::any_of(m_available_extensions.begin(), m_available_extensions.end(),
@@ -494,6 +538,8 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     VkCommandPool m_upload_pool{VK_NULL_HANDLE};
 
+    VkCommandPool m_transfer_pool{VK_NULL_HANDLE};  // GetTransferPool -- streaming uploads, on the copy engine when there is one
+
     std::vector<VkExtensionProperties> m_available_extensions;
 
     // requested extensions -- pointers into this list are handed to vkCreateDevice, so it must outlive DefineDevice
@@ -510,7 +556,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     VkPhysicalDeviceVulkan13Features m_vulkan13{};
 
-    VkPhysicalDeviceVulkan12Properties m_vulkan12_properties{};    
+    VkPhysicalDeviceVulkan12Properties m_vulkan12_properties{};
 
     bool m_mesh_shading{false};
 

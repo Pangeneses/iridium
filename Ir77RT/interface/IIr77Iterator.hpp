@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <memory>
 
-#include "IIr77Enlisted.hpp"
-#include "IIr77Patch.hpp"
-#include "IIr77Stack.hpp"
+#include "../interface/IIr77Enlisted.hpp"
+#include "../interface/IIr77Patch.hpp"
+#include "../interface/IIr77Stack.hpp"
 
 namespace NSIr77RT {
 struct IIr77Operand;

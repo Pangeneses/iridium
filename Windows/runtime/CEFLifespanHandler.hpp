@@ -2,14 +2,14 @@
 
 #include "include/cef_life_span_handler.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 class CEFLifeSpanHandler : public CefLifeSpanHandler {
    public:
-    CEFLifeSpanHandler(){};
+    CEFLifeSpanHandler() {};
 
    private:
     IMPLEMENT_REFCOUNTING(CEFLifeSpanHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

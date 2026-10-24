@@ -5,7 +5,7 @@
 
 #include "include/cef_load_handler.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 // Main-frame load events with milliseconds since startup, on stderr (unbuffered) so they line up with the [UI] status lines
 class CEFLoadHandler : public CefLoadHandler {
@@ -44,4 +44,4 @@ class CEFLoadHandler : public CefLoadHandler {
     IMPLEMENT_REFCOUNTING(CEFLoadHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

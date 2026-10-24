@@ -31,7 +31,9 @@ typedef struct IIr77PVDescriptorSet : virtual public IIr77Enlisted {
 
     // ---- register: a new slot, written immediately ----------------------------------------------------------------------------------------
     // The first texture registered gets slot BINDLESS_PLACEHOLDER_TEXTURE (0) -- register the placeholder first.
-    virtual std::shared_ptr<IIr77Return const> RegisterTexture(VkImageView const& view, VkSampler const& sampler, std::uint32_t& index) = 0;
+    // layout = the layout the image is in whenever a shader samples it (a depth texture: DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+    virtual std::shared_ptr<IIr77Return const> RegisterTexture(VkImageView const& view, VkSampler const& sampler, std::uint32_t& index,
+                                                               VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) = 0;
 
     virtual std::shared_ptr<IIr77Return const> RegisterBuffer(VkBuffer const& buffer, VkDeviceSize const& offset, VkDeviceSize const& range,
                                                               std::uint32_t& index) = 0;
@@ -40,7 +42,8 @@ typedef struct IIr77PVDescriptorSet : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> RegisterStorageImage(VkImageView const& view, std::uint32_t& index) = 0;
 
     // ---- update: rewrite an existing slot (resize, regrow). Only when no frame in flight reads the slot; otherwise register + Release ----
-    virtual std::shared_ptr<IIr77Return const> UpdateTexture(std::uint32_t const& index, VkImageView const& view, VkSampler const& sampler) = 0;
+    virtual std::shared_ptr<IIr77Return const> UpdateTexture(std::uint32_t const& index, VkImageView const& view, VkSampler const& sampler,
+                                                             VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) = 0;
 
     virtual std::shared_ptr<IIr77Return const> UpdateBuffer(std::uint32_t const& index, VkBuffer const& buffer, VkDeviceSize const& offset,
                                                             VkDeviceSize const& range) = 0;

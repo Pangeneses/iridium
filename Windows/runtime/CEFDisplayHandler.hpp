@@ -2,11 +2,11 @@
 
 #include "include/cef_display_handler.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 class CEFDisplayHandler : public CefDisplayHandler {
    public:
-    CEFDisplayHandler(){};
+    CEFDisplayHandler() {};
 
    public:
     void OnAddressChange(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, const CefString& url) override {}
@@ -45,4 +45,4 @@ class CEFDisplayHandler : public CefDisplayHandler {
     IMPLEMENT_REFCOUNTING(CEFDisplayHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

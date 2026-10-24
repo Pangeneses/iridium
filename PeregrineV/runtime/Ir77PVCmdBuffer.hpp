@@ -39,7 +39,7 @@ namespace NSIr77PeregrineV {
 //   per frame: SetDraws (per draw list) / SetDispatches (the compute list) -- any time, recorded by the next RecordCommandBuffer
 //
 // Bindless: the one descriptor set is bound once per bind point per command buffer; every draw / dispatch gets Ir77PVPushConstants.
-//   create:    CreateCommandBuffer -> DefineExtensionFunctions -> DefineCommandPool -> DefineCommandBuffers -> DefineSyncObjects
+//   create:    CreateCommandBuffer -> DefineExtensionFunctions -> DispatchOperationPool -> DispatchOperationBuffers -> DefineSyncObjects
 //   per frame: SetCurrentFrame -> WaitForFence -> AcquireNextImage -> ResetFence -> RecordCommandBuffer -> SubmitFrame -> PresentFrame
 //
 // Pass list: RecordCommandBuffer walks m_passes in order -- Compute passes record the dispatch list, Raster passes begin rendering on their
@@ -235,7 +235,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             if (pass.type == Ir77PVPassType::Raster && pass.target == Ir77PVPassTarget::Swapchain) swapchain_passes++;
 
             for (auto const list : pass.lists)
-                if (static_cast<std::size_t>(list) >= PASS_COUNT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: pass names an unknown draw list.");
+                if (static_cast<std::size_t>(list) >= PASS_COUNT)
+                    return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: pass names an unknown draw list.");
         }
 
         if (swapchain_passes != 1) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: the pass list needs exactly one swapchain pass.");
@@ -302,10 +303,10 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         auto result = DefineExtensionFunctions();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        result = DefineCommandPool();
+        result = DispatchOperationPool();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        result = DefineCommandBuffers();
+        result = DispatchOperationBuffers();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         result = DefineSyncObjects();
@@ -518,7 +519,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     }
 
     // On the present family, so recording, submit and present all share one queue
-    std::shared_ptr<IIr77Return const> DefineCommandPool() {
+    std::shared_ptr<IIr77Return const> DispatchOperationPool() {
         auto const result = m_device->GetPresentQueue(m_queue, m_queue_family);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
@@ -536,7 +537,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DefineCommandBuffers() {
+    std::shared_ptr<IIr77Return const> DispatchOperationBuffers() {
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
@@ -634,6 +635,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         VkFrontFace front_face{VK_FRONT_FACE_MAX_ENUM};
         VkBool32 depth_test{UINT32_MAX};
         VkBool32 depth_write{UINT32_MAX};
+        std::uint32_t shadow_tile{UINT32_MAX};  // atlas tile the viewport is on (Shadow pass)
     };
 
     // The images one Raster pass renders into, and the layouts they end in
@@ -644,7 +646,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         VkImageView depth_view{VK_NULL_HANDLE};
         VkImageAspectFlags depth_aspect{VK_IMAGE_ASPECT_DEPTH_BIT};
         VkExtent2D extent{};
-        VkImageLayout color_final{VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};        // PRESENT_SRC for the swapchain
+        VkImageLayout color_final{VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};          // PRESENT_SRC for the swapchain
         VkImageLayout depth_final{VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};  // READ_ONLY when sampled afterwards
     };
 
@@ -675,12 +677,11 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
                                           VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT));
 
         if (has_depth)
-            before.push_back(ImageBarrier(images.depth, images.depth_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                          VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT |
-                                              VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                          VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT));
+            before.push_back(ImageBarrier(
+                images.depth, images.depth_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT));
 
         Barrier(cmd, before);
 
@@ -925,6 +926,22 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             }
 
             RecordDynamicState(cmd, desc, item, state);
+
+            // shadow draws -- each light renders into its own atlas tile
+            if (desc.pass == Ir77PVRenderPassKind::Shadow && item.light_index != state.shadow_tile) {
+                std::uint32_t const tile_w = m_shadow_extent.width / SHADOW_ATLAS_SIDE;
+                std::uint32_t const tile_h = m_shadow_extent.height / SHADOW_ATLAS_SIDE;
+                std::uint32_t const tx = (item.light_index % SHADOW_ATLAS_SIDE) * tile_w;
+                std::uint32_t const ty = (item.light_index / SHADOW_ATLAS_SIDE) * tile_h;
+
+                VkViewport viewport{static_cast<float>(tx), static_cast<float>(ty), static_cast<float>(tile_w), static_cast<float>(tile_h), 0.0f, 1.0f};
+                VkRect2D scissor{{static_cast<std::int32_t>(tx), static_cast<std::int32_t>(ty)}, {tile_w, tile_h}};
+
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
+                vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+                state.shadow_tile = item.light_index;
+            }
 
             Push(cmd, ItemPush(desc, item));
 
@@ -1295,7 +1312,6 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // compute
     // the compute list -- SetDispatches
     std::vector<Ir77PVDispatch> m_dispatches{};
-
 
     // queue and recording
     VkQueue m_queue{VK_NULL_HANDLE};

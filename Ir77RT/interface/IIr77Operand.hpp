@@ -3,8 +3,8 @@
 #include <cstdint>
 #include <memory>
 
-#include "IIr77Enlisted.hpp"
-#include "IIr77GUID.hpp"
+#include "../interface/IIr77Enlisted.hpp"
+#include "../interface/IIr77GUID.hpp"
 
 namespace NSIr77RT {
 struct IIr77Return;

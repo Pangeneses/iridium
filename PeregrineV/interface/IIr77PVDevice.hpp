@@ -69,6 +69,12 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetUploadPool(VkCommandPool& pool, VkQueue& queue) = 0;
 
+    // first transfer-only family (copy engine); the present queue when the GPU has none -- compare families to know if ownership transfers apply
+    virtual std::shared_ptr<IIr77Return const> GetTransferQueue(VkQueue& queue, std::uint32_t& family) = 0;
+
+    // transient pool on the transfer family, for streaming uploads -- never the upload pool
+    virtual std::shared_ptr<IIr77Return const> GetTransferPool(VkCommandPool& pool, VkQueue& queue) = 0;
+
     virtual ~IIr77PVDevice() = default;
 }* pIIr77PVDevice;
 }  // namespace NSIr77PeregrineV

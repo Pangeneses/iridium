@@ -22,13 +22,20 @@ namespace NSIr77Scene {
 
 inline Ir77GUID GUIDIIr77Scene{(static_cast<unsigned __int128>(0xFF3BBC89C52846C6) << 64) | 0xB7ABC31A43D1E78D};
 
+inline Ir77GUID GUIDIIr77Server{(static_cast<unsigned __int128>(0x96E5B37600A04548) << 64) | 0x94D2234479629D4D};
+
 /***************************************************************************************************************************************************************/
+inline Ir77GUID GUIDIIr77Animate{(static_cast<unsigned __int128>(0xDDCC1637E91D4094) << 64) | 0x8FF28A0358B7731E};
 inline Ir77GUID GUIDIIr77Mesh{(static_cast<unsigned __int128>(0x559950d115614816) << 64) | 0x8b5d9a80f77061bf};
 inline Ir77GUID GUIDIIr77Light{(static_cast<unsigned __int128>(0x2b6d55d6cb7b4270) << 64) | 0xb3877cf6e50f2e42};
 inline Ir77GUID GUIDIIr77Camera{(static_cast<unsigned __int128>(0xbbfc4c525bd04207) << 64) | 0x80a4b9735bbb388f};
 inline Ir77GUID GUIDIIr77Material{(static_cast<unsigned __int128>(0x08c4e5614dde4682) << 64) | 0x9e00cc5509f3f1c1};
 inline Ir77GUID GUIDIIr77Texture{(static_cast<unsigned __int128>(0x6174d72325344c0c) << 64) | 0x9874315cd8843c2a};
 inline Ir77GUID GUIDIIr77Animation{(static_cast<unsigned __int128>(0x7cdff1fb4cde4616) << 64) | 0xb9c19437f8d1e740};
+inline Ir77GUID GUIDIIr77Pose{(static_cast<unsigned __int128>(0x308F2E5EBF9F4F59) << 64) | 0xBC93710E13FB13DF};
+inline Ir77GUID GUIDIIr77View{(static_cast<unsigned __int128>(0xF932E0D060D54E7F) << 64) | 0xB3845F2DBB828B49};
+inline Ir77GUID GUIDIIr77Field{(static_cast<unsigned __int128>(0x1022E4384ABA49F8) << 64) | 0xAA273901BDB12A9F};
+inline Ir77GUID GUIDIIr77Lighting{(static_cast<unsigned __int128>(0x78D08C0AC3324EFE) << 64) | 0x931E67E715BE0977};
 
 class IDIIr77Scene : public Ir77Enlisted, public IIr77Dictionary, public std::enable_shared_from_this<IDIIr77Scene> {
    public:
@@ -103,9 +110,11 @@ class IDIIr77Scene : public Ir77Enlisted, public IIr77Dictionary, public std::en
     std::shared_ptr<IIr77Return const> m_invalidation_condition{nullptr};
 
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDIIr77Scene", &GUIDIIr77Scene},         {"GUIDIIr77Mesh", &GUIDIIr77Mesh},         {"GUIDIIr77Light", &GUIDIIr77Light},
-        {"GUIDIIr77Camera", &GUIDIIr77Camera},       {"GUIDIIr77Material", &GUIDIIr77Material}, {"GUIDIIr77Texture", &GUIDIIr77Texture},
-        {"GUIDIIr77Animation", &GUIDIIr77Animation},
+        {"GUIDIIr77Scene", &GUIDIIr77Scene},       {"GUIDIIr77Server", &GUIDIIr77Server},       {"GUIDIIr77Mesh", &GUIDIIr77Mesh},
+        {"GUIDIIr77Light", &GUIDIIr77Light},       {"GUIDIIr77Camera", &GUIDIIr77Camera},       {"GUIDIIr77Material", &GUIDIIr77Material},
+        {"GUIDIIr77Texture", &GUIDIIr77Texture},   {"GUIDIIr77Animation", &GUIDIIr77Animation}, {"GUIDIIr77Animate", &GUIDIIr77Animate},
+        {"GUIDIIr77Pose", &GUIDIIr77Pose},         {"GUIDIIr77View", &GUIDIIr77View},           {"GUIDIIr77Field", &GUIDIIr77Field},
+        {"GUIDIIr77Lighting", &GUIDIIr77Lighting},
     };
 };
 

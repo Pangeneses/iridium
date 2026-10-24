@@ -20,12 +20,12 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// Server Interfaces
 inline Ir77GUID GUIDIIr77PeregrineV{(static_cast<unsigned __int128>(0xA67D31AC1DDF4A7E) << 64) | 0xB628CE2A9641A8A2};
-inline Ir77GUID GUIDIIr77PVPaint{(static_cast<unsigned __int128>(0x3B1F109C15C24A2D) << 64) | 0x8D13DF17E5848FD2};
-inline Ir77GUID GUIDIIr77PVAsset{(static_cast<unsigned __int128>(0x230418A411684215) << 64) | 0xA67EB2411A2FCA48};
-inline Ir77GUID GUIDIIr77PVCEF{(static_cast<unsigned __int128>(0x50C4C87A4D8A41B5) << 64) | 0xA1481E8D50E5DA94};
 
-/*************************************************************************************************************************************************************/
+inline Ir77GUID GUIDIIr77Server{(static_cast<unsigned __int128>(0x562C35C1E5AD4A9D) << 64) | 0x9823BEA12AD51C26};
+
+inline Ir77GUID GUIDIIr77PVInit{(static_cast<unsigned __int128>(0xB50E92E5971B4B7D) << 64) | 0x9EDAA232CC7A49F2};
 inline Ir77GUID GUIDIIr77PVInstance{(static_cast<unsigned __int128>(0xB1136C9B855A803E) << 64) | 0x7A5E662149F03242};
 inline Ir77GUID GUIDIIr77PVDevice{(static_cast<unsigned __int128>(0xE29226960D283AA0) << 64) | 0x55C041024DC6C909};
 inline Ir77GUID GUIDIIr77PVSwapchain{(static_cast<unsigned __int128>(0x798E5BB1B58EC0BE) << 64) | 0xA69DFA5475A9111A};
@@ -40,10 +40,13 @@ inline Ir77GUID GUIDIIr77PVPipelineCache{(static_cast<unsigned __int128>(0xA299C
 inline Ir77GUID GUIDIIr77PVPipelineCPT{(static_cast<unsigned __int128>(0x46C20AB047F94AE2) << 64) | 0x9A1201B0DEE5A384};
 inline Ir77GUID GUIDIIr77PVPipelineRay{(static_cast<unsigned __int128>(0xA9B8A5CE4B7C49F0) << 64) | 0xA3C627B3D928C9A9};
 inline Ir77GUID GUIDIIr77PVCmdBuffer{(static_cast<unsigned __int128>(0xF71D19D109D2114D) << 64) | 0x1186ADBD29983077};
+inline Ir77GUID GUIDIIr77PVTransfer{(static_cast<unsigned __int128>(0xF2EB13C0DE42440D) << 64) | 0xA4C63B730CE9408A};
 inline Ir77GUID GUIDIIr77PVTexture{(static_cast<unsigned __int128>(0x3748583BB9C81720) << 64) | 0x08ACB330BEBFAC4F};
 inline Ir77GUID GUIDIIr77PVShader{(static_cast<unsigned __int128>(0xF4D60A74F19932D3) << 64) | 0xBEADFF0A12D9F258};
 inline Ir77GUID GUIDIIr77PVMaterial{(static_cast<unsigned __int128>(0x033C555AF2E0ABF5) << 64) | 0x1EF45C1405FEA446};
-inline Ir77GUID GUIDIIr77PVMesh{(static_cast<unsigned __int128>(0xF8C99EAD7B7CF55C) << 64) | 0xC944FDC0A7F18F94};
+inline Ir77GUID GUIDIIr77PVGeometry{(static_cast<unsigned __int128>(0xED2CD3736BC44EA5) << 64) | 0x96C0F6529F271508};
+inline Ir77GUID GUIDIIr77PVPaint{(static_cast<unsigned __int128>(0x3B1F109C15C24A2D) << 64) | 0x8D13DF17E5848FD2};
+inline Ir77GUID GUIDIIr77PVCEF{(static_cast<unsigned __int128>(0x50C4C87A4D8A41B5) << 64) | 0xA1481E8D50E5DA94};
 
 class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std::enable_shared_from_this<IDIIr77PeregrineV> {
    public:
@@ -120,11 +123,7 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
     std::map<std::string, IIr77GUID const*> m_index{
         // Root
         {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},
-
-        // Modules
-        {"GUIDIIr77PVPaint", &GUIDIIr77PVPaint},
-        {"GUIDIIr77PVAsset", &GUIDIIr77PVAsset},
-        {"GUIDIIr77PVCEF", &GUIDIIr77PVCEF},
+        {"GUIDIIr77Server", &GUIDIIr77Server},
 
         // Core Vulkan Objects
         {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},
@@ -135,10 +134,11 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
 
         // Resources
         {"GUIDIIr77PVBuffer", &GUIDIIr77PVBuffer},
+        {"GUIDIIr77PVTransfer", &GUIDIIr77PVTransfer},
         {"GUIDIIr77PVTexture", &GUIDIIr77PVTexture},
         {"GUIDIIr77PVShader", &GUIDIIr77PVShader},
         {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},
-        {"GUIDIIr77PVMesh", &GUIDIIr77PVMesh},
+        {"GUIDIIr77PVGeometry", &GUIDIIr77PVGeometry},
 
         // Compute
         {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
@@ -155,6 +155,10 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
 
         // Command Recording
         {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},
+
+        {"GUIDIIr77PVInit", &GUIDIIr77PVInit},
+        {"GUIDIIr77PVPaint", &GUIDIIr77PVPaint},
+        {"GUIDIIr77PVCEF", &GUIDIIr77PVCEF},
     };
 };
 

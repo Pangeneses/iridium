@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "../PeregrineV/types/Ir77PVTypes.hpp" // Ir77PVLight -- same include iridium.hpp uses
+#include "../PeregrineV/types/Ir77PVTypes.hpp"  // Ir77PVLight -- same include iridium.hpp uses
 
 namespace NSIr77Scene {
 
@@ -64,4 +64,4 @@ typedef struct Ir77FrameStats {
     std::vector<Ir77ClipStat> playing{};
 }* pIr77FrameStats;
 
-}  // namespace Ir77
+}  // namespace NSIr77Scene

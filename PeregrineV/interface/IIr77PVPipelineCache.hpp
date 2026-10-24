@@ -73,6 +73,10 @@ typedef struct IIr77PVPipelineCache : virtual public IIr77Enlisted {
     // previous manifest in force; static and cef roles are required. Every handle re-resolves against the new manifest.
     virtual std::shared_ptr<IIr77Return const> LoadManifest(std::string const& path) = 0;
 
+    // ---- hot swap ----------------------------------------------------------------------------------------------------------------------------
+    // After Ir77PVShader::ReplaceShader: drops every pipeline built from that shader; they rebuild on next use. Device idle.
+    virtual std::shared_ptr<IIr77Return const> InvalidateShader(Ir77PVShaderHandle const& shader) = 0;
+
     // ---- persistence -------------------------------------------------------------------------------------------------------------------------
     // Writes the driver's cache data to the cache path (also done on destruction)
     virtual std::shared_ptr<IIr77Return const> SaveCache() = 0;

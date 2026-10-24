@@ -11,7 +11,7 @@
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
 #include "IIr77PVDevice.hpp"
-#include "IIr77PVLayoutRay.hpp"
+#include "IIr77PVLayout.hpp"
 
 #include "../types/Ir77PVTypes.hpp"
 
@@ -30,7 +30,7 @@ typedef struct IIr77PVPipelineRay : virtual public IIr77Enlisted {
     // Allocates the SBT buffer
     virtual std::shared_ptr<IIr77Return const> SetAllocator(VmaAllocator allocator) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayoutRay> layout) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetLayout(std::shared_ptr<IIr77PVLayout> layout) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetStages(std::vector<VkPipelineShaderStageCreateInfo> const& stages) = 0;
 
@@ -45,7 +45,7 @@ typedef struct IIr77PVPipelineRay : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetLayout(std::shared_ptr<IIr77PVLayoutRay>& layout) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetLayout(std::shared_ptr<IIr77PVLayout>& layout) = 0;
 
     // The four regions vkCmdTraceRaysKHR takes. An unused region comes back zeroed.
     virtual std::shared_ptr<IIr77Return const> GetShaderBindingTable(VkStridedDeviceAddressRegionKHR* raygen, VkStridedDeviceAddressRegionKHR* miss,

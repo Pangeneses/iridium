@@ -35,5 +35,4 @@ class Ir77RetLog {
     static inline std::atomic<bool> enabled_{false};
 };
 
-
-}  // namespace Ir77RT
+}  // namespace NSIr77RT

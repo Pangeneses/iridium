@@ -8,6 +8,7 @@
 #include <string>
 #include <filesystem>
 #include <iostream>
+#include <thread>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -25,14 +26,14 @@
 #include "./CEFRenderHandler.hpp"
 #include "./CEFMessageLoop.hpp"
 
-#include "../../PeregrineV/interface/IIr77PVOverlay.hpp"
+#include "../../PeregrineV/server/Ir77Server.hpp"
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
 
-namespace CEF {
+namespace NSIr77CEF {
 
 // CEF process state. Configure with SetStartUrl / SetDebugPort / SetViewSize (defaults below), then Initialize -- which returns only in the
 // browser process; a CEF subprocess throws "__cef_subprocess__:<exit code>" out of it.
@@ -57,10 +58,10 @@ class CEFRTState {
         m_resize_pending = true;
     }
 
-    // The overlay paints upload into -- held weakly, so a rebuilt or destroyed overlay just drops paints until the next SetOverlay
-    void SetOverlay(std::shared_ptr<IIr77PVOverlay> const& overlay) {
-        m_overlay = overlay;
-        m_cef_repaint = true;  // anything painted before the overlay existed was dropped
+    // PeregrineV's server -- every paint goes into this browser's overlay through it. Held weakly: a renderer that's gone just drops paints.
+    void SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) {
+        m_renderer = renderer;
+        m_cef_repaint = true;  // anything painted before the renderer existed was dropped
     }
 
     // Once per loop: the resize handshake, a repaint if one was dropped, then ~2 ms of CEF's message loop (paints arrive in here)
@@ -105,11 +106,15 @@ class CEFRTState {
             ::write(fd, msg, strlen(msg));
             ::close(fd);
         }
+
         if (!CefInitialize(cef_args, settings, m_app, nullptr)) {
             Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: CefInitialize failed");
             throw std::runtime_error{"CEF: CefInitialize failed"};
         }
+        
         Ir77RETURN<Ir77OperationSucceeded>(nullptr, "CEF: CefInitialize succeeded");
+
+        m_initialized = true;
 
         {
             int fd = ::open("/tmp/Ir77RetLog.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -163,10 +168,38 @@ class CEFRTState {
 
     CefRefPtr<CEFClient> GetClient() { return m_client; }
 
+    // Every page closed, then CEF shut down -- main thread, once the router is done with the pages. A page that won't close within
+    // CEF_CLOSE_TIMEOUT_MS is reported and CEF is shut down anyway.
+    std::shared_ptr<IIr77Return const> DestroyPages() {
+        if (!m_initialized) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        if (m_client) m_client->SetPost({});  // a query sent while closing has nowhere to go -- the page gets "not connected"
+
+        if (m_browser) m_browser->GetHost()->CloseBrowser(true);  // force: no beforeunload prompt
+
+        auto const until = std::chrono::steady_clock::now() + std::chrono::milliseconds(CEF_CLOSE_TIMEOUT_MS);
+
+        while (m_client && m_client->OpenBrowsers() > 0 && std::chrono::steady_clock::now() < until) {
+            CefDoMessageLoopWork();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        bool const closed = !m_client || m_client->OpenBrowsers() == 0;
+
+        DestroyRTState();  // no references into CEF may outlive CefShutdown
+
+        CefShutdown();
+        m_initialized = false;
+
+        if (!closed) return Ir77RETURN<Ir77OperationFailed>(nullptr, "CEF: a page did not close in time -- shut down anyway");
+
+        return Ir77RETURN<Ir77OperationSucceeded>(nullptr, "CEF: pages closed, CEF shut down");
+    }
+
     void DestroyRTState() {
         m_window = nullptr;
 
-        m_overlay.reset();
+        m_renderer.reset();
 
         m_message_loop.reset();
 
@@ -182,16 +215,15 @@ class CEFRTState {
    private:
     // One paint. While a resize is in flight, a paint at any other size is stale -- dropped, and the last good frame stays up.
     void DefinePaint(void const* buffer, int const width, int const height) {
-        auto const overlay = m_overlay.lock();
-        if (!overlay) {
+        auto const renderer = m_renderer.lock();
+        if (!renderer) {
             m_cef_repaint = true;
             return;
         }
 
-        // overlay mid-rebuild -- this paint is lost; CEFStep asks for another
+        // no overlay yet, or mid-rebuild -- this paint is lost; CEFStep asks for another
         bool resizing{false};
-        overlay->IsResizing(resizing);
-        if (resizing) {
+        if (renderer->IsOverlayResizing(m_overlay_window, resizing)->ID() != GUIDIr77OperationSucceeded || resizing) {
             m_cef_repaint = true;
             return;
         }
@@ -208,7 +240,7 @@ class CEFRTState {
             m_cef_in_flight = false;  // CEF has caught up -- the next size may go
         }
 
-        overlay->UploadFrame(buffer, width, height);
+        renderer->UploadOverlay(m_overlay_window, buffer, width, height);
 
         m_cef_repaint = false;
     }
@@ -250,6 +282,10 @@ class CEFRTState {
 
     static constexpr long long CEF_RESIZE_TIMEOUT_MS{100};  // give up waiting for CEF's paint at the requested size after this long
 
+    static constexpr long long CEF_CLOSE_TIMEOUT_MS{2000};  // DestroyPages: how long the pages get to close
+
+    bool m_initialized{false};  // CefInitialize succeeded and CefShutdown hasn't run
+
     std::string m_start_url{"http://localhost:50003/landing"};
 
     std::uint16_t m_debug_port{9222};
@@ -270,7 +306,9 @@ class CEFRTState {
 
     std::chrono::steady_clock::time_point m_last_cef_resize{};
 
-    std::weak_ptr<IIr77PVOverlay> m_overlay{};
+    std::weak_ptr<NSIr77PeregrineV::Ir77Server> m_renderer{};
+
+    std::uint32_t m_overlay_window{0};  // the window whose overlay this browser paints into
 
     std::shared_ptr<CEFMessageLoop> m_message_loop{};
 
@@ -285,4 +323,4 @@ class CEFRTState {
     CefRefPtr<CefBrowser> m_browser{nullptr};
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

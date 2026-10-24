@@ -2,11 +2,11 @@
 
 #include "include/cef_keyboard_handler.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 class CEFKeyboardHandler : public CefKeyboardHandler {
    public:
-    CEFKeyboardHandler(){};
+    CEFKeyboardHandler() {};
 
    public:
     bool OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event, CefEventHandle os_event, bool* is_keyboard_shortcut) override { return false; }
@@ -17,4 +17,4 @@ class CEFKeyboardHandler : public CefKeyboardHandler {
     IMPLEMENT_REFCOUNTING(CEFKeyboardHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

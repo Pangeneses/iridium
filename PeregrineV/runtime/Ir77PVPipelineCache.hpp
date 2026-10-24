@@ -64,6 +64,7 @@ namespace NSIr77PeregrineV {
 //   "roles":     { role: pipeline name } -- roles are the engine's Ir77PVPipelineKind values (static, skinned, transparent,
 //                 skinned.transparent, mesh, cef, shadow, shadow.skinned); static and cef are required
 // A malformed entry fails the load. An entry naming a shader that isn't registered is kept as unavailable (with the reason) and warned about.
+//   hot swap:  InvalidateShader(handle) after the registry replaced a shader -- every pipeline built from it is dropped and rebuilt on next use
 //   shutdown:  the destructor saves the VkPipelineCache data, then destroys the pipelines and the cache
 //
 // The VkPipelineCache is seeded from disk only when the file's header names this GPU and driver (vendor, device, pipelineCacheUUID) --
@@ -300,6 +301,26 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         return DefineManifest(root, path);
     }
 
+    // A shader's code changed behind its handle (Ir77PVShader::ReplaceShader): every pipeline built from it -- graphics or compute -- is
+    // destroyed, its earlier build failure forgotten, and every handle re-resolves, building again on next use. The device must be idle.
+    std::shared_ptr<IIr77Return const> InvalidateShader(Ir77PVShaderHandle const& shader) {
+        auto const uses = [shader](Ir77PVPipelineDesc const& desc) {
+            return desc.vertex == shader || desc.fragment == shader || desc.task == shader || desc.mesh == shader || desc.compute == shader;
+        };
+
+        for (auto& slot : m_handles) {
+            slot.pipeline.reset();
+            slot.compute.reset();
+            slot.failed = false;
+        }
+
+        std::erase_if(m_pipelines, [&](auto const& entry) { return uses(entry.first); });
+        std::erase_if(m_compute_pipelines, [&](auto const& entry) { return uses(entry.first); });
+        std::erase_if(m_failed, uses);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // -------------------------------------------------------------------------------------------------------------------------------------
     // persistence
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -467,7 +488,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
             if (!missing.empty()) {
                 unavailable[name] = missing;
-                std::printf("[WARN] pipeline '%s' unavailable: %s\n", name.c_str(), missing.c_str());
+                Ir77RETURN<Ir77OperationSucceeded>(this, "[WARN] pipeline '" + name + "' unavailable: " + missing);
                 continue;
             }
 
@@ -588,7 +609,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
             if (field.value.get(pipeline) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, where + "role '" + role + "' must name a pipeline.");
 
             if (!IsRole(role)) {
-                std::printf("[WARN] manifest role '%s' isn't an engine role -- ignored\n", role.c_str());
+                Ir77RETURN<Ir77OperationSucceeded>(this, "[WARN] manifest role '" + role + "' isn't an engine role -- ignored");
                 continue;
             }
 

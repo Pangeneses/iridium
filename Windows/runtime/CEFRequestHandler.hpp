@@ -9,10 +9,10 @@
 #include "include/cef_ssl_info.h"
 #include "include/cef_callback.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 class CEFRequestHandler : public CefRequestHandler {
-    public:
+   public:
     bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request, bool user_gesture, bool is_redirect) override {
         return false;
     }
@@ -59,4 +59,4 @@ class CEFRequestHandler : public CefRequestHandler {
     IMPLEMENT_REFCOUNTING(CEFRequestHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

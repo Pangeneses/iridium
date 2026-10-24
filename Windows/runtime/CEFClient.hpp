@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -13,10 +14,10 @@
 #include "CEFQueryHandler.hpp"
 #include "include/cef_context_menu_handler.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 // Browser-side handlers. Also the life span and request handler, only to keep the message router told about closes, navigations and
-// renderer crashes (pending window.cefQuery calls are cancelled then). TakeQueries hands the app what the page sent.
+// renderer crashes (pending window.cefQuery calls are cancelled then). SetPost is where what the pages send goes.
 class CEFClient : public CefClient, public CefContextMenuHandler, public CefDisplayHandler, public CefLifeSpanHandler, public CefRequestHandler {
    public:
     CEFClient() { DefineRouter(); }
@@ -78,7 +79,19 @@ class CEFClient : public CefClient, public CefContextMenuHandler, public CefDisp
     }
 
     // ---- CefLifeSpanHandler ------------------------------------------------------------------------------------------------------------------
-    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override { m_router->OnBeforeClose(browser); }
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+        m_open_browsers++;
+        browser->GetHost()->SetFocus(true);
+    }
+
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+        m_router->OnBeforeClose(browser);
+
+        if (m_open_browsers > 0) m_open_browsers--;
+    }
+
+    // Pages not yet closed -- DestroyPages pumps CEF until this is 0
+    int OpenBrowsers() const { return m_open_browsers; }
 
     // ---- CefRequestHandler -------------------------------------------------------------------------------------------------------------------
     // a navigation cancels the old page's pending queries; returns false -- the navigation goes ahead
@@ -93,8 +106,11 @@ class CEFClient : public CefClient, public CefContextMenuHandler, public CefDisp
     }
 
     // ---- app side ----------------------------------------------------------------------------------------------------------------------------
-    // Every window.cefQuery request since the last call, oldest first
-    void TakeQueries(std::vector<std::string>& queries) { m_query_handler.TakeQueries(queries); }
+    // Where every window.cefQuery request goes -- the router's queue
+    void SetPost(std::function<void(std::string)> post) { m_query_handler.SetPost(std::move(post)); }
+
+    // A message for the page -- answers its waiting request by "id", or goes to the ui.listen channel
+    void Reply(std::string const& json) { m_query_handler.Reply(json); }
 
    private:
     void DefineRouter() {
@@ -127,7 +143,9 @@ class CEFClient : public CefClient, public CefContextMenuHandler, public CefDisp
 
     CefRefPtr<CefMessageRouterBrowserSide> m_router{};
 
+    int m_open_browsers{0};
+
     IMPLEMENT_REFCOUNTING(CEFClient);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

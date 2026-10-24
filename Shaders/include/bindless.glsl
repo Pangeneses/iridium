@@ -4,6 +4,7 @@
 //   #include "include/bindless.glsl"      (compile with: glslc -I Shader ...)
 //
 //   textures:        IR77_TEXTURE(i)                         sampler2D at slot i
+//   shadow maps:     IR77_SHADOW_TEXTURE(i)                  sampler2DShadow at slot i (depth + compare sampler only)
 //   storage buffers: IR77_BUFFER(Name, Type) once per type,  then Name[i].data[j]
 //   storage images:  IR77_STORAGE_IMAGE(Name, format) once,  then Name[i]
 //   per draw:        pc.model, pc.frame, pc.material ...     (indices into the arrays above)
@@ -98,13 +99,24 @@ struct Ir77Camera {
 IR77_BUFFER(ir77_cameras, Ir77Camera);
 #define IR77_CAMERA ir77_cameras[IR77_FRAME.camera].data[0]
 
+// shadow -- binding 0 read again through a compare sampler (only valid on depth textures registered with one: the shadow map)
+layout(set = 0, binding = IR77_BINDING_TEXTURES) uniform sampler2DShadow ir77_shadow_textures[];
+#define IR77_SHADOW_TEXTURE(i) ir77_shadow_textures[nonuniformEXT(i)]
+
+// one view-projection per shadow-casting light (Ir77Light.shadow) -- pc.user[0] in the Shadow pass
+IR77_BUFFER(ir77_shadow_matrices, mat4);
+
+// the shadow map is an atlas of IR77_SHADOW_ATLAS_SIDE x IR77_SHADOW_ATLAS_SIDE tiles, tile i at (i % side, i / side) -- Ir77PVTypes.hpp SHADOW_ATLAS_SIDE
+#define IR77_SHADOW_ATLAS_SIDE 2u
+#define IR77_SHADOW_MATRIX(i) ir77_shadow_matrices[IR77_FRAME.shadow_matrices].data[i]
+
 // one model matrix per instance slot -- gl_InstanceIndex (vertex path) or the draw record's instance (mesh path)
 IR77_BUFFER(ir77_instances, mat4);
 #define IR77_MODEL(i) ir77_instances[pc.instances].data[i]
 
 struct Ir77Light {
     vec3 position;
-    float pad0;
+    int shadow;  // shadow atlas tile = IR77_SHADOW_MATRIX index; -1 = casts no shadow
     vec3 direction;  // the way the light points (node -Z)
     float pad1;
     vec3 color;
@@ -133,7 +145,7 @@ ir77_bones[];
 
 // Slot conventions per pipeline kind
 //   Mesh:   pc.vertices = vertices, pc.user[0] = meshlets, [1] = meshlet vertex indices, [2] = meshlet triangles, [3] = draw records
-//   Shadow: pc.user[0] = light index
+//   Shadow: pc.user[0] = shadow atlas tile / shadow matrix index
 //   CEF:    pc.user[0] = overlay texture slot
 
 #endif

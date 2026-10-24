@@ -10,12 +10,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
-#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "../../Ir77RT/types/Ir77Types.hpp"
 
 namespace NSIr77PeregrineV {
 
@@ -350,7 +351,8 @@ enum class Ir77PVBufferSlot : std::uint8_t { Camera, Lights, Instances, ShadowMa
 // Data  -- normal / ORM / AO / masks: UNORM (no gamma), mipmapped, sampled
 // Cube  -- env / IBL: 6 layers, sRGB by default (SetFormat for HDR), mipmapped, sampled
 // Depth -- shadow map: D32, depth attachment + sampled, no mips, no upload
-enum class Ir77PVTextureKind : std::uint8_t { Color, Data, Cube, Depth };
+// Storage -- compute-written canvas: RGBA8, storage image + sampled, always VK_IMAGE_LAYOUT_GENERAL
+enum class Ir77PVTextureKind : std::uint8_t { Color, Data, Cube, Depth, Storage };
 
 // Default textures for texture slots that have no real texture yet. White is always texture slot 0.
 enum class Ir77PVPlaceholderKind : std::uint8_t { White, Normal };
@@ -422,12 +424,12 @@ typedef struct Ir77PVCamera {
     glm::vec4 eye{0.0f};
 
     // x seconds since start, y seconds since last frame, z frame number -- the caller's clock
-    glm::vec4 time{0.0f};  
+    glm::vec4 time{0.0f};
 }* pIr77PVCamera;
 
 typedef struct Ir77PVLight {
     glm::vec3 position{};
-    float _pad0{};
+    std::int32_t shadow{-1};  // shadow atlas tile = ShadowMatrices index; -1 = casts no shadow
     glm::vec3 direction{};
     float _pad1{};
     glm::vec3 color{};
@@ -439,6 +441,11 @@ typedef struct Ir77PVLight {
 }* pIr77PVLight;
 
 static_assert(sizeof(Ir77PVLight) == 64, "lights buffer is read as 64-byte std430 structs");
+
+// the shadow map is an atlas of SHADOW_ATLAS_SIDE x SHADOW_ATLAS_SIDE tiles, one per shadow-casting light, tile i at (i % side, i / side).
+// Must match IR77_SHADOW_ATLAS_SIDE in bindless.glsl; ShadowMatrices holds MAX_SHADOW_LIGHTS matrices (Ir77PVFrameSizes::shadow_matrices).
+inline constexpr std::uint32_t SHADOW_ATLAS_SIDE = 2;
+inline constexpr std::uint32_t MAX_SHADOW_LIGHTS = SHADOW_ATLAS_SIDE * SHADOW_ATLAS_SIDE;
 
 // frame table .lights header -- the light count, padded to 16 bytes; the Ir77PVLight array follows it
 typedef struct Ir77PVLightsHeader {
@@ -520,25 +527,25 @@ typedef struct Ir77PVSceneUpload {
     std::vector<VkDrawIndexedIndirectCommand> indirect_commands{};
 }* pIr77PVSceneUpload;
 
-typedef struct Ir77PVInputBuffer {
+typedef struct Ir77PVSingleMesh {
     std::vector<Ir77PVVertex> vertex_data{};
     std::vector<std::uint32_t> index_data{};
-}* pIr77PVInputBuffer;
+}* pIr77PVSingleMesh;
 
 // Uploaded mesh: device-local vertex + index buffers (single-mesh path, used by the testbed and any
 // one-off load). Scene loading uses UploadScene instead -- one shared buffer per channel, not
 // one buffer pair per mesh.
-typedef struct Ir77PVMesh {
+typedef struct Ir77PVSingleMeshBuffer {
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
     std::uint32_t index_count{0};
     VkIndexType index_type{VK_INDEX_TYPE_UINT32};
-}* pIr77PVMesh;
+}* pIr77PVSingleMeshBuffer;
 
 // A material is a row in the material table
-typedef struct Ir77PVMaterial {
+typedef struct Ir77PVMaterialData {
     std::uint32_t row{0};
-}* pIr77PVMaterial;
+}* pIr77PVMaterialData;
 
 // Meshlet buffers and their bindless slots. Slot order matches Ir77PVDrawItem::meshlet_slots:
 //   [0] meshlets   [1] meshlet vertex indices   [2] meshlet triangles   [3] vertices   [4] draw records

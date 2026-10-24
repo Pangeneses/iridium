@@ -4,7 +4,7 @@
 
 #include "CEFRenderProcessHandler.hpp"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 // Passed to CefExecuteProcess as well as CefInitialize, so the renderer subprocesses get GetRenderProcessHandler (window.cefQuery).
 class CEFApp : public CefApp {
@@ -45,4 +45,4 @@ class CEFApp : public CefApp {
     IMPLEMENT_REFCOUNTING(CEFApp);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

@@ -2,11 +2,11 @@
 
 #include "include/cef_context_menu_handler.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 class CEFContextMenuHandler : public CefContextMenuHandler {
    public:
-    CEFContextMenuHandler(){};
+    CEFContextMenuHandler() {};
 
    public:
     void Continue(int command_id, cef_event_flags_t event_flags) {};
@@ -17,4 +17,4 @@ class CEFContextMenuHandler : public CefContextMenuHandler {
     IMPLEMENT_REFCOUNTING(CEFContextMenuHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

@@ -3,9 +3,8 @@
 #include <cstdint>
 #include <memory>
 
-#include "IIr77GUID.hpp"
-
-#include "IIr77Enlisted.hpp"
+#include "../interface/IIr77GUID.hpp"
+#include "../interface/IIr77Enlisted.hpp"
 
 namespace NSIr77RT {
 

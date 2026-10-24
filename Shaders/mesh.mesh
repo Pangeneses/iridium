@@ -40,6 +40,7 @@ taskPayloadSharedEXT TaskPayload payload;
 layout(location = 0) out vec3 fragNormal[];
 layout(location = 1) out vec2 fragUV[];
 layout(location = 2) out vec3 fragWorldPos[];
+layout(location = 3) flat out uint fragMaterial[];
 
 uint TriangleByte(uint byte_index) {
     return (ir77_meshlet_triangles[pc.user[2]].data[byte_index >> 2] >> ((byte_index & 3u) * 8u)) & 0xFFu;
@@ -72,6 +73,7 @@ void main() {
         gl_MeshVerticesEXT[i].gl_Position = view_proj * world;
         fragNormal[i] = normal_matrix * normal;
         fragUV[i] = uv;
+        fragMaterial[i] = pc.material;  // the mesh path draws one material per call
     }
 
     for (uint t = lane; t < meshlet.triangle_count; t += 32) {

@@ -1,0 +1,228 @@
+{
+  "ripple": {
+    "source": "// concentric ripple, height colour map with contours, sin(x) drawn on top\nIr77FieldPoint Field(Ir77FieldIn f) {\n    float amplitude = f.params[0], wavelength = f.params[1], speed = f.params[2];\n    float h = amplitude * cos(6.2831853 / wavelength * (length(f.coord.xy) - speed * f.time));\n    return Ir77FieldPoint(vec3(f.coord.x, h, f.coord.y), 0.0, vec4(1.0), vec4(h, 0.0, 0.0, 0.0));\n}\n\nvec4 Paint(vec2 c, float t, float p[8]) {\n    return vec4(1.0, 1.0, 1.0, Ir77Line(Ir77Curve(c.y, sin(c.x * 2.0 + t)), 2.0));\n}\n",
+    "topology": "surface",
+    "dims": [
+      256,
+      256,
+      1
+    ],
+    "x": [
+      -4,
+      4
+    ],
+    "y": [
+      -4,
+      4
+    ],
+    "z": [
+      -0.5,
+      0.5
+    ],
+    "value": [
+      -0.3,
+      0.3
+    ],
+    "shading": "contours",
+    "colormap": "viridis",
+    "contour": {
+      "spacing": 0.05,
+      "width": 1.0
+    },
+    "params": [
+      0.3,
+      1.0,
+      0.5,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "lorenz": {
+    "source": "// Lorenz attractor -- every particle integrates from where it was last frame\nIr77FieldPoint Field(Ir77FieldIn f) {\n    Ir77FieldPoint p = f.prev;\n    if (f.first) {\n        p.position = vec3(Ir77Random(f.id, 1u), Ir77Random(f.id, 2u), Ir77Random(f.id, 3u)) * 2.0 - 1.0;\n        p.size = 0.03;\n        p.color = vec4(0.4, 0.7, 1.0, 0.15);\n    }\n\n    float s = f.params[0], r = f.params[1], b = f.params[2], scale = f.params[3];\n    vec3 x = p.position / scale;\n    vec3 dx = vec3(s * (x.y - x.x), x.x * (r - x.z) - x.y, x.x * x.y - b * x.z);\n\n    p.position += dx * min(f.dt, 0.02) * scale;\n    p.data.x = length(dx);   // speed -> colour map\n    return p;\n}\n",
+    "topology": "particles",
+    "dims": [
+      262144,
+      1,
+      1
+    ],
+    "x": [
+      -3,
+      3
+    ],
+    "y": [
+      -3,
+      3
+    ],
+    "z": [
+      0,
+      6
+    ],
+    "value": [
+      0,
+      150
+    ],
+    "shading": "colormap",
+    "colormap": "turbo",
+    "params": [
+      10,
+      28,
+      2.6667,
+      0.1,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "orbital": {
+    "source": "// hydrogen 2p_z orbital -- a jittered grid, density in opacity and colour\nIr77FieldPoint Field(Ir77FieldIn f) {\n    vec3 jitter = vec3(Ir77Random(f.id, 4u), Ir77Random(f.id, 5u), Ir77Random(f.id, 6u)) - 0.5;\n    vec3 r = f.coord + jitter * 0.15;\n\n    float d = length(r);\n    float psi = r.z * exp(-d * 0.5);\n    float density = psi * psi;\n\n    return Ir77FieldPoint(r.xzy, 0.04, vec4(1.0, 0.5, 0.2, clamp(density * f.params[0], 0.0, 1.0)), vec4(density, 0.0, 0.0, 0.0));\n}\n",
+    "topology": "particles",
+    "dims": [
+      64,
+      64,
+      64
+    ],
+    "x": [
+      -12,
+      12
+    ],
+    "y": [
+      -12,
+      12
+    ],
+    "z": [
+      -12,
+      12
+    ],
+    "value": [
+      0,
+      0.5
+    ],
+    "shading": "colormap",
+    "colormap": "turbo",
+    "params": [
+      40,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "spirograph": {
+    "source": "// spirograph -- a flat sheet as the canvas, a hypotrochoid tracing into it\nIr77FieldPoint Field(Ir77FieldIn f) {\n    return Ir77FieldPoint(vec3(f.coord.x, 0.0, f.coord.y), 0.0, vec4(0.05, 0.05, 0.07, 1.0), vec4(0.0));\n}\n\nvec2 Pen(uint pen, float t, float p[8]) {\n    float R = p[0], r = p[1], d = p[2];\n    return vec2((R - r) * cos(t) + d * cos((R - r) / r * t), (R - r) * sin(t) - d * sin((R - r) / r * t));\n}\n",
+    "topology": "surface",
+    "dims": [
+      2,
+      2,
+      1
+    ],
+    "x": [
+      -6,
+      6
+    ],
+    "y": [
+      -6,
+      6
+    ],
+    "z": [
+      -0.1,
+      0.1
+    ],
+    "shading": "lit",
+    "params": [
+      5,
+      3,
+      5,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas": 2048,
+    "pen": {
+      "trace": "time",
+      "speed": 3.0,
+      "decay": 0.0,
+      "steps": 512,
+      "pens": [
+        {
+          "color": [
+            1,
+            0.6,
+            0.2,
+            1
+          ],
+          "width": 2
+        }
+      ]
+    }
+  },
+  "oscilloscope": {
+    "source": "// oscilloscope -- two channels sweeping left to right, phosphor fade\nIr77FieldPoint Field(Ir77FieldIn f) {\n    return Ir77FieldPoint(vec3(f.coord.x, 0.0, f.coord.y), 0.0, vec4(0.02, 0.04, 0.02, 1.0), vec4(0.0));\n}\n\nvec2 Pen(uint pen, float t, float p[8]) {\n    return pen == 0u ? vec2(0.0, 2.0 * sin(t * p[0])) : vec2(0.0, 1.0 * sin(t * p[1] + 1.0) + 0.5 * sin(t * p[0] * 3.0));\n}\n",
+    "topology": "surface",
+    "dims": [
+      2,
+      2,
+      1
+    ],
+    "x": [
+      -5,
+      5
+    ],
+    "y": [
+      -3,
+      3
+    ],
+    "z": [
+      -0.1,
+      0.1
+    ],
+    "shading": "lit",
+    "params": [
+      6,
+      9,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas": 2048,
+    "pen": {
+      "trace": "sweep",
+      "speed": 1.0,
+      "sweep": 0.5,
+      "decay": 1.5,
+      "wrap": "fade",
+      "steps": 256,
+      "pens": [
+        {
+          "color": [
+            0.3,
+            1,
+            0.4,
+            1
+          ],
+          "width": 2
+        },
+        {
+          "color": [
+            1,
+            0.9,
+            0.3,
+            1
+          ],
+          "width": 2
+        }
+      ]
+    }
+  }
+}

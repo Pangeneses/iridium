@@ -20,12 +20,9 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 inline Ir77GUID GUIDIr77PeregrineV{(static_cast<unsigned __int128>(0x3F9A72C4E1B85D06) << 64) | 0xA2C7F03951E84B1D};
-inline Ir77GUID GUIDIr77PVInit{(static_cast<unsigned __int128>(0xB66FDDEFE1EC4218) << 64) | 0x942E76082EC2524C};
-inline Ir77GUID GUIDIr77PVPaint{(static_cast<unsigned __int128>(0x77FB47B81DF7493A) << 64) | 0x8712AF66E15B484F};
-inline Ir77GUID GUIDIr77PVAsset{(static_cast<unsigned __int128>(0x559D9163200142C6) << 64) | 0xA76F0961028593E0};
-inline Ir77GUID GUIDIr77PVCEF{(static_cast<unsigned __int128>(0x001A7E1589804075) << 64) | 0xB2175618901D9C92};
 
 /*************************************************************************************************************************************************************/
+inline Ir77GUID GUIDIr77PVInit{(static_cast<unsigned __int128>(0x171ADB88436A4D15) << 64) | 0x97765EBAA0C7DE09};
 inline Ir77GUID GUIDIr77PVInstance{(static_cast<unsigned __int128>(0x7D4E91A3C6F28B05) << 64) | 0x1B9E50A472C3D8F6};
 inline Ir77GUID GUIDIr77PVDevice{(static_cast<unsigned __int128>(0xC2B74F8E3A916D05) << 64) | 0x5F3A10E274B9C806};
 inline Ir77GUID GUIDIr77PVSwapchain{(static_cast<unsigned __int128>(0x4A9C15E7F3806D2B) << 64) | 0x8C3E72B1054FA96D};
@@ -43,7 +40,10 @@ inline Ir77GUID GUIDIr77PVCmdBuffer{(static_cast<unsigned __int128>(0x83E6A0D2F1
 inline Ir77GUID GUIDIr77PVTexture{(static_cast<unsigned __int128>(0x6092FBAA42AB407D) << 64) | 0x86EC49B4247721D3};
 inline Ir77GUID GUIDIr77PVShader{(static_cast<unsigned __int128>(0xC6E4819A3F720B5D) << 64) | 0x1D30A7F852C9E4B6};
 inline Ir77GUID GUIDIr77PVMaterial{(static_cast<unsigned __int128>(0x3A5D72F1E9C840B6) << 64) | 0x8F2BC4A1057E93D6};
-inline Ir77GUID GUIDIr77PVMesh{(static_cast<unsigned __int128>(0x6E8C30A1D4F97B25) << 64) | 0x2B7D4F9A61E30C85};
+inline Ir77GUID GUIDIr77PVGeometry{(static_cast<unsigned __int128>(0xF1BA46E129CB4367) << 64) | 0xB63BE55CFE4F84A5};
+inline Ir77GUID GUIDIr77PVTransfer{(static_cast<unsigned __int128>(0x81163A56E7134832) << 64) | 0x8F4126169ED7A5CF};
+inline Ir77GUID GUIDIr77PVPaint{(static_cast<unsigned __int128>(0xC440AC67BB674B9F) << 64) | 0xB3189D0572DE97E4};
+inline Ir77GUID GUIDIr77PVCEF{(static_cast<unsigned __int128>(0xE39ABBA104F7426F) << 64) | 0x8827C847BD1F8936};
 
 class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std::enable_shared_from_this<IDIr77PeregrineV> {
    public:
@@ -101,10 +101,6 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
    private:
     std::map<std::string, IIr77GUID const*> m_index{
         {"GUIDIr77PeregrineV", &GUIDIr77PeregrineV},
-        {"GUIDIr77PVInit", &GUIDIr77PVInit},
-        {"GUIDIr77PVPaint", &GUIDIr77PVPaint},
-        {"GUIDIr77PVAsset", &GUIDIr77PVAsset},
-        {"GUIDIr77PVCEF", &GUIDIr77PVCEF},
         {"GUIDIr77PVInstance", &GUIDIr77PVInstance},
         {"GUIDIr77PVDevice", &GUIDIr77PVDevice},
         {"GUIDIr77PVSwapchain", &GUIDIr77PVSwapchain},
@@ -120,9 +116,13 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
         {"GUIDIr77PVDescriptorSet", &GUIDIr77PVDescriptorSet},
         {"GUIDIr77PVCmdBuffer", &GUIDIr77PVCmdBuffer},
         {"GUIDIr77PVTexture", &GUIDIr77PVTexture},
+        {"GUIDIr77PVTransfer", &GUIDIr77PVTransfer},
         {"GUIDIr77PVShader", &GUIDIr77PVShader},
         {"GUIDIr77PVMaterial", &GUIDIr77PVMaterial},
-        {"GUIDIr77PVMesh", &GUIDIr77PVMesh},
+        {"GUIDIr77PVGeometry", &GUIDIr77PVGeometry},
+        {"GUIDIr77PVInit", &GUIDIr77PVInit},
+        {"GUIDIr77PVPaint", &GUIDIr77PVPaint},
+        {"GUIDIr77PVCEF", &GUIDIr77PVCEF},
     };
 };
 }  // namespace NSIr77PeregrineV

@@ -7,8 +7,7 @@
 #include "../interface/IIr77Enlisted.hpp"
 #include "../interface/IIr77Operand.hpp"
 #include "../interface/IIr77Return.hpp"
-
-#include "IIr77GUID.hpp"
+#include "../interface/IIr77GUID.hpp"
 
 #include "../runtime/Ir77Return.hpp"
 

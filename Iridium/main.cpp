@@ -22,8 +22,8 @@ void crash_handler(int sig) {
 /**********************************************************************************/
 
 // --config=<path> --url=<url> --debug-port=<n> --log=<path> --debug -- anything else (CEF's own switches in subprocesses) is ignored
-static Ir77::Ir77Args ParseArgs(int argc, char* argv[]) {
-    Ir77::Ir77Args args{};
+static NSIr77::Ir77Args ParseArgs(int argc, char* argv[]) {
+    NSIr77::Ir77Args args{};
     for (int i = 1; i < argc; ++i) {
         std::string arg{argv[i]};
         if (arg.starts_with("--url="))
@@ -43,7 +43,7 @@ static Ir77::Ir77Args ParseArgs(int argc, char* argv[]) {
 int main(int argc, char* argv[]) {
     signal(SIGSEGV, crash_handler);
 
-    Ir77::iridium iridium{};
+    NSIr77::iridium iridium{};
 
     Ir77RetLog::Clear();
     Ir77RetLog::Enable();

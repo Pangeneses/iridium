@@ -3,17 +3,24 @@
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <sys/wait.h>
 #include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
+#include "../dictionary/IDIIr77PeregrineV.hpp"
 #include "../dictionary/IDIr77PeregrineV.hpp"
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
@@ -34,13 +41,16 @@ namespace NSIr77PeregrineV {
 // stages by handle, presets find them by name.
 //
 //   register:  LoadShader (file) / AddShader (SPIR-V in memory) -> DefineReflection -> DefineContract -> DefineModule
+//   replace:   ReplaceShader (new SPIR-V behind an existing name and handle -- hot compiles) -> the same three steps, then the old module goes
 //
 // DefineReflection reads the SPIR-V itself (no reflection library): the "main" entry point's execution model gives the stage; Input /
 // Output locations, the push-constant block size and every descriptor's set / binding / kind come from the decorated variables.
 // DefineContract rejects a shader that breaks the contract (Ir77PVTypes.hpp) with a message naming the shader and the rule.
 //   query:     FindShader (name -> handle) / GetShaderInfo / GetPipelineShaderStageInfos (handles -> stage create infos)
+//   startup:   Ir77PVInit -- SetDevice / SetShaderRoot -> LoadShaders (every <name>.<stage>.spv in the root)
+//   compile:   CompileShader (GLSL text -> SPIR-V through glslangValidator) -> Ir77PVInit::ReloadShader puts it in and rebuilds pipelines
 //
-// Modules live until the registry is destroyed -- pipelines are built from them on demand, at any time.
+// Modules live until the registry is destroyed or replaced -- pipelines are built from them on demand, at any time.
 // =============================================================================================================================================
 class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enable_shared_from_this<Ir77PVShader> {
    public:
@@ -94,6 +104,9 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
+        else if (iid == GUIDIIr77PVShader)
+            obj = std::shared_ptr<IIr77PVShader>(shared_from_this(), static_cast<IIr77PVShader*>(this));
+
         else if (iid == GUIDIr77PVShader)
             obj = std::shared_ptr<Ir77PVShader>(shared_from_this(), static_cast<Ir77PVShader*>(this));
 
@@ -109,6 +122,126 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
    public:
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
         m_device = device;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Where LoadShaders reads .spv files and CompileShader writes generated sources
+    std::shared_ptr<IIr77Return const> SetShaderRoot(std::string const& root) {
+        m_shader_root = root;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // the shader root
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // Registers every .spv under the shader root, each under its file name without ".spv" ("vert", "skinned.vert", "heightmap.frag"); the
+    // stage comes from the SPIR-V. A file that breaks the shader contract (Ir77PVTypes.hpp) -- or a task / mesh shader on a device without mesh
+    // shading -- is skipped with a warning. Which shaders combine into which pipelines is the manifest's job (Ir77PVInit picks it: an explicit
+    // SetPipelineManifest, else <shader root>/pipelines.json). More shaders can be registered at any time through the registry's
+    // LoadShader / AddShader. Names already registered are skipped, so a second call only picks up new files.
+    std::shared_ptr<IIr77Return const> LoadShaders() {
+        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: device not set.");
+
+        std::error_code error{};
+        if (!std::filesystem::is_directory(m_shader_root, error))
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: shader root not found: " + m_shader_root);
+
+        // only <name>.<stage>.spv -- what compile_shaders.sh writes. A bare <name>.spv is a leftover from the old naming and would shadow nothing
+        // but still register, so a manifest naming it would silently get stale code; it's skipped with a warning instead.
+        static std::array<std::string_view, 8> const stages{".vert", ".frag", ".comp", ".task", ".mesh", ".geom", ".tesc", ".tese"};
+
+        for (auto const& entry : std::filesystem::directory_iterator(m_shader_root, error)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".spv") continue;
+
+            std::string const name{entry.path().stem().string()};  // "skinned.vert.spv" -> "skinned.vert"
+            std::string const stage{std::filesystem::path(name).extension().string()};
+
+            if (std::find(stages.begin(), stages.end(), stage) == stages.end()) {
+                Ir77RETURN<Ir77OperationFailed>(nullptr, std::string{"[WARN] shader skipped: "} + entry.path().filename().string() + " -- name it <name>.<stage>.spv (e.g. " + name + ".frag.spv)\n");
+                continue;
+            }
+
+            Ir77PVShaderHandle handle{IR77PV_NO_SHADER};
+            if (m_names.count(name) != 0) continue;  // a second LoadShaders, or registered by hand first
+
+            if (LoadShader(name, entry.path().string(), handle)->ID() != GUIDIr77OperationSucceeded)
+                Ir77RETURN<Ir77NotConfigured>(this, "[WARN] shader skipped: " + entry.path().string());
+        }
+
+        if (error) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: cannot read the shader root: " + m_shader_root);
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Load Shaders.");
+    }
+
+    // GLSL text -> SPIR-V, through the shader compiler (glslangValidator, on PATH). The text is written to <shader root>/generated/<name> and
+    // compiled with the shader root on the include path, so it can #include "include/bindless.glsl". name is the registry name to be, so it
+    // ends in its stage ("field.comp"). errors = the compiler's ERROR / WARNING lines, with the file path cut down to the name.
+    // Blocking (a compiler process) -- for hot compiles between frames, not every frame.
+    std::shared_ptr<IIr77Return const> CompileShader(std::string const& name, std::string const& text, std::vector<std::uint32_t>& spirv, std::string& errors) {
+        spirv.clear();
+        errors.clear();
+
+        std::error_code error{};
+        std::filesystem::path const folder = std::filesystem::path(m_shader_root) / "generated";
+        std::filesystem::create_directories(folder, error);
+        if (error) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: cannot create " + folder.string());
+
+        std::filesystem::path const source = folder / name;
+        std::filesystem::path const output = folder / (name + ".spv");
+
+        {
+            std::ofstream file{source, std::ios::trunc};
+            if (!file) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: cannot write " + source.string());
+            file << text;
+        }
+
+        std::filesystem::remove(output, error);
+
+        std::string const command = m_shader_compiler + " -V --target-env vulkan1.3 -I\"" + m_shader_root + "\" \"" + source.string() + "\" -o \"" +
+                                    output.string() + "\" 2>&1";
+
+        FILE* pipe = popen(command.c_str(), "r");
+        if (!pipe) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: cannot run " + m_shader_compiler);
+
+        std::string log{};
+        char buffer[512]{};
+        while (std::fgets(buffer, sizeof(buffer), pipe)) log += buffer;
+
+        int const status = pclose(pipe);
+
+        // keep what a programmer needs: the ERROR / WARNING lines, "<name>:<line>: ..." instead of the full path
+        std::string const path = source.string();
+        std::size_t at{0};
+
+        while (at < log.size()) {
+            std::size_t const end = std::min(log.find('\n', at), log.size());
+            std::string line = log.substr(at, end - at);
+            at = end + 1;
+
+            if (line.rfind("ERROR:", 0) != 0 && line.rfind("WARNING:", 0) != 0) continue;
+            if (line.find("compilation errors") != std::string::npos || line.find("Linking") != std::string::npos) continue;
+
+            for (std::size_t found = line.find(path); found != std::string::npos; found = line.find(path)) line.replace(found, path.size(), name);
+
+            errors += line + "\n";
+        }
+
+        if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            if (errors.empty()) errors = log.empty() ? m_shader_compiler + " failed to run\n" : log;
+            return Ir77RETURN<Ir77OperationFailed>(this, "Ir77PVShader: " + name + " failed to compile.");
+        }
+
+        std::ifstream file{output, std::ios::ate | std::ios::binary};
+        if (!file) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: no SPIR-V from " + m_shader_compiler + " for " + name);
+
+        std::streamsize const size{file.tellg()};
+        if (size <= 0 || size % 4 != 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: bad SPIR-V size for " + name);
+
+        spirv.resize(static_cast<std::size_t>(size) / 4);
+        file.seekg(0);
+        if (!file.read(reinterpret_cast<char*>(spirv.data()), size)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: cannot read SPIR-V for " + name);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -154,6 +287,34 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
 
         m_shaders.push_back(std::move(info));
         m_names.emplace(name, handle);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // New SPIR-V behind an existing name -- the handle stays, so every description holding it gets the new code once its pipeline is rebuilt
+    // (Ir77PVPipelineCache::InvalidateShader). The device must be idle: the old module is destroyed here. Fails, changing nothing, when the new
+    // SPIR-V breaks the contract.
+    std::shared_ptr<IIr77Return const> ReplaceShader(Ir77PVShaderHandle const& handle, std::vector<std::uint32_t> const& spirv) {
+        if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: SetDevice not called.");
+        if (handle >= m_shaders.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: unknown shader handle.");
+
+        Ir77PVShaderInfo info{};
+        info.name = m_shaders[handle].name;
+        info.spirv = spirv;
+
+        if (spirv.size() < SPIRV_HEADER_WORDS || spirv[0] != SPIRV_MAGIC) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: '" + info.name + "' is not SPIR-V.");
+
+        auto result = DefineReflection(info);
+        if (result->ID() == GUIDIr77OperationSucceeded) result = DefineContract(info);
+        if (result->ID() == GUIDIr77OperationSucceeded) result = DefineModule(info);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        if (m_shaders[handle].stage_create_info.module != VK_NULL_HANDLE) vkDestroyShaderModule(device, m_shaders[handle].stage_create_info.module, nullptr);
+
+        m_shaders[handle] = std::move(info);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -623,6 +784,10 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     static constexpr std::uint32_t SPV_STORAGE_STORAGE_BUFFER = 12;
 
     std::shared_ptr<IIr77PVDevice> m_device{};
+
+    std::string m_shader_root{};  // SetShaderRoot -- LoadShaders reads it, CompileShader writes <root>/generated
+
+    std::string m_shader_compiler{"glslangValidator"};  // CompileShader runs it -- on PATH
 
     // [handle]
     std::vector<Ir77PVShaderInfo> m_shaders{};

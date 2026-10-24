@@ -145,11 +145,13 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
     // -------------------------------------------------------------------------------------------------------------------------------------
     // register -- returns the slot index shaders use
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> RegisterTexture(VkImageView const& view, VkSampler const& sampler, std::uint32_t& index) {
+    // layout = the layout the image is in whenever a shader samples it (a depth texture: DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+    std::shared_ptr<IIr77Return const> RegisterTexture(VkImageView const& view, VkSampler const& sampler, std::uint32_t& index,
+                                                       VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
         auto const result = DefineSlot(BINDLESS_BINDING_TEXTURES, index);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        return UpdateTexture(index, view, sampler);
+        return UpdateTexture(index, view, sampler, layout);
     }
 
     std::shared_ptr<IIr77Return const> RegisterBuffer(VkBuffer const& buffer, VkDeviceSize const& offset, VkDeviceSize const& range,
@@ -171,13 +173,14 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
     // update -- rewrite a slot in place. Safe while frames are in flight as long as none of them reads this slot (UPDATE_UNUSED_WHILE_PENDING);
     // when they might, register a new slot and Release the old one instead.
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> UpdateTexture(std::uint32_t const& index, VkImageView const& view, VkSampler const& sampler) {
+    std::shared_ptr<IIr77Return const> UpdateTexture(std::uint32_t const& index, VkImageView const& view, VkSampler const& sampler,
+                                                     VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
         if (index >= m_capacity.textures) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: texture slot out of range.");
 
         VkDescriptorImageInfo image_info{};
         image_info.sampler = sampler;
         image_info.imageView = view;
-        image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        image_info.imageLayout = layout;
 
         WriteSlot(BINDLESS_BINDING_TEXTURES, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, index, &image_info, nullptr);
 

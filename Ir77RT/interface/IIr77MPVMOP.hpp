@@ -1,6 +1,6 @@
 #pragma once
 
-#include "IIr77Enlisted.hpp"
+#include "../interface/IIr77Enlisted.hpp"
 
 namespace NSIr77RT {
 

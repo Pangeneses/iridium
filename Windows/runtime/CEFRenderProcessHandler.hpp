@@ -3,7 +3,7 @@
 #include "include/cef_render_process_handler.h"
 #include "include/wrapper/cef_message_router.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 // Renderer process side of the JavaScript bridge. Gives every page window.cefQuery / window.cefQueryCancel and carries their requests to
 // the browser process (CEFClient -> CEFQueryHandler). The router config must match CEFClient's -- both use the defaults.
@@ -36,4 +36,4 @@ class CEFRenderProcessHandler : public CefRenderProcessHandler {
     IMPLEMENT_REFCOUNTING(CEFRenderProcessHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

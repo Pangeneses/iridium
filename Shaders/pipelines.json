@@ -12,8 +12,8 @@
   },
   "pipelines": {
     "static": {
-      "vertex": "vert",
-      "fragment": "frag",
+      "vertex": "vert.vert",
+      "fragment": "frag.frag",
       "pass": "main",
       "blend": "opaque",
       "cull": "back",
@@ -25,7 +25,7 @@
     },
     "skinned": {
       "vertex": "skinned.vert",
-      "fragment": "frag",
+      "fragment": "frag.frag",
       "pass": "main",
       "blend": "opaque",
       "cull": "back",
@@ -36,8 +36,8 @@
       "user": []
     },
     "transparent": {
-      "vertex": "vert",
-      "fragment": "frag",
+      "vertex": "vert.vert",
+      "fragment": "frag.frag",
       "pass": "main",
       "blend": "alpha",
       "cull": "back",
@@ -49,7 +49,7 @@
     },
     "skinned.transparent": {
       "vertex": "skinned.vert",
-      "fragment": "frag",
+      "fragment": "frag.frag",
       "pass": "main",
       "blend": "alpha",
       "cull": "back",
@@ -62,7 +62,7 @@
     "mesh": {
       "task": "mesh.task",
       "mesh": "mesh.mesh",
-      "fragment": "frag",
+      "fragment": "frag.frag",
       "pass": "main",
       "blend": "opaque",
       "cull": "back",
@@ -88,10 +88,10 @@
       "vertex": "shadow.vert",
       "pass": "shadow",
       "blend": "opaque",
-      "cull": "front",
+      "cull": "none",
       "depth_test": true,
       "depth_write": true,
-      "depth_bias": true,
+      "depth_bias": false,
       "flip_back_faces": true,
       "user": []
     },
@@ -99,16 +99,16 @@
       "vertex": "shadow_skinned.vert",
       "pass": "shadow",
       "blend": "opaque",
-      "cull": "front",
+      "cull": "none",
       "depth_test": true,
       "depth_write": true,
-      "depth_bias": true,
+      "depth_bias": false,
       "flip_back_faces": true,
       "user": []
     },
-    "ripple": {
-      "vertex": "ripple.vert",
-      "fragment": "frag",
+    "field.surface": {
+      "vertex": "field.vert",
+      "fragment": "field.frag",
       "pass": "main",
       "blend": "opaque",
       "cull": "none",
@@ -116,7 +116,42 @@
       "depth_write": true,
       "depth_bias": false,
       "flip_back_faces": true,
-      "user": []
+      "user": [
+        "config",
+        "points"
+      ]
+    },
+    "field.particles": {
+      "vertex": "field.vert",
+      "fragment": "field.frag",
+      "pass": "main",
+      "blend": "additive",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": true,
+      "user": [
+        "config",
+        "points"
+      ]
+    },
+    "field.shadow": {
+      "vertex": "field_shadow.vert",
+      "pass": "shadow",
+      "blend": "opaque",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": true,
+      "user": [
+        "config",
+        "points"
+      ]
+    },
+    "field.compute": {
+      "compute": "field.comp"
     }
   }
 }

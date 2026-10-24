@@ -36,3 +36,4 @@ CompileFlags:
     - -I/home/alpha/workspace/iridium/build/_deps/glm-src
     - -I/home/alpha/workspace/iridium/build/_deps/fastgltf-src/include
     - -I/home/alpha/workspace/iridium/build/_deps/stb-src
+    

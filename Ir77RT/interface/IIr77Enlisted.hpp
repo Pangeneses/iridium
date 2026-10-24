@@ -3,7 +3,7 @@
 #include <chrono>
 #include <memory>
 
-#include "IIr77GUID.hpp"
+#include "../interface/IIr77GUID.hpp"
 
 #include "../runtime/Ir77GUID.hpp"
 

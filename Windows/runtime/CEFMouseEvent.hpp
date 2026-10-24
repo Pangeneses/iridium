@@ -13,9 +13,12 @@
 
 inline CefBrowserHost::MouseButtonType SDLButtonToCEF(uint8_t btn) {
     switch (btn) {
-        case SDL_BUTTON_RIGHT:  return MBT_RIGHT;
-        case SDL_BUTTON_MIDDLE: return MBT_MIDDLE;
-        default:                return MBT_LEFT;
+        case SDL_BUTTON_RIGHT:
+            return MBT_RIGHT;
+        case SDL_BUTTON_MIDDLE:
+            return MBT_MIDDLE;
+        default:
+            return MBT_LEFT;
     }
 }
 
@@ -45,52 +48,95 @@ inline int SDLKeyToWindows(SDL_Keycode const key) {
     if (key >= SDLK_KP_1 && key <= SDLK_KP_9) return static_cast<int>(key - SDLK_KP_1) + 0x61;
 
     switch (key) {
-        case SDLK_BACKSPACE:    return 0x08;
-        case SDLK_TAB:          return 0x09;
-        case SDLK_RETURN:       return 0x0D;
-        case SDLK_KP_ENTER:     return 0x0D;
+        case SDLK_BACKSPACE:
+            return 0x08;
+        case SDLK_TAB:
+            return 0x09;
+        case SDLK_RETURN:
+            return 0x0D;
+        case SDLK_KP_ENTER:
+            return 0x0D;
         case SDLK_LSHIFT:
-        case SDLK_RSHIFT:       return 0x10;
+        case SDLK_RSHIFT:
+            return 0x10;
         case SDLK_LCTRL:
-        case SDLK_RCTRL:        return 0x11;
+        case SDLK_RCTRL:
+            return 0x11;
         case SDLK_LALT:
-        case SDLK_RALT:         return 0x12;
-        case SDLK_PAUSE:        return 0x13;
-        case SDLK_CAPSLOCK:     return 0x14;
-        case SDLK_ESCAPE:       return 0x1B;
-        case SDLK_SPACE:        return 0x20;
-        case SDLK_PAGEUP:       return 0x21;
-        case SDLK_PAGEDOWN:     return 0x22;
-        case SDLK_END:          return 0x23;
-        case SDLK_HOME:         return 0x24;
-        case SDLK_LEFT:         return 0x25;
-        case SDLK_UP:           return 0x26;
-        case SDLK_RIGHT:        return 0x27;
-        case SDLK_DOWN:         return 0x28;
-        case SDLK_INSERT:       return 0x2D;
-        case SDLK_DELETE:       return 0x2E;
-        case SDLK_LGUI:         return 0x5B;
-        case SDLK_RGUI:         return 0x5C;
-        case SDLK_KP_0:         return 0x60;
-        case SDLK_KP_MULTIPLY:  return 0x6A;
-        case SDLK_KP_PLUS:      return 0x6B;
-        case SDLK_KP_MINUS:     return 0x6D;
-        case SDLK_KP_PERIOD:    return 0x6E;
-        case SDLK_KP_DIVIDE:    return 0x6F;
-        case SDLK_NUMLOCKCLEAR: return 0x90;
-        case SDLK_SCROLLLOCK:   return 0x91;
-        case SDLK_SEMICOLON:    return 0xBA;
-        case SDLK_EQUALS:       return 0xBB;
-        case SDLK_COMMA:        return 0xBC;
-        case SDLK_MINUS:        return 0xBD;
-        case SDLK_PERIOD:       return 0xBE;
-        case SDLK_SLASH:        return 0xBF;
-        case SDLK_GRAVE:        return 0xC0;
-        case SDLK_LEFTBRACKET:  return 0xDB;
-        case SDLK_BACKSLASH:    return 0xDC;
-        case SDLK_RIGHTBRACKET: return 0xDD;
-        case SDLK_APOSTROPHE:   return 0xDE;
-        default:                return 0;
+        case SDLK_RALT:
+            return 0x12;
+        case SDLK_PAUSE:
+            return 0x13;
+        case SDLK_CAPSLOCK:
+            return 0x14;
+        case SDLK_ESCAPE:
+            return 0x1B;
+        case SDLK_SPACE:
+            return 0x20;
+        case SDLK_PAGEUP:
+            return 0x21;
+        case SDLK_PAGEDOWN:
+            return 0x22;
+        case SDLK_END:
+            return 0x23;
+        case SDLK_HOME:
+            return 0x24;
+        case SDLK_LEFT:
+            return 0x25;
+        case SDLK_UP:
+            return 0x26;
+        case SDLK_RIGHT:
+            return 0x27;
+        case SDLK_DOWN:
+            return 0x28;
+        case SDLK_INSERT:
+            return 0x2D;
+        case SDLK_DELETE:
+            return 0x2E;
+        case SDLK_LGUI:
+            return 0x5B;
+        case SDLK_RGUI:
+            return 0x5C;
+        case SDLK_KP_0:
+            return 0x60;
+        case SDLK_KP_MULTIPLY:
+            return 0x6A;
+        case SDLK_KP_PLUS:
+            return 0x6B;
+        case SDLK_KP_MINUS:
+            return 0x6D;
+        case SDLK_KP_PERIOD:
+            return 0x6E;
+        case SDLK_KP_DIVIDE:
+            return 0x6F;
+        case SDLK_NUMLOCKCLEAR:
+            return 0x90;
+        case SDLK_SCROLLLOCK:
+            return 0x91;
+        case SDLK_SEMICOLON:
+            return 0xBA;
+        case SDLK_EQUALS:
+            return 0xBB;
+        case SDLK_COMMA:
+            return 0xBC;
+        case SDLK_MINUS:
+            return 0xBD;
+        case SDLK_PERIOD:
+            return 0xBE;
+        case SDLK_SLASH:
+            return 0xBF;
+        case SDLK_GRAVE:
+            return 0xC0;
+        case SDLK_LEFTBRACKET:
+            return 0xDB;
+        case SDLK_BACKSLASH:
+            return 0xDC;
+        case SDLK_RIGHTBRACKET:
+            return 0xDD;
+        case SDLK_APOSTROPHE:
+            return 0xDE;
+        default:
+            return 0;
     }
 }
 
@@ -109,7 +155,6 @@ inline void CEFInputEvent(const SDL_Event* e, CefRefPtr<CefBrowser> browser) {
     auto host = browser->GetHost();
 
     switch (e->type) {
-
         // ── Mouse move ────────────────────────────────────────────────────
         case SDL_EVENT_MOUSE_MOTION: {
             CefMouseEvent me{};
@@ -127,6 +172,7 @@ inline void CEFInputEvent(const SDL_Event* e, CefRefPtr<CefBrowser> browser) {
             me.x = static_cast<int>(e->button.x);
             me.y = static_cast<int>(e->button.y);
             me.modifiers = SDLModifiersToCEF(SDL_GetModState(), SDL_GetMouseState(nullptr, nullptr));
+            host->SetFocus(true);
             host->SendMouseClickEvent(me, SDLButtonToCEF(e->button.button), e->type == SDL_EVENT_MOUSE_BUTTON_UP, e->button.clicks);
             break;
         }
@@ -139,28 +185,36 @@ inline void CEFInputEvent(const SDL_Event* e, CefRefPtr<CefBrowser> browser) {
             me.x = static_cast<int>(mx);
             me.y = static_cast<int>(my);
             me.modifiers = SDLModifiersToCEF(SDL_GetModState(), buttons);
-            host->SendMouseWheelEvent(me,
-                static_cast<int>(e->wheel.x * 20),
-                static_cast<int>(e->wheel.y * 20));
+            host->SendMouseWheelEvent(me, static_cast<int>(e->wheel.x * 120), static_cast<int>(e->wheel.y * 120));
             break;
         }
 
         // ── Key down / up -- keydown / keyup in the page (event.key, event.code) ─
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP: {
+            // Ctrl+V -- windowless CEF pastes from its own clipboard, not the desktop's; commit SDL's clipboard text into the focused field
+            if (e->type == SDL_EVENT_KEY_DOWN && e->key.key == SDLK_V && (e->key.mod & SDL_KMOD_CTRL)) {
+                if (SDL_HasClipboardText()) {
+                    char* const clip = SDL_GetClipboardText();
+                    host->ImeCommitText(CefString(std::string{clip}), CefRange::InvalidRange(), 0);
+                    SDL_free(clip);
+                }
+                break;
+            }
+
             int const windows_key = SDLKeyToWindows(e->key.key);
             if (windows_key == 0) break;
 
             char16_t const character = SDLKeyCharacter(e->key.key, e->key.mod);
 
             CefKeyEvent ke{};
-            ke.type                 = e->type == SDL_EVENT_KEY_DOWN ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
-            ke.windows_key_code     = windows_key;
-            ke.native_key_code      = e->key.raw;  // X11 keycode on Linux -- the physical key (event.code)
-            ke.modifiers            = SDLModifiersToCEF(e->key.mod, SDL_GetMouseState(nullptr, nullptr));
-            ke.character            = character;
+            ke.type = e->type == SDL_EVENT_KEY_DOWN ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
+            ke.windows_key_code = windows_key;
+            ke.native_key_code = e->key.raw;  // X11 keycode on Linux -- the physical key (event.code)
+            ke.modifiers = SDLModifiersToCEF(e->key.mod, SDL_GetMouseState(nullptr, nullptr));
+            ke.character = character;
             ke.unmodified_character = character;
-            ke.is_system_key        = false;
+            ke.is_system_key = false;
             if (e->key.repeat) ke.modifiers |= EVENTFLAG_IS_REPEAT;
             host->SendKeyEvent(ke);
 
@@ -192,15 +246,23 @@ inline void CEFInputEvent(const SDL_Event* e, CefRefPtr<CefBrowser> browser) {
 
             for (char16_t const unit : text) {
                 CefKeyEvent ke{};
-                ke.type                 = KEYEVENT_CHAR;
-                ke.windows_key_code     = unit;
-                ke.character            = unit;
+                ke.type = KEYEVENT_CHAR;
+                ke.windows_key_code = unit;
+                ke.character = unit;
                 ke.unmodified_character = unit;
-                ke.modifiers            = SDLModifiersToCEF(SDL_GetModState(), SDL_GetMouseState(nullptr, nullptr));
+                ke.modifiers = SDLModifiersToCEF(SDL_GetModState(), SDL_GetMouseState(nullptr, nullptr));
                 host->SendKeyEvent(ke);
             }
             break;
         }
+
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+            host->SetFocus(true);
+            break;
+
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+            host->SetFocus(false);
+            break;
 
         default:
             break;

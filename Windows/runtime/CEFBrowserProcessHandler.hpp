@@ -2,11 +2,11 @@
 
 #include "include/cef_browser_process_handler.h"
 
-namespace CEF {
+namespace NSIr77CEF {
 
 class CEFBrowserProcessHandler : public CefBrowserProcessHandler {
    public:
-    CEFBrowserProcessHandler(){};
+    CEFBrowserProcessHandler() {};
 
    public:
     void OnRegisterCustomPreferences(cef_preferences_type_t type, CefRawPtr<CefPreferenceRegistrar> registrar) override {}
@@ -27,4 +27,4 @@ class CEFBrowserProcessHandler : public CefBrowserProcessHandler {
     IMPLEMENT_REFCOUNTING(CEFBrowserProcessHandler);
 };
 
-}  // namespace CEF
+}  // namespace NSIr77CEF

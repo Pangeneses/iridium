@@ -131,6 +131,12 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
                 m_sampler_desc.compare = true;
                 break;
 
+            case Ir77PVTextureKind::Storage:
+                // compute writes it (imageStore, rgba8), fragment shaders sample it -- linear, no repeat at the edges
+                m_format = VK_FORMAT_R8G8B8A8_UNORM;
+                m_sampler_desc.address = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+                break;
+
             default:
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: unknown kind.");
         }
@@ -258,6 +264,63 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         m_read_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Depth Texture.");
+    }
+
+    // Storage kind: a width x height image cleared to 0 and left in VK_IMAGE_LAYOUT_GENERAL for good -- storage image and sampled texture
+    // at once (register it in both arrays). No mips.
+    std::shared_ptr<IIr77Return const> CreateStorage(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width, std::uint32_t const& height) {
+        if (m_kind != Ir77PVTextureKind::Storage) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateStorage needs Storage kind.");
+
+        if (width == 0 || height == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage extent is zero.");
+
+        if (!Ready()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: device or allocator not set.");
+
+        if (!HasFormatFeatures(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: format can't be a storage image here.");
+
+        VkDevice device;
+        m_device->GetDevice(&device);
+
+        Destroy(device);
+
+        m_extent = {width, height};
+        m_layers = 1;
+        m_mip_levels = 1;
+
+        VkImageUsageFlags const usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+        if (!CreateImage(usage, 0)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage image failed.");
+
+        VkCommandBuffer cmd{VK_NULL_HANDLE};
+        if (!BeginOneTime(device, pool, &cmd)) {
+            Destroy(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage init command buffer failed.");
+        }
+
+        Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+        VkClearColorValue const clear{{0.0f, 0.0f, 0.0f, 0.0f}};
+        VkImageSubresourceRange const range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd, m_image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
+
+        Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+        if (!EndOneTime(device, pool, queue, cmd)) {
+            Destroy(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage init submit failed.");
+        }
+
+        if (!CreateView(device, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT) || !CreateSamplerObject(device)) {
+            Destroy(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage view or sampler failed.");
+        }
+
+        m_read_layout = VK_IMAGE_LAYOUT_GENERAL;
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Storage Texture.");
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------

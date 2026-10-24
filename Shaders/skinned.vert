@@ -12,6 +12,10 @@ layout(location = 4) in vec4 inWeights;
 layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec2 fragUV;
 layout(location = 2) out vec3 fragWorldPos;
+layout(location = 3) flat out uint fragMaterial;
+
+// per-draw material table: pc.user[4] = table slot, pc.user[5] = first command of this draw
+IR77_BUFFER(ir77_draw_materials, uint);
 
 void main() {
     uint base = IR77_BONES.bone_base[gl_InstanceIndex];
@@ -29,6 +33,8 @@ void main() {
     fragWorldPos = world.xyz;
     fragNormal = mat3(model) * inNormal;
     fragUV = inUV;
+
+    fragMaterial = ir77_draw_materials[nonuniformEXT(pc.user[4])].data[pc.user[5] + gl_DrawID];
 
     gl_Position = IR77_CAMERA.view_proj * world;
 }
