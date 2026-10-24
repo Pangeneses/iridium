@@ -285,11 +285,23 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
             return Ir77RETURN<Ir77OperationSucceeded>();
         };
+
+        // The page's copy / cut -- windowless CEF copies into its own clipboard, so the page hands the text here for the desktop's
+        m_operations["clipboard.set"] = [this](Ir77ServerArgs const& args, std::string&) -> std::shared_ptr<IIr77Return const> {
+            std::string_view text{};
+            if (args["text"].get(text) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: clipboard.set needs \"text\".");
+
+            if (!SDL_SetClipboardText(std::string{text}.c_str()))
+                return Ir77RETURN<Ir77OperationFailed>(this, "Ir77Server: SDL_SetClipboardText failed: " + std::string{SDL_GetError()});
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
     }
 
     void DefinePageOperations() {
         m_operations["page.configure"] = [this](Ir77ServerArgs const& args, std::string&) -> std::shared_ptr<IIr77Return const> {
-            if (m_rt_state->GetBrowser()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: page.configure after Initialize -- use page.url / page.view_size.");
+            if (m_rt_state->GetBrowser())
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: page.configure after Initialize -- use page.url / page.view_size.");
 
             std::string_view url{};
             if (args["url"].get(url) == simdjson::SUCCESS && !url.empty()) m_rt_state->SetStartUrl(std::string{url});
