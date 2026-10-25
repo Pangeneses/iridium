@@ -196,9 +196,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
     // -------------------------------------------------------------------------------------------------------------------------------------
     // The handle of a manifest pipeline. Issued once per name for the cache's life -- asking again returns the same handle. The name doesn't
     // have to be in the manifest yet: the handle resolves when it is, so draw items can be made before a reload adds their pipeline.
-    std::shared_ptr<IIr77Return const> FindPipeline(std::string const& name, Ir77PVPipelineHandle& handle) {
-        return DefineHandle(name, false, handle);
-    }
+    std::shared_ptr<IIr77Return const> FindPipeline(std::string const& name, Ir77PVPipelineHandle& handle) { return DefineHandle(name, false, handle); }
 
     // The handle of an engine role -- follows the manifest's "roles", so pointing the role at another pipeline moves every item holding it
     std::shared_ptr<IIr77Return const> FindPipeline(Ir77PVPipelineKind const& kind, Ir77PVPipelineHandle& handle) {
@@ -415,7 +413,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         if (vkCreatePipelineCache(device, &cache_info, nullptr, &m_cache) != VK_SUCCESS)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: vkCreatePipelineCache failed.");
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, data.empty() ? "Success: Create Pipeline Cache (empty)." : "Success: Create Pipeline Cache (from disk).");
+        return Ir77RETURN<Ir77OperationSucceeded>(this,
+                                                  data.empty() ? "Success: Create Pipeline Cache (empty)." : "Success: Create Pipeline Cache (from disk).");
     }
 
     // A cache-data header written by this GPU and driver -- anything else would be rejected or, worse, misread
@@ -526,12 +525,15 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         for (auto const field : entry) {
             std::string_view const key{field.key};
 
-            if (key == "compute") compute = true;
-            else if (key != "user" && graphics_key.empty()) graphics_key = key;
+            if (key == "compute")
+                compute = true;
+            else if (key != "user" && graphics_key.empty())
+                graphics_key = key;
 
             if (key == "vertex" || key == "fragment" || key == "fragment_ray" || key == "task" || key == "mesh" || key == "compute") {
                 std::string_view value{};
-                if (field.value.get(value) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, where + "\"" + std::string{key} + "\" must be a shader name.");
+                if (field.value.get(value) != simdjson::SUCCESS)
+                    return Ir77RETURN<Ir77NotConfigured>(this, where + "\"" + std::string{key} + "\" must be a shader name.");
             } else if (key == "pass") {
                 std::string_view value{};
                 if (field.value.get(value) != simdjson::SUCCESS || !PassOf(value, desc.pass))
@@ -546,7 +548,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
                     return Ir77RETURN<Ir77NotConfigured>(this, where + "\"cull\" must be back, front or none.");
             } else if (key == "depth_test" || key == "depth_write" || key == "depth_bias" || key == "flip_back_faces") {
                 bool value{false};
-                if (field.value.get(value) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, where + "\"" + std::string{key} + "\" must be true or false.");
+                if (field.value.get(value) != simdjson::SUCCESS)
+                    return Ir77RETURN<Ir77NotConfigured>(this, where + "\"" + std::string{key} + "\" must be true or false.");
 
                 if (key == "depth_test") desc.depth_test = value;
                 if (key == "depth_write") desc.depth_write = value;
@@ -600,7 +603,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         }
 
         // a ray-query device draws with "fragment_ray" when the entry has one and it's registered -- the same pipeline otherwise, with
-        // ray-traced shadows. Not registered (compile_shaders.sh not run) -> "fragment", with a warning.
+        // ray-traced shadows. Not registered (shader.sh not run) -> "fragment", with a warning.
         std::string_view ray{};
         if (entry["fragment_ray"].get(ray) != simdjson::SUCCESS) return;
 
@@ -609,12 +612,15 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         if (!ray_query) return;
 
         Ir77PVShaderHandle handle{IR77PV_NO_SHADER};
-        if (m_shader_stack->FindShader(std::string{ray}, handle)->ID() == GUIDIr77OperationSucceeded) desc.fragment = handle;
-        else Ir77RETURN<Ir77OperationSucceeded>(this, "[WARN] fragment_ray '" + std::string{ray} + "' not registered -- shadow-map shadows (run compile_shaders.sh)");
+        if (m_shader_stack->FindShader(std::string{ray}, handle)->ID() == GUIDIr77OperationSucceeded)
+            desc.fragment = handle;
+        else
+            Ir77RETURN<Ir77OperationSucceeded>(this, "[WARN] fragment_ray '" + std::string{ray} + "' not registered -- shadow-map shadows (run shader.sh)");
     }
 
     // "roles": every engine role it names must point at a pipeline in the file; static and cef must point at available ones
-    std::shared_ptr<IIr77Return const> DefineRoles(simdjson::dom::element const& root, std::string const& where, std::map<std::string, Ir77PVPipelineDesc> const& named,
+    std::shared_ptr<IIr77Return const> DefineRoles(simdjson::dom::element const& root, std::string const& where,
+                                                   std::map<std::string, Ir77PVPipelineDesc> const& named,
                                                    std::map<std::string, std::string> const& unavailable, std::map<std::string, std::string>& roles) {
         simdjson::dom::object object{};
         if (root["roles"].get(object) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, where + "\"roles\" must be an object.");
@@ -631,11 +637,13 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
             }
 
             if (named.count(std::string{pipeline}) == 0 && unavailable.count(std::string{pipeline}) == 0)
-                return Ir77RETURN<Ir77NotConfigured>(this, where + "role '" + role + "' names pipeline '" + std::string{pipeline} + "', which isn't in \"pipelines\".");
+                return Ir77RETURN<Ir77NotConfigured>(
+                    this, where + "role '" + role + "' names pipeline '" + std::string{pipeline} + "', which isn't in \"pipelines\".");
 
             auto const described = named.find(std::string{pipeline});
             if (described != named.end() && described->second.IsCompute())
-                return Ir77RETURN<Ir77NotConfigured>(this, where + "role '" + role + "' names compute pipeline '" + std::string{pipeline} + "' -- roles are drawn.");
+                return Ir77RETURN<Ir77NotConfigured>(this,
+                                                     where + "role '" + role + "' names compute pipeline '" + std::string{pipeline} + "' -- roles are drawn.");
 
             roles[role] = std::string{pipeline};
         }
@@ -646,7 +654,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
             if (role == roles.end()) return Ir77RETURN<Ir77NotConfigured>(this, where + "required role '" + RoleName(kind) + "' is missing.");
 
             if (named.count(role->second) == 0)
-                return Ir77RETURN<Ir77NotConfigured>(this, where + "required role '" + RoleName(kind) + "' points at unavailable pipeline '" + role->second + "'.");
+                return Ir77RETURN<Ir77NotConfigured>(this,
+                                                     where + "required role '" + RoleName(kind) + "' points at unavailable pipeline '" + role->second + "'.");
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -655,7 +664,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
     // role -> the manifest's pipeline for it
     std::shared_ptr<IIr77Return const> DescribeKind(Ir77PVPipelineKind const& kind, Ir77PVPipelineDesc& desc) {
         auto const role = m_roles.find(RoleName(kind));
-        if (role == m_roles.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: role '" + RoleName(kind) + "' has no pipeline in the manifest.");
+        if (role == m_roles.end())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: role '" + RoleName(kind) + "' has no pipeline in the manifest.");
 
         return DescribeNamed(role->second, desc);
     }
@@ -668,7 +678,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
         auto result = slot.role ? DescribeKind(RoleOf(slot.name), desc) : DescribeNamed(slot.name, desc);
 
-        if (result->ID() == GUIDIr77OperationSucceeded) result = desc.IsCompute() ? BuildComputePipeline(desc, slot.compute) : BuildPipeline(desc, slot.pipeline);
+        if (result->ID() == GUIDIr77OperationSucceeded)
+            result = desc.IsCompute() ? BuildComputePipeline(desc, slot.compute) : BuildPipeline(desc, slot.pipeline);
 
         if (result->ID() != GUIDIr77OperationSucceeded) slot.failed = true;
 
@@ -754,14 +765,22 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
     // The manifest name of each engine role
     std::string RoleName(Ir77PVPipelineKind const& kind) const {
         switch (kind) {
-            case Ir77PVPipelineKind::Static: return "static";
-            case Ir77PVPipelineKind::Skinned: return "skinned";
-            case Ir77PVPipelineKind::Shadow: return "shadow";
-            case Ir77PVPipelineKind::ShadowSkinned: return "shadow.skinned";
-            case Ir77PVPipelineKind::Transparent: return "transparent";
-            case Ir77PVPipelineKind::CEF: return "cef";
-            case Ir77PVPipelineKind::Mesh: return "mesh";
-            case Ir77PVPipelineKind::SkinnedTransparent: return "skinned.transparent";
+            case Ir77PVPipelineKind::Static:
+                return "static";
+            case Ir77PVPipelineKind::Skinned:
+                return "skinned";
+            case Ir77PVPipelineKind::Shadow:
+                return "shadow";
+            case Ir77PVPipelineKind::ShadowSkinned:
+                return "shadow.skinned";
+            case Ir77PVPipelineKind::Transparent:
+                return "transparent";
+            case Ir77PVPipelineKind::CEF:
+                return "cef";
+            case Ir77PVPipelineKind::Mesh:
+                return "mesh";
+            case Ir77PVPipelineKind::SkinnedTransparent:
+                return "skinned.transparent";
         }
 
         return "";
@@ -785,29 +804,42 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
     }
 
     bool PassOf(std::string_view const value, Ir77PVRenderPassKind& pass) const {
-        if (value == "main") pass = Ir77PVRenderPassKind::Main;
-        else if (value == "shadow") pass = Ir77PVRenderPassKind::Shadow;
-        else if (value == "offscreen") pass = Ir77PVRenderPassKind::Offscreen;
-        else if (value == "post") pass = Ir77PVRenderPassKind::Post;
-        else return false;
+        if (value == "main")
+            pass = Ir77PVRenderPassKind::Main;
+        else if (value == "shadow")
+            pass = Ir77PVRenderPassKind::Shadow;
+        else if (value == "offscreen")
+            pass = Ir77PVRenderPassKind::Offscreen;
+        else if (value == "post")
+            pass = Ir77PVRenderPassKind::Post;
+        else
+            return false;
 
         return true;
     }
 
     bool BlendOf(std::string_view const value, Ir77PVBlend& blend) const {
-        if (value == "opaque") blend = Ir77PVBlend::Opaque;
-        else if (value == "alpha") blend = Ir77PVBlend::Alpha;
-        else if (value == "additive") blend = Ir77PVBlend::Additive;
-        else return false;
+        if (value == "opaque")
+            blend = Ir77PVBlend::Opaque;
+        else if (value == "alpha")
+            blend = Ir77PVBlend::Alpha;
+        else if (value == "additive")
+            blend = Ir77PVBlend::Additive;
+        else
+            return false;
 
         return true;
     }
 
     bool CullOf(std::string_view const value, VkCullModeFlags& cull) const {
-        if (value == "back") cull = VK_CULL_MODE_BACK_BIT;
-        else if (value == "front") cull = VK_CULL_MODE_FRONT_BIT;
-        else if (value == "none") cull = VK_CULL_MODE_NONE;
-        else return false;
+        if (value == "back")
+            cull = VK_CULL_MODE_BACK_BIT;
+        else if (value == "front")
+            cull = VK_CULL_MODE_FRONT_BIT;
+        else if (value == "none")
+            cull = VK_CULL_MODE_NONE;
+        else
+            return false;
 
         return true;
     }
@@ -819,7 +851,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         bool role{false};
         std::shared_ptr<IIr77PVPipeline> pipeline{};    // graphics -- empty until first use, and again after every manifest load
         std::shared_ptr<IIr77PVPipelineCPT> compute{};  // compute -- the same
-        bool failed{false};                          // didn't resolve under this manifest -- not retried until the next load
+        bool failed{false};                             // didn't resolve under this manifest -- not retried until the next load
     }* pIr77PVPipelineSlot;
 
     static constexpr std::uint64_t MANIFEST_VERSION = 1;

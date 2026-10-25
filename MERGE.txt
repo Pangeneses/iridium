@@ -12,5 +12,5 @@ Not included -- add by hand:
 
 Notes:
   Scene/CMakeLists.txt  -- vendored MikkTSpace; the FetchContent mikktspace block is gone.
-  Shaders/              -- run ./compile_shaders.sh after copying (it now compiles every stage, .comp / .task / .mesh included).
+  Shaders/              -- run ./shader.sh after copying (it now compiles every stage, .comp / .task / .mesh included).
   Scene/runtime/Ir77Mesh.hpp -- your tangent version, with the vendored include and <cmath>.

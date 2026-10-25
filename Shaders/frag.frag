@@ -1,7 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 
-// Built twice by compile_shaders.sh: frag.frag.spv (shadow map), and frag_ray.frag.spv with IR77_RAY_SHADOWS (ray-traced shadows -- the
+// Built twice by shader.sh: frag.frag.spv (shadow map), and frag_ray.frag.spv with IR77_RAY_SHADOWS (ray-traced shadows -- the
 // manifest's "fragment_ray", used on ray-query devices). One source; lighting.glsl does the difference.
 
 #include "include/bindless.glsl"
