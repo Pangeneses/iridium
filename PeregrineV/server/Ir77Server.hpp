@@ -28,6 +28,7 @@
 #include "../interface/IIr77PVTransfer.hpp"
 #include "../interface/IIr77PVMaterial.hpp"
 #include "../interface/IIr77PVGeometry.hpp"
+#include "../interface/IIr77PVAcceleration.hpp"
 #include "../interface/IIr77PVOverlay.hpp"
 
 #include "../runtime/Ir77PVInit.hpp"
@@ -40,7 +41,7 @@ namespace NSIr77PeregrineV {
 
 // =============================================================================================================================================
 // Ir77Server -- the renderer module's switchboard. Owns Ir77PVInit, the lifetime controller; Init owns and wires CEF, Paint, Transfer,
-// Materials and Geometry, and holds the shader registry and pipeline cache.
+// Materials, Geometry and (with ray queries) Acceleration, and holds the shader registry and pipeline cache.
 // Nothing below holds this. Everything past Init is reached through its interface. The module's one door:
 //
 //   pipe:        Sink(json) in, the post function out (SetPost) -- setup and teardown are ops
@@ -255,7 +256,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     //   firstIndex / indexCount   -> its slice of indices (indices stay local, 0-based)
     //   vertexOffset              -> where its vertices start
     //   instanceCount / firstInstance -> how many copies, and their slots in models[] (set 0 binding 2)
-    // Sort objects by material so each material is one contiguous run of commands; one draw item per run (MakeIndirectDrawItem).
+    // One draw item covers every command (MakeIndirectDrawItem); the vertex shader finds each command's material in a per-draw table (gl_DrawID).
     // The indirect buffer is Dynamic, so objects can be hidden / shown / resized per frame without re-uploading geometry.
     std::shared_ptr<IIr77Return const> UploadScene(Ir77PVSceneUpload const& data, std::uint32_t& scene_id, bool const& wait = true) {
         std::shared_ptr<IIr77Return const> result{};
@@ -266,7 +267,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         return geometry->UploadScene(data, scene_id, wait);
     }
 
-    // Draw item for commands [first_command, first_command + command_count) of a scene -- one material run -- through an engine role
+    // Draw item for commands [first_command, first_command + command_count) of a scene through an engine role
     std::shared_ptr<IIr77Return const> MakeIndirectDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& scene_id,
                                                             std::uint32_t const& material_id, std::uint32_t const& first_command,
                                                             std::uint32_t const& command_count, bool const& skinned, Ir77PVDrawItem& item) {
@@ -309,6 +310,16 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (Failed(m_init->GetGeometry(geometry), result)) return result;
 
         return geometry->SetSceneObjectInstances(scene_id, command, count);
+    }
+
+    // A scene's vertex buffer as a storage slot -- compute reads / writes the vertices in place
+    std::shared_ptr<IIr77Return const> GetSceneVertexSlot(std::uint32_t const& scene_id, bool const& skinned, std::uint32_t& slot) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVGeometry> geometry{};
+        if (Failed(m_init->GetGeometry(geometry), result)) return result;
+
+        return geometry->GetSceneVertexSlot(scene_id, skinned, slot);
     }
 
     // Frees the scene's buffers once no frame in flight can read them. Remove its draw items from Paint first.
@@ -390,7 +401,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     }
 
     // Same as MakeIndirectDrawItem but on the mesh path: commands [first_command, first_command + command_count) of the uploaded scene,
-    // mapped to their records. This is how a material run becomes one mesh draw.
+    // mapped to their records. Every meshlet carries its own material row, so the whole scene is one mesh draw.
     std::shared_ptr<IIr77Return const> MakeMeshletSceneDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
                                                                 std::uint32_t const& first_command, std::uint32_t const& command_count, Ir77PVDrawItem& item) {
         std::shared_ptr<IIr77Return const> result{};
@@ -451,6 +462,80 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (Failed(m_init->GetGeometry(geometry), result)) return result;
 
         return geometry->UnloadMeshlets(meshlet_id);
+    }
+
+    // ---- acceleration -- ray queries ------------------------------------------------------------------------------------------------------------------
+
+    // The display device has ray queries -- the calls below only work when it does
+    std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) { return m_init->GetRayQuery(enabled); }
+
+    // One BLAS per command of a vertex-path scene (UploadScene) and its instances in the TLAS. Blocking. dynamic = its vertices move every
+    // frame (the posed stream) -> refit every frame. alpha = per command, the material row of a MASK material or BINDLESS_NO_SLOT (opaque).
+    std::shared_ptr<IIr77Return const> BuildSceneAcceleration(std::uint32_t const& scene_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVAcceleration> acceleration{};
+        if (Failed(m_init->GetAcceleration(acceleration), result)) return result;
+
+        return acceleration->BuildScene(scene_id, dynamic, alpha);
+    }
+
+    // The same for the mesh path's static stream (UploadMeshlets)
+    std::shared_ptr<IIr77Return const> BuildMeshletAcceleration(std::uint32_t const& meshlet_id, std::vector<std::uint32_t> const& alpha) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVAcceleration> acceleration{};
+        if (Failed(m_init->GetAcceleration(acceleration), result)) return result;
+
+        return acceleration->BuildMeshlets(meshlet_id, alpha);
+    }
+
+    // A surface in the rays, rebuilt every frame from two storage buffers (CreateStorageBuffer ids): vertex_buffer (positions = first 3 floats
+    // per vertex_stride bytes, vertex_count of them, world space) and index_buffer (triangle_count uint32 triangles). surface = its handle.
+    std::shared_ptr<IIr77Return const> CreateSurfaceAcceleration(std::uint32_t const& vertex_buffer, std::uint32_t const& vertex_stride,
+                                                                 std::uint32_t const& vertex_count, std::uint32_t const& index_buffer,
+                                                                 std::uint32_t const& triangle_count, std::uint32_t& surface) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVAcceleration> acceleration{};
+        if (Failed(m_init->GetAcceleration(acceleration), result)) return result;
+
+        std::shared_ptr<IIr77PVBuffer> vertex{};
+        std::shared_ptr<IIr77PVBuffer> index{};
+        if (Failed(GetStorageBuffer(vertex_buffer, vertex), result)) return result;
+        if (Failed(GetStorageBuffer(index_buffer, index), result)) return result;
+
+        return acceleration->CreateSurface(vertex, vertex_stride, vertex_count, index, triangle_count, surface);
+    }
+
+    // In the rays or not, from the next frame
+    std::shared_ptr<IIr77Return const> SetSurfaceAccelerationVisible(std::uint32_t const& surface, bool const& visible) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVAcceleration> acceleration{};
+        if (Failed(m_init->GetAcceleration(acceleration), result)) return result;
+
+        return acceleration->SetSurfaceVisible(surface, visible);
+    }
+
+    // Out of the rays for good (waits for the device) -- before destroying its storage buffers
+    std::shared_ptr<IIr77Return const> ReleaseSurfaceAcceleration(std::uint32_t const& surface) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVAcceleration> acceleration{};
+        if (Failed(m_init->GetAcceleration(acceleration), result)) return result;
+
+        return acceleration->ReleaseSurface(surface);
+    }
+
+    // models[] for the TLAS instances -- every frame, the same matrices as the Instances frame data
+    std::shared_ptr<IIr77Return const> SetAccelerationTransforms(std::vector<glm::mat4> const& transforms) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVAcceleration> acceleration{};
+        if (Failed(m_init->GetAcceleration(acceleration), result)) return result;
+
+        return acceleration->SetInstanceTransforms(transforms);
     }
 
     // ---- materials -- textures, materials -----------------------------------------------------------------------------------------------------------
@@ -599,7 +684,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         return paint->SetDraws(window, pass, draws);
     }
 
-    // Replaces a window's compute list -- recorded in order by its Compute pass every frame. Persists until replaced.
+    // Replaces a window's own compute list -- recorded by its Compute pass every frame. Persists until replaced.
     std::shared_ptr<IIr77Return const> SetDispatches(std::size_t const& window, std::vector<Ir77PVDispatch> const& dispatches) {
         std::shared_ptr<IIr77Return const> result{};
 
@@ -607,6 +692,16 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (Failed(m_init->GetPaint(paint), result)) return result;
 
         return paint->SetDispatches(window, dispatches);
+    }
+
+    // Replaces the once-a-frame compute list (skinning, the field) -- recorded by the first window Paint records each frame
+    std::shared_ptr<IIr77Return const> SetFrameDispatches(std::vector<Ir77PVDispatch> const& dispatches) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVPaint> paint{};
+        if (Failed(m_init->GetPaint(paint), result)) return result;
+
+        return paint->SetFrameDispatches(dispatches);
     }
 
     // Replaces a window's pass list. Exactly one pass must target the swapchain.

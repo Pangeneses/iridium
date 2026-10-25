@@ -1,6 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #define IR77_STAGE_FRAGMENT
+#define IR77_RAY_SHADOWS
 #include "include/bindless.glsl"
 #include "include/field.glsl"
 #line 1

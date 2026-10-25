@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.2.3)
-project(Ir77Scene LANGUAGES CXX)
+project(Ir77Scene LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,6 +78,14 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/stb_image_impl.cpp
 add_library(stb_image STATIC ${CMAKE_CURRENT_BINARY_DIR}/stb_image_impl.cpp)
 target_include_directories(stb_image PUBLIC ${stb_SOURCE_DIR})
 target_link_libraries(Ir77Scene PUBLIC stb_image)
+
+# MikkTSpace -- vendored (two files, zlib, finished code), so its header never depends on the build directory
+add_library(mikktspace STATIC ${CMAKE_CURRENT_SOURCE_DIR}/external/mikktspace/mikktspace.c)
+target_include_directories(mikktspace PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/mikktspace)
+target_link_libraries(Ir77Scene PUBLIC mikktspace)
+
+# meshoptimizer -- the target PeregrineV fetches; welding after MikkTSpace
+target_link_libraries(Ir77Scene PUBLIC meshoptimizer)
 
 # SDL3
 find_package(SDL3 REQUIRED)

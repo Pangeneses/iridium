@@ -14,6 +14,7 @@
     "static": {
       "vertex": "vert.vert",
       "fragment": "frag.frag",
+      "fragment_ray": "frag_ray.frag",
       "pass": "main",
       "blend": "opaque",
       "cull": "back",
@@ -26,6 +27,7 @@
     "skinned": {
       "vertex": "skinned.vert",
       "fragment": "frag.frag",
+      "fragment_ray": "frag_ray.frag",
       "pass": "main",
       "blend": "opaque",
       "cull": "back",
@@ -38,6 +40,7 @@
     "transparent": {
       "vertex": "vert.vert",
       "fragment": "frag.frag",
+      "fragment_ray": "frag_ray.frag",
       "pass": "main",
       "blend": "alpha",
       "cull": "back",
@@ -50,6 +53,7 @@
     "skinned.transparent": {
       "vertex": "skinned.vert",
       "fragment": "frag.frag",
+      "fragment_ray": "frag_ray.frag",
       "pass": "main",
       "blend": "alpha",
       "cull": "back",
@@ -63,6 +67,7 @@
       "task": "mesh.task",
       "mesh": "mesh.mesh",
       "fragment": "frag.frag",
+      "fragment_ray": "frag_ray.frag",
       "pass": "main",
       "blend": "opaque",
       "cull": "back",
@@ -152,6 +157,9 @@
     },
     "field.compute": {
       "compute": "field.comp"
+    },
+    "skin.compute": {
+      "compute": "skin.comp"
     }
   }
 }

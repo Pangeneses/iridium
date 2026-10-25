@@ -45,8 +45,9 @@ namespace NSIr77PeregrineV {
 //
 //   startup:   Ir77PVInit wires it -- SetDevice / SetTransfer / SetMaterials -> [Init builds the pipeline cache] -> SetPipelineCache
 //   load:      UploadSingleMesh (one-off / procedural) / UploadScene (vertex path) / UploadMeshlets (mesh path)
-//   frame:     Tick(frame) -> Make*DrawItem per material run -> Paint::SetDraws
+//   frame:     Tick(frame) -> Make*DrawItem -> Paint::SetDraws
 //   runtime:   SetSceneObjectVisible / SetSceneObjectInstances / SetMeshletObjectVisible / SetMeshletRecordVisible
+//   compute:   GetSceneVertexSlot (vertices as a storage buffer); rays: GetSceneGeometry (what Acceleration builds BLASes from)
 //   unload:    remove the draw items from Paint, then UnloadScene / UnloadMeshlets / UnloadSingleMeshBuffer (freed after the frames in flight)
 // One device; it never sees Ir77PVInit. Every buffer is made, uploaded, slotted and released through Transfer; materials come from Materials.
 //
@@ -287,7 +288,7 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
     //   firstIndex / indexCount   -> its slice of indices (indices stay local, 0-based)
     //   vertexOffset              -> where its vertices start
     //   instanceCount / firstInstance -> how many copies, and their slots in models[] (set 0 binding 2)
-    // Sort objects by material so each material is one contiguous run of commands; one draw item per run (MakeIndirectDrawItem).
+    // One draw item covers every command (MakeIndirectDrawItem); the vertex shader finds each command's material in a per-draw table (gl_DrawID).
     // The indirect buffer is Dynamic, so objects can be hidden / shown / resized per frame without re-uploading geometry.
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> UploadScene(Ir77PVSceneUpload const& data, std::uint32_t& scene_id, bool const& wait = true) {
@@ -298,17 +299,19 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
 
         if (!data.vertices.empty()) {
             VkDeviceSize const size = static_cast<VkDeviceSize>(data.vertices.size() * sizeof(Ir77PVVertex));
-            scene.vertex = CreateStaticBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, size);
+            scene.vertex = CreateStaticBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | RayInputUsage(), size);
             if (!scene.vertex) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: scene vertex buffer creation failed.");
 
             VkBuffer dst{VK_NULL_HANDLE};
             scene.vertex->GetBuffer(0, &dst);
             entries.push_back({dst, data.vertices.data(), size});
+
+            scene.vertex_count = static_cast<std::uint32_t>(data.vertices.size());
         }
 
         if (!data.indices.empty()) {
             VkDeviceSize const size = static_cast<VkDeviceSize>(data.indices.size() * sizeof(std::uint32_t));
-            scene.index = CreateStaticBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, size);
+            scene.index = CreateStaticBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | RayInputUsage(), size);
             if (!scene.index) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: scene index buffer creation failed.");
 
             VkBuffer dst{VK_NULL_HANDLE};
@@ -318,7 +321,7 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
 
         if (!data.vertices_skinned.empty()) {
             VkDeviceSize const size = static_cast<VkDeviceSize>(data.vertices_skinned.size() * sizeof(Ir77PVVertexSkinned));
-            scene.vertex_skinned = CreateStaticBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, size);
+            scene.vertex_skinned = CreateStaticBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, size);
             if (!scene.vertex_skinned) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: scene skinned vertex buffer creation failed.");
 
             VkBuffer dst{VK_NULL_HANDLE};
@@ -363,7 +366,7 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Draw item for commands [first_command, first_command + command_count) of a scene -- one material run -- through an engine role
+    // Draw item for commands [first_command, first_command + command_count) of a scene through an engine role
     std::shared_ptr<IIr77Return const> MakeIndirectDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& scene_id,
                                                             std::uint32_t const& material_id, std::uint32_t const& first_command,
                                                             std::uint32_t const& command_count, bool const& skinned, Ir77PVDrawItem& item) {
@@ -435,11 +438,50 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // A scene's vertex buffer (skinned = the skinned channel) as a bindless storage buffer, so compute can read or write the vertices in place
+    // (compute skinning reads the skinned stream and writes the posed one). Registered on the first call, the same slot after; UnloadScene
+    // releases it.
+    std::shared_ptr<IIr77Return const> GetSceneVertexSlot(std::uint32_t const& scene_id, bool const& skinned, std::uint32_t& slot) {
+        Ir77PVSceneSlot* const scene = FindScene(scene_id);
+        if (!scene) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown scene.");
+
+        std::shared_ptr<IIr77PVBuffer> const& vertex = skinned ? scene->vertex_skinned : scene->vertex;
+        std::uint32_t& registered = skinned ? scene->vertex_skinned_slot : scene->vertex_slot;
+
+        if (!vertex) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: scene channel empty.");
+
+        if (registered == BINDLESS_NO_SLOT) {
+            auto const result = RegisterBuffer(vertex, registered);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        }
+
+        slot = registered;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // What Acceleration builds from: the scene's vertex / index buffers, its vertex count and its commands (instance counts whatever the
+    // visibility). The buffers carry the build-input usage when the device has ray queries.
+    std::shared_ptr<IIr77Return const> GetSceneGeometry(std::uint32_t const& scene_id, Ir77PVSceneGeometry& geometry) {
+        Ir77PVSceneSlot* const scene = FindScene(scene_id);
+        if (!scene) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown scene.");
+
+        geometry = Ir77PVSceneGeometry{};
+        geometry.vertex = scene->vertex;
+        geometry.index = scene->index;
+        geometry.vertex_count = scene->vertex_count;
+        geometry.commands = scene->commands;
+        geometry.instance_counts = scene->instance_counts;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // Frees the scene's buffers once no frame in flight can read them. Remove its draw items from Paint first.
     std::shared_ptr<IIr77Return const> UnloadScene(std::uint32_t const& scene_id) {
         Ir77PVSceneSlot* const scene = FindScene(scene_id);
         if (!scene) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown scene.");
 
+        ReleaseSlots(BINDLESS_BINDING_BUFFERS, {scene->vertex_slot, scene->vertex_skinned_slot});
         Bury({scene->vertex, scene->index, scene->vertex_skinned, scene->index_skinned, scene->indirect});
         *scene = Ir77PVSceneSlot{};
 
@@ -448,8 +490,10 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
 
     // =========================================================================================================================================
     // meshlet path -- Mesh pipeline kind only (VK_EXT_mesh_shader). Takes the same stacked Ir77PVSceneUpload as UploadScene.
-    // Each indirect command is one object's range; meshlets are cut from that range only, so none ever spans two objects.
-    // One draw record + one mesh command per instance. Static (non-skinned) vertices only.
+    // Each indirect command is one object's range; meshlets are cut from that range only, so none ever spans two objects -- and from one material
+// row's triangles at a time (triangle_materials), so each meshlet has exactly one material.
+    // One draw record + one mesh command per instance. Static (non-skinned) vertices only. On a ray-query device the scene's index buffer is
+    // kept as well -- GetMeshletGeometry, for the BLASes.
     // record_count = records written. Fails when the device has no mesh shading.
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> UploadMeshlets(Ir77PVSceneUpload const& scene, std::uint32_t& meshlet_id, std::uint32_t& record_count,
@@ -463,6 +507,9 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         m_device->GetMeshShading(mesh_shading);
 
         if (!mesh_shading) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: mesh shading unsupported on this device.");
+
+        if (scene.triangle_materials.size() != scene.indices.size() / 3)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: the mesh path needs one material row per triangle (triangle_materials).");
 
         // shared results -- every object appended here
         std::vector<Ir77PVMeshlet> meshlets{};
@@ -478,6 +525,8 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         std::vector<meshopt_Meshlet> built{};
         std::vector<std::uint32_t> local_vertices{};
         std::vector<std::uint8_t> local_triangles{};
+        std::vector<std::uint32_t> rows{};           // the object's material rows, first-seen order
+        std::vector<std::uint32_t> group_indices{};  // the object's triangles that use one row
 
         for (std::size_t c = 0; c < scene.indirect_commands.size(); c++) {
             first_record.push_back(static_cast<std::uint32_t>(draws.size()));  // every command gets an entry, even when it draws nothing
@@ -490,6 +539,9 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
                 static_cast<std::size_t>(cmd.vertexOffset) >= scene.vertices.size())
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: indirect command outside the scene buffers.");
 
+            if (cmd.firstIndex % 3 != 0 || cmd.indexCount % 3 != 0)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: indirect command does not cover whole triangles.");
+
             std::uint32_t const* indices = &scene.indices[cmd.firstIndex];
             Ir77PVVertex const* vertices = &scene.vertices[static_cast<std::size_t>(cmd.vertexOffset)];
 
@@ -498,61 +550,83 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
             if (static_cast<std::size_t>(cmd.vertexOffset) + local_count > scene.vertices.size())
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: object indices run past the vertex buffer.");
 
-            // 3. build on the slice only -- the builder can't see any other object
-            std::size_t const max_meshlets = meshopt_buildMeshletsBound(cmd.indexCount, MESHLET_MAX_VERTICES, MESHLET_MAX_TRIANGLES);
-            built.assign(max_meshlets, meshopt_Meshlet{});
-            local_vertices.assign(max_meshlets * MESHLET_MAX_VERTICES, 0);
-            local_triangles.assign(max_meshlets * MESHLET_MAX_TRIANGLES * 3, 0);
-
             float const* positions = &vertices[0].position.x;
+            std::uint32_t const first_triangle = cmd.firstIndex / 3;
+            std::uint32_t const triangle_count = cmd.indexCount / 3;
 
-            std::size_t const count =
-                meshopt_buildMeshlets(built.data(), local_vertices.data(), local_triangles.data(), indices, cmd.indexCount, positions, local_count,
-                                      sizeof(Ir77PVVertex), MESHLET_MAX_VERTICES, MESHLET_MAX_TRIANGLES, MESHLET_CONE_WEIGHT);
-            if (count == 0) continue;
-            built.resize(count);
-
-            // where this object starts in the shared arrays
-            std::uint32_t const meshlet_base = static_cast<std::uint32_t>(meshlets.size());
-            std::uint32_t const vertex_base = static_cast<std::uint32_t>(meshlet_vertices.size());
-            std::uint32_t const triangle_base = static_cast<std::uint32_t>(meshlet_triangles.size());  // stays a 4-byte multiple
-
-            // 4. optimize + bounds (object-local space, same space models[] transforms from)
-            for (std::size_t i = 0; i < count; i++) {
-                meshopt_Meshlet const& m = built[i];
-
-                meshopt_optimizeMeshlet(&local_vertices[m.vertex_offset], &local_triangles[m.triangle_offset], m.triangle_count, m.vertex_count);
-
-                meshopt_Bounds const bounds = meshopt_computeMeshletBounds(&local_vertices[m.vertex_offset], &local_triangles[m.triangle_offset],
-                                                                           m.triangle_count, positions, local_count, sizeof(Ir77PVVertex));
-
-                Ir77PVMeshlet out{};
-                out.sphere = {bounds.center[0], bounds.center[1], bounds.center[2], bounds.radius};
-                out.cone = {bounds.cone_axis[0], bounds.cone_axis[1], bounds.cone_axis[2], bounds.cone_cutoff};
-                out.vertex_offset = vertex_base + m.vertex_offset;  // shifted into the shared array
-                out.triangle_offset = triangle_base + m.triangle_offset;
-                out.vertex_count = m.vertex_count;
-                out.triangle_count = m.triangle_count;
-                meshlets.push_back(out);
+            // 3. the object's material rows -- meshlets are cut from one row's triangles at a time, so every meshlet has exactly one material
+            rows.clear();
+            for (std::uint32_t t = 0; t < triangle_count; t++) {
+                std::uint32_t const row = scene.triangle_materials[first_triangle + t];
+                if (std::find(rows.begin(), rows.end(), row) == rows.end()) rows.push_back(row);
             }
 
-            // 5. append -- local vertex index + vertexOffset = index into the full vertex buffer
-            meshopt_Meshlet const& last = built.back();
-            std::size_t const used_vertices = last.vertex_offset + last.vertex_count;
-            std::size_t const used_triangles = last.triangle_offset + ((last.triangle_count * 3 + 3) & ~3u);
+            std::uint32_t const meshlet_base = static_cast<std::uint32_t>(meshlets.size());  // the object's meshlets stay contiguous
 
-            for (std::size_t j = 0; j < used_vertices; j++) meshlet_vertices.push_back(local_vertices[j] + static_cast<std::uint32_t>(cmd.vertexOffset));
+            for (std::uint32_t const row : rows) {
+                // 4. this row's triangles
+                group_indices.clear();
+                for (std::uint32_t t = 0; t < triangle_count; t++) {
+                    if (scene.triangle_materials[first_triangle + t] == row) group_indices.insert(group_indices.end(), indices + t * 3, indices + t * 3 + 3);
+                }
 
-            meshlet_triangles.insert(meshlet_triangles.end(), local_triangles.begin(), local_triangles.begin() + used_triangles);
+                // 5. build on them only -- the builder can't see any other object or material
+                std::size_t const max_meshlets = meshopt_buildMeshletsBound(group_indices.size(), MESHLET_MAX_VERTICES, MESHLET_MAX_TRIANGLES);
+                built.assign(max_meshlets, meshopt_Meshlet{});
+                local_vertices.assign(max_meshlets * MESHLET_MAX_VERTICES, 0);
+                local_triangles.assign(max_meshlets * MESHLET_MAX_TRIANGLES * 3, 0);
 
-            // 6. this object = meshlets [meshlet_base, meshlet_base + count). One record per instance, same meaning as the vertex path.
-            std::uint32_t const groups = (static_cast<std::uint32_t>(count) + 31) / 32;  // TASK_GROUP_SIZE
+                std::size_t const count =
+                    meshopt_buildMeshlets(built.data(), local_vertices.data(), local_triangles.data(), group_indices.data(), group_indices.size(), positions,
+                                          local_count, sizeof(Ir77PVVertex), MESHLET_MAX_VERTICES, MESHLET_MAX_TRIANGLES, MESHLET_CONE_WEIGHT);
+                if (count == 0) continue;
+                built.resize(count);
+
+                // where this group starts in the shared arrays
+                std::uint32_t const vertex_base = static_cast<std::uint32_t>(meshlet_vertices.size());
+                std::uint32_t const triangle_base = static_cast<std::uint32_t>(meshlet_triangles.size());  // stays a 4-byte multiple
+
+                // 6. optimize + bounds (object-local space, same space models[] transforms from)
+                for (std::size_t i = 0; i < count; i++) {
+                    meshopt_Meshlet const& m = built[i];
+
+                    meshopt_optimizeMeshlet(&local_vertices[m.vertex_offset], &local_triangles[m.triangle_offset], m.triangle_count, m.vertex_count);
+
+                    meshopt_Bounds const bounds = meshopt_computeMeshletBounds(&local_vertices[m.vertex_offset], &local_triangles[m.triangle_offset],
+                                                                               m.triangle_count, positions, local_count, sizeof(Ir77PVVertex));
+
+                    Ir77PVMeshlet out{};
+                    out.sphere = {bounds.center[0], bounds.center[1], bounds.center[2], bounds.radius};
+                    out.cone = {bounds.cone_axis[0], bounds.cone_axis[1], bounds.cone_axis[2], bounds.cone_cutoff};
+                    out.vertex_offset = vertex_base + m.vertex_offset;  // shifted into the shared array
+                    out.triangle_offset = triangle_base + m.triangle_offset;
+                    out.vertex_count = m.vertex_count;
+                    out.triangle_count = m.triangle_count;
+                    out.material = row;
+                    meshlets.push_back(out);
+                }
+
+                // 7. append -- local vertex index + vertexOffset = index into the full vertex buffer
+                meshopt_Meshlet const& last = built.back();
+                std::size_t const used_vertices = last.vertex_offset + last.vertex_count;
+                std::size_t const used_triangles = last.triangle_offset + ((last.triangle_count * 3 + 3) & ~3u);
+
+                for (std::size_t j = 0; j < used_vertices; j++) meshlet_vertices.push_back(local_vertices[j] + static_cast<std::uint32_t>(cmd.vertexOffset));
+
+                meshlet_triangles.insert(meshlet_triangles.end(), local_triangles.begin(), local_triangles.begin() + used_triangles);
+            }
+
+            std::uint32_t const object_meshlets = static_cast<std::uint32_t>(meshlets.size()) - meshlet_base;
+            if (object_meshlets == 0) continue;
+
+            // 8. this object = meshlets [meshlet_base, meshlet_base + object_meshlets). One record per instance, same meaning as the vertex path.
+            std::uint32_t const groups = (object_meshlets + 31) / 32;  // TASK_GROUP_SIZE
 
             for (std::uint32_t inst = 0; inst < cmd.instanceCount; inst++) {
                 Ir77PVMeshDraw draw{};
                 draw.instance = cmd.firstInstance + inst;
                 draw.meshlet_offset = meshlet_base;
-                draw.meshlet_count = static_cast<std::uint32_t>(count);
+                draw.meshlet_count = object_meshlets;
 
                 draws.push_back(draw);
                 commands.push_back(VkDrawMeshTasksIndirectCommandEXT{groups, 1, 1});
@@ -578,7 +652,7 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         mesh.meshlets = CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, meshlets_size);
         mesh.meshlet_vertices = CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, indices_size);
         mesh.meshlet_triangles = CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, triangles_size);
-        mesh.vertices = CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vertices_size);
+        mesh.vertices = CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | RayInputUsage(), vertices_size);  // also the BLAS vertex input
         mesh.draws = CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, draws_size);
 
         if (!mesh.meshlets || !mesh.meshlet_vertices || !mesh.meshlet_triangles || !mesh.vertices || !mesh.draws)
@@ -604,15 +678,30 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         mesh.vertices->GetBuffer(0, &vertices_dst);
         mesh.draws->GetBuffer(0, &draws_dst);
 
-        if (Upload({{meshlets_dst, meshlets.data(), meshlets_size},
-                    {indices_dst, meshlet_vertices.data(), indices_size},
-                    {triangles_dst, meshlet_triangles.data(), triangles_size},
-                    {vertices_dst, scene.vertices.data(), vertices_size},
-                    {draws_dst, draws.data(), draws_size}},
-                   wait)
-                ->ID() != GUIDIr77OperationSucceeded) {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: meshlet upload failed.");
+        std::vector<Ir77PVUploadEntry> entries{{meshlets_dst, meshlets.data(), meshlets_size},
+                                               {indices_dst, meshlet_vertices.data(), indices_size},
+                                               {triangles_dst, meshlet_triangles.data(), triangles_size},
+                                               {vertices_dst, scene.vertices.data(), vertices_size},
+                                               {draws_dst, draws.data(), draws_size}};
+
+        // ray queries -- the scene's index buffer too, so Acceleration can build the static stream's BLASes (meshlets can't be built from)
+        if (RayInputUsage() != 0) {
+            VkDeviceSize const index_size = static_cast<VkDeviceSize>(scene.indices.size() * sizeof(std::uint32_t));
+
+            slot.ray_index = CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | RayInputUsage(), index_size);
+            if (!slot.ray_index) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: meshlet ray index buffer creation failed.");
+
+            VkBuffer index_dst{VK_NULL_HANDLE};
+            slot.ray_index->GetBuffer(0, &index_dst);
+            entries.push_back({index_dst, scene.indices.data(), index_size});
+
+            slot.vertex_count = static_cast<std::uint32_t>(scene.vertices.size());
+            slot.scene_commands = scene.indirect_commands;
+            slot.instance_counts.reserve(scene.indirect_commands.size());
+            for (auto const& cmd : scene.indirect_commands) slot.instance_counts.push_back(cmd.instanceCount);
         }
+
+        if (Upload(entries, wait)->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: meshlet upload failed.");
 
         // 8. bindless slots -- order matches Ir77PVMeshletMesh::slots / Ir77PVDrawItem::meshlet_slots
         std::array<std::shared_ptr<IIr77PVBuffer>, MESHLET_SLOT_COUNT> const slot_buffers{mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles,
@@ -636,6 +725,23 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
 
         meshlet_id = static_cast<std::uint32_t>(m_meshlet_scenes.size());
         m_meshlet_scenes.push_back(std::move(slot));
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // What Acceleration builds the mesh path's static stream from -- the same shape as GetSceneGeometry: the meshlet scene's vertices, the
+    // scene's index buffer (kept only on ray-query devices) and its indirect commands
+    std::shared_ptr<IIr77Return const> GetMeshletGeometry(std::uint32_t const& meshlet_id, Ir77PVSceneGeometry& geometry) {
+        Ir77PVMeshletSlot* const slot = FindMeshlets(meshlet_id);
+        if (!slot) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown meshlet mesh.");
+        if (!slot->ray_index) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: meshlet mesh has no ray input (no ray queries).");
+
+        geometry = Ir77PVSceneGeometry{};
+        geometry.vertex = slot->mesh.vertices;
+        geometry.index = slot->ray_index;
+        geometry.vertex_count = slot->vertex_count;
+        geometry.commands = slot->scene_commands;
+        geometry.instance_counts = slot->instance_counts;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -728,7 +834,7 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
     }
 
     // Same as MakeIndirectDrawItem but on the mesh path: commands [first_command, first_command + command_count) of the uploaded scene,
-    // mapped to their records. This is how a material run becomes one mesh draw.
+    // mapped to their records. Every meshlet carries its own material row, so the whole scene is one mesh draw.
     std::shared_ptr<IIr77Return const> MakeMeshletSceneDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
                                                                 std::uint32_t const& first_command, std::uint32_t const& command_count, Ir77PVDrawItem& item) {
         Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
@@ -787,7 +893,7 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
 
         Ir77PVMeshletMesh const& mesh = slot->mesh;
         ReleaseSlots(BINDLESS_BINDING_BUFFERS, std::vector<std::uint32_t>(mesh.slots.begin(), mesh.slots.end()));
-        Bury({mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.vertices, mesh.draws, mesh.indirect});
+        Bury({mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.vertices, mesh.draws, mesh.indirect, slot->ray_index});
         *slot = Ir77PVMeshletSlot{};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -874,6 +980,14 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         if (!m_materials) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: materials not set.");
 
         return m_materials->GetMaterial(material_id, material);
+    }
+
+    // With ray queries on, scene geometry is also an acceleration-structure build input, read by GPU address
+    VkBufferUsageFlags RayInputUsage() const {
+        bool ray_query{false};
+        if (m_device) m_device->GetRayQuery(ray_query);
+
+        return ray_query ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0;
     }
 
     // ---- through Transfer -- every buffer here is made, uploaded, slotted and released there --------------------------------------------

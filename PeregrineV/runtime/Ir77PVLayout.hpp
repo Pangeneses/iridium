@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 #include "../types/Ir77PVTypes.hpp"
 
@@ -35,6 +36,7 @@ namespace NSIr77PeregrineV {
 //     binding 0  sampler2D  textures[]        -- every sampled texture (material maps, env, shadow map, CEF overlay, plot colour maps)
 //     binding 1  buffer     buffers[]         -- every storage buffer (frame globals, instances, materials, bones, vertices, meshlets...)
 //     binding 2  image2D    storage_images[]  -- compute / ray outputs
+//     binding 3  accelerationStructureEXT[]   -- the TLASes ray queries trace (ray-query devices only -- the binding doesn't exist otherwise)
 //   push constants: Ir77PVPushConstants (128 bytes, every stage) -- indices into the arrays above, per draw / dispatch
 //
 //   create: CreateLayout -> DefineCapacity -> DefineSetLayout -> DefinePipelineLayout
@@ -177,6 +179,20 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
         if (m_capacity.textures == 0 || m_capacity.buffers == 0 || m_capacity.storage_images == 0)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayout: device reports no update-after-bind descriptor capacity.");
 
+        // acceleration structures -- ray-query devices only; 0 leaves binding 3 out of the layout
+        bool ray_query{false};
+        m_device->GetRayQuery(ray_query);
+
+        m_capacity.acceleration_structures = 0;
+
+        if (ray_query) {
+            VkPhysicalDeviceAccelerationStructurePropertiesKHR acceleration{};
+            m_device->GetAccelerationStructureProperties(acceleration);
+
+            m_capacity.acceleration_structures = std::min({BINDLESS_ACCELERATION_STRUCTURES, acceleration.maxPerStageDescriptorUpdateAfterBindAccelerationStructures,
+                                                           acceleration.maxDescriptorSetUpdateAfterBindAccelerationStructures});
+        }
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
@@ -186,22 +202,22 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
-        std::array<VkDescriptorSetLayoutBinding, BINDLESS_BINDING_COUNT> bindings{};
+        std::vector<VkDescriptorSetLayoutBinding> bindings{};
 
-        bindings[BINDLESS_BINDING_TEXTURES] = {BINDLESS_BINDING_TEXTURES, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, m_capacity.textures,
-                                               VK_SHADER_STAGE_ALL, nullptr};
+        bindings.push_back({BINDLESS_BINDING_TEXTURES, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, m_capacity.textures, VK_SHADER_STAGE_ALL, nullptr});
 
-        bindings[BINDLESS_BINDING_BUFFERS] = {BINDLESS_BINDING_BUFFERS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, m_capacity.buffers, VK_SHADER_STAGE_ALL,
-                                              nullptr};
+        bindings.push_back({BINDLESS_BINDING_BUFFERS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, m_capacity.buffers, VK_SHADER_STAGE_ALL, nullptr});
 
-        bindings[BINDLESS_BINDING_STORAGE_IMAGES] = {BINDLESS_BINDING_STORAGE_IMAGES, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, m_capacity.storage_images,
-                                                     VK_SHADER_STAGE_ALL, nullptr};
+        bindings.push_back({BINDLESS_BINDING_STORAGE_IMAGES, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, m_capacity.storage_images, VK_SHADER_STAGE_ALL, nullptr});
+
+        if (m_capacity.acceleration_structures > 0)
+            bindings.push_back({BINDLESS_BINDING_ACCELERATION, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, m_capacity.acceleration_structures,
+                                VK_SHADER_STAGE_ALL, nullptr});
 
         VkDescriptorBindingFlags const binding_flag{VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
                                                     VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT};
 
-        std::array<VkDescriptorBindingFlags, BINDLESS_BINDING_COUNT> binding_flags{};
-        binding_flags.fill(binding_flag);
+        std::vector<VkDescriptorBindingFlags> binding_flags(bindings.size(), binding_flag);
 
         VkDescriptorSetLayoutBindingFlagsCreateInfo flags_info{};
         flags_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;

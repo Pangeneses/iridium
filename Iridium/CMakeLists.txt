@@ -78,4 +78,14 @@ target_link_libraries(Ir77 PRIVATE
     Ir77Scene
 )
 
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/iridium.json ${CMAKE_CURRENT_BINARY_DIR}/iridium.json COPYONLY)
+# iridium.json next to the executable. Development: a link, so edits apply on the next run without a build.
+# Distribution (-DIR77_LINK_CONFIG=OFF): a real copy, refreshed by every build.
+option(IR77_LINK_CONFIG "Link iridium.json into the build instead of copying it" ON)
+
+file(REMOVE ${CMAKE_CURRENT_BINARY_DIR}/iridium.json)
+
+if (IR77_LINK_CONFIG)
+    file(CREATE_LINK ${CMAKE_CURRENT_SOURCE_DIR}/iridium.json ${CMAKE_CURRENT_BINARY_DIR}/iridium.json SYMBOLIC)
+else ()
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/iridium.json ${CMAKE_CURRENT_BINARY_DIR}/iridium.json COPYONLY)
+endif ()

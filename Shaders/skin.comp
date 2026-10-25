@@ -1,0 +1,87 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+
+#include "include/bindless.glsl"
+
+// =============================================================================================================================================
+// skin.comp -- compute skinning, one thread per posed vertex. Poses a bind-pose vertex of the skinned stream with this frame's joint palette and
+// writes it, in the plain Ir77PVVertex layout, into the posed stream -- what the static pipeline draws, the shadow pass casts and rays hit.
+// The result stays in mesh space; the instance's model matrix is applied when it's drawn.
+//
+//   pc.user[0] = jobs         uvec2 per posed vertex: x = source vertex in the skinned stream, y = instance slot (picks its bone_base)
+//   pc.user[1] = source       the skinned stream's vertex buffer -- Ir77PVVertexSkinned as 20 words
+//   pc.user[2] = destination  the posed stream's vertex buffer -- Ir77PVVertex as 12 floats
+//   pc.user[3] = posed vertex count
+//   pc.bones   = this frame's bone bases + palettes (filled in at record time)
+// =============================================================================================================================================
+
+layout(local_size_x = 64) in;
+
+IR77_BUFFER(ir77_skin_jobs, uvec2);
+IR77_BUFFER(ir77_skin_source, uint);
+IR77_BUFFER_RW(ir77_skin_destination, float);
+
+const uint SOURCE_WORDS = 20u;       // position 3, normal 3, uv 2, tangent 4, joints 4 (uint), weights 4
+const uint DESTINATION_FLOATS = 12u;  // position 3, normal 3, uv 2, tangent 4
+
+uint SourceWord(uint index) {
+    return ir77_skin_source[pc.user[1]].data[index];
+}
+
+float SourceFloat(uint index) {
+    return uintBitsToFloat(SourceWord(index));
+}
+
+void WriteFloat(uint index, float value) {
+    ir77_skin_destination[pc.user[2]].data[index] = value;
+}
+
+void main() {
+    // 64 threads a group, groups spread over x and y -- the flat index back
+    uint index = gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 64u + gl_GlobalInvocationID.x;
+    if (index >= pc.user[3]) return;
+
+    uvec2 job = ir77_skin_jobs[pc.user[0]].data[index];
+    uint s = job.x * SOURCE_WORDS;
+
+    // bind pose
+    vec3 position = vec3(SourceFloat(s + 0), SourceFloat(s + 1), SourceFloat(s + 2));
+    vec3 normal = vec3(SourceFloat(s + 3), SourceFloat(s + 4), SourceFloat(s + 5));
+    vec2 uv = vec2(SourceFloat(s + 6), SourceFloat(s + 7));
+    vec4 tangent = vec4(SourceFloat(s + 8), SourceFloat(s + 9), SourceFloat(s + 10), SourceFloat(s + 11));
+    uvec4 joints = uvec4(SourceWord(s + 12), SourceWord(s + 13), SourceWord(s + 14), SourceWord(s + 15));
+    vec4 weights = vec4(SourceFloat(s + 16), SourceFloat(s + 17), SourceFloat(s + 18), SourceFloat(s + 19));
+
+    // same blend as skinned.vert -- up to four joints, glTF weights sum to 1
+    uint base = IR77_BONES.bone_base[job.y];
+
+    mat4 skin = weights.x * IR77_BONES.bones[base + joints.x] +
+                weights.y * IR77_BONES.bones[base + joints.y] +
+                weights.z * IR77_BONES.bones[base + joints.z] +
+                weights.w * IR77_BONES.bones[base + joints.w];
+
+    mat3 skin3 = mat3(skin);
+
+    vec3 posed_position = (skin * vec4(position, 1.0)).xyz;
+    vec3 posed_normal = skin3 * normal;
+    vec3 posed_tangent = skin3 * tangent.xyz;
+
+    posed_normal = dot(posed_normal, posed_normal) > 0.0 ? normalize(posed_normal) : vec3(0.0, 1.0, 0.0);
+    posed_tangent = dot(posed_tangent, posed_tangent) > 0.0 ? normalize(posed_tangent) : vec3(1.0, 0.0, 0.0);
+
+    // posed -- uv and handedness pass through
+    uint d = index * DESTINATION_FLOATS;
+
+    WriteFloat(d + 0, posed_position.x);
+    WriteFloat(d + 1, posed_position.y);
+    WriteFloat(d + 2, posed_position.z);
+    WriteFloat(d + 3, posed_normal.x);
+    WriteFloat(d + 4, posed_normal.y);
+    WriteFloat(d + 5, posed_normal.z);
+    WriteFloat(d + 6, uv.x);
+    WriteFloat(d + 7, uv.y);
+    WriteFloat(d + 8, posed_tangent.x);
+    WriteFloat(d + 9, posed_tangent.y);
+    WriteFloat(d + 10, posed_tangent.z);
+    WriteFloat(d + 11, tangent.w);
+}

@@ -13,22 +13,24 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "IIr77PVLayout.hpp"
-#include "IIr77PVDescriptorSet.hpp"
-#include "IIr77PVPipeline.hpp"
-#include "IIr77PVBuffer.hpp"
-#include "IIr77PVShader.hpp"
-#include "IIr77PVCEF.hpp"
-#include "IIr77PVPaint.hpp"
-#include "IIr77PVTransfer.hpp"
-#include "IIr77PVMaterial.hpp"
-#include "IIr77PVGeometry.hpp"
-
 #include "../types/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
+
+struct IIr77PVLayout;
+struct IIr77PVDescriptorSet;
+struct IIr77PVPipeline;
+struct IIr77PVBuffer;
+struct IIr77PVShader;
+struct IIr77PVCEF;
+struct IIr77PVPaint;
+struct IIr77PVTransfer;
+struct IIr77PVMaterial;
+struct IIr77PVGeometry;
+struct IIr77PVAcceleration;
+
 
 // The renderer's lifetime controller: device, swapchains, bindless layout + table, frame buffers, shader registry, pipeline cache -- and CEF,
 // Paint, Transfer, Materials and Geometry, which it creates, wires with their Set* calls as each piece exists, and destroys. They never see Init.
@@ -62,6 +64,10 @@ typedef struct IIr77PVInit : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> GetMaterials(std::shared_ptr<IIr77PVMaterial>& materials) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetGeometry(std::shared_ptr<IIr77PVGeometry>& geometry) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetAcceleration(std::shared_ptr<IIr77PVAcceleration>& acceleration) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) = 0;
 
     // The display device's shader registry -- CompileShader, LoadShader / AddShader, queries
     virtual std::shared_ptr<IIr77Return const> GetShader(std::shared_ptr<IIr77PVShader>& shader) = 0;

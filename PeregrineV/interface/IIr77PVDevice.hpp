@@ -59,6 +59,15 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) = 0;
 
+    // acceleration structures + ray queries enabled (VK_KHR_acceleration_structure / ray_query / deferred_host_operations + features)
+    virtual std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) = 0;
+
+    // VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT is usable -- the allocator is created to match
+    virtual std::shared_ptr<IIr77Return const> GetBufferDeviceAddress(bool& enabled) = 0;
+
+    // scratch alignment and build limits for BLAS / TLAS -- zeros when ray queries are off
+    virtual std::shared_ptr<IIr77Return const> GetAccelerationStructureProperties(VkPhysicalDeviceAccelerationStructurePropertiesKHR& properties) = 0;
+
     virtual std::shared_ptr<IIr77Return const> GetVulkan12Properties(VkPhysicalDeviceVulkan12Properties& properties) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) = 0;

@@ -44,6 +44,7 @@
 #include "../interface/IIr77PVTransfer.hpp"
 #include "../interface/IIr77PVMaterial.hpp"
 #include "../interface/IIr77PVGeometry.hpp"
+#include "../interface/IIr77PVAcceleration.hpp"
 #include "../interface/IIr77PVPaint.hpp"
 #include "../interface/IIr77PVCEF.hpp"
 
@@ -60,6 +61,7 @@
 #include "../runtime/Ir77PVTransfer.hpp"
 #include "../runtime/Ir77PVMaterial.hpp"
 #include "../runtime/Ir77PVGeometry.hpp"
+#include "../runtime/Ir77PVAcceleration.hpp"
 #include "../runtime/Ir77PVPaint.hpp"
 #include "../runtime/Ir77PVCEF.hpp"
 
@@ -71,7 +73,8 @@ namespace NSIr77PeregrineV {
 
 // =============================================================================================================================================
 // Ir77PVInit -- the renderer's lifetime controller. Owns the device and everything on it (swapchains, bindless layout + table, frame
-// buffers, shadow atlas, shader registry, pipeline cache) and CEF, Paint, Transfer, Materials and Geometry, which it creates, wires with
+// buffers, shadow atlas, shader registry, pipeline cache) and CEF, Paint, Transfer, Materials, Geometry and (with ray queries) Acceleration,
+// which it creates, wires with
 // their Set* calls as each piece exists, and destroys first. They never see Init -- everything they use is handed to them.
 //   SetWindows -> CreateRenderer -> [content] -> CreateCommandBuffers ... DestroyRenderer (before SDL destroys the windows)
 //   per frame:  Tick(frame) -- Transfer (slots, staging, graveyard), then Geometry (dirty indirect copies)
@@ -242,6 +245,19 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         m_geometry->SetMaterials(m_materials);
         m_geometry->SetPipelineCache(m_pipeline_caches.at(device_id));
 
+        // Acceleration -- ray-query devices only: BLASes over Geometry's scenes, a TLAS per frame, buffers through Transfer
+        bool ray_query{false};
+        device->GetRayQuery(ray_query);
+
+        if (ray_query) {
+            m_acceleration = std::static_pointer_cast<IIr77PVAcceleration>(std::make_shared<Ir77PVAcceleration>());
+            m_acceleration->SetDevice(device);
+            m_acceleration->SetTransfer(m_transfer);
+            m_acceleration->SetGeometry(m_geometry);
+            m_acceleration->SetDescriptorSet(table);
+            if (Failed(m_acceleration->CreateAcceleration(), result)) return result;
+        }
+
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVInit: renderer created.");
     }
 
@@ -267,7 +283,9 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         m_paint->SetPipelineCache(cache->second);
         m_paint->SetFrameSlots(m_frame_slots.at(m_current_device));
         m_paint->SetFrameBuffers(m_buffers_frame.at(m_current_device));
+        m_paint->SetFrameTables(m_frame_tables.at(m_current_device));
         m_paint->SetOverlays(overlays);
+        if (m_acceleration) m_paint->SetAcceleration(m_acceleration);  // the frame's first recorded window builds the TLAS after its Compute pass
 
         auto const shadow_map = m_shadow_maps.find(m_current_device);
         if (shadow_map != m_shadow_maps.end()) m_paint->SetShadowMap(shadow_map->second);
@@ -326,6 +344,25 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         geometry = m_geometry;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // NotConfigured on a device without ray queries -- check GetRayQuery first
+    std::shared_ptr<IIr77Return const> GetAcceleration(std::shared_ptr<IIr77PVAcceleration>& acceleration) {
+        if (!m_acceleration) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no acceleration structures (no ray queries, or CreateRenderer not called).");
+
+        acceleration = m_acceleration;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The display device has ray queries -- and so an Acceleration
+    std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) {
+        enabled = false;
+
+        auto const device = m_devices.find(m_current_device);
+        if (device == m_devices.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no display device.");
+
+        return device->second->GetRayQuery(enabled);
     }
 
     // The display device's shader registry -- CompileShader, LoadShader / AddShader, queries
@@ -559,7 +596,13 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         result = device->DefineDevice();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Logical Devices.");
+        bool mesh_shading{false};
+        bool ray_query{false};
+        device->GetMeshShading(mesh_shading);
+        device->GetRayQuery(ray_query);
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, std::string{"Success: Create Logical Devices (mesh shading "} + (mesh_shading ? "on" : "off") +
+                                                            ", ray queries " + (ray_query ? "on" : "off") + ").");
     }
 
     std::shared_ptr<IIr77Return const> CreateAllocator() {
@@ -572,7 +615,12 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         VkDevice device;
         m_devices.at(m_current_device)->GetDevice(&device);
 
+        // buffer device address -- acceleration-structure builds read geometry by GPU address; VMA must allocate memory that allows it
+        bool device_address{false};
+        m_devices.at(m_current_device)->GetBufferDeviceAddress(device_address);
+
         VmaAllocatorCreateInfo allocator_info{};
+        allocator_info.flags = device_address ? VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT : 0;
         allocator_info.instance = instance;
         allocator_info.physicalDevice = phys_device;
         allocator_info.device = device;
@@ -938,6 +986,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     // its device itself, and everything they hold dies before DefineRelease frees the allocator.
     void DefinePeerRelease() {
         m_paint.reset();
+        m_acceleration.reset();  // its BLASes read Geometry's buffers; its own buffers are Transfer's
         m_geometry.reset();
         m_materials.reset();
         m_transfer.reset();
@@ -1176,6 +1225,8 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     std::shared_ptr<IIr77PVMaterial> m_materials{};
 
     std::shared_ptr<IIr77PVGeometry> m_geometry{};
+
+    std::shared_ptr<IIr77PVAcceleration> m_acceleration{};  // ray-query devices only
 
     std::vector<SDL_Window*> m_display_windows{};  // SetWindows -- what CreateRenderer puts the display device on
 

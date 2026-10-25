@@ -225,7 +225,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // From the vertex shader's own input locations (reflected at load): 0 position, 1 normal, 2 uv, 3 joints, 4 weights, all from binding 0.
+    // From the vertex shader's own input locations (reflected at load): 0 position, 1 normal, 2 uv, 3 joints, 4 weights, 5 tangent, all from binding 0.
     // Reading 3 or 4 means the skinned layout (Ir77PVVertexSkinned); otherwise Ir77PVVertex. No vertex shader (mesh) = no vertex input.
     std::shared_ptr<IIr77Return const> DefineVertexInputState() {
         m_attribute_descriptions.clear();
@@ -275,6 +275,11 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
                 case VERTEX_LOCATION_WEIGHTS:
                     m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Ir77PVVertexSkinned, weights)));
+                    break;
+
+                case VERTEX_LOCATION_TANGENT:
+                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32A32_SFLOAT,
+                                                                 skinned ? offsetof(Ir77PVVertexSkinned, tangent) : offsetof(Ir77PVVertex, tangent)));
                     break;
 
                 default:

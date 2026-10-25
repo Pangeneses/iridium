@@ -372,7 +372,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     // steps
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
-    enum class Ir77PVSpirvDescriptorKind : std::uint8_t { Texture, StorageBuffer, StorageImage, Other };
+    enum class Ir77PVSpirvDescriptorKind : std::uint8_t { Texture, StorageBuffer, StorageImage, AccelerationStructure, Other };
 
     struct Ir77PVSpirvVariable {
         std::uint32_t id{0};
@@ -479,15 +479,25 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
                 case Ir77PVSpirvDescriptorKind::StorageImage:
                     expected = BINDLESS_BINDING_STORAGE_IMAGES;
                     break;
+                case Ir77PVSpirvDescriptorKind::AccelerationStructure: {
+                    bool ray_query{false};
+                    m_device->GetRayQuery(ray_query);
+
+                    if (!ray_query) return Ir77RETURN<Ir77NotConfigured>(this, shader + "traces rays (include/raytrace.glsl) and this device has no ray queries.");
+
+                    expected = BINDLESS_BINDING_ACCELERATION;
+                    break;
+                }
                 default:
                     return Ir77RETURN<Ir77NotConfigured>(this, shader + "uses a descriptor type the bindless set doesn't have (set " + std::to_string(descriptor.set) +
                                                                    ", binding " + std::to_string(descriptor.binding) +
-                                                                   ") -- use sampler2D (binding 0), storage buffers (1) or storage images (2).");
+                                                                   ") -- use sampler2D (binding 0), storage buffers (1), storage images (2) or acceleration structures (3).");
             }
 
             if (descriptor.set != 0 || descriptor.binding != expected)
                 return Ir77RETURN<Ir77NotConfigured>(this, shader + "binds set " + std::to_string(descriptor.set) + ", binding " + std::to_string(descriptor.binding) +
-                                                               " -- only the bindless set 0 exists (0 textures, 1 storage buffers, 2 storage images); include bindless.glsl.");
+                                                               " -- only the bindless set 0 exists (0 textures, 1 storage buffers, 2 storage images, 3 acceleration "
+                                                               "structures); include bindless.glsl / raytrace.glsl.");
         }
 
         if (info.reflection.push_constant_size > PUSH_CONSTANT_LIMIT)
@@ -496,9 +506,9 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
 
         if (info.stage == Ir77PVShaderStage::Vertex)
             for (auto const location : info.reflection.inputs)
-                if (location > VERTEX_LOCATION_WEIGHTS)
+                if (location > VERTEX_LOCATION_TANGENT)
                     return Ir77RETURN<Ir77NotConfigured>(this, shader + "reads vertex location " + std::to_string(location) +
-                                                                   " -- vertex inputs are 0 position, 1 normal, 2 uv, 3 joints, 4 weights.");
+                                                                   " -- vertex inputs are 0 position, 1 normal, 2 uv, 3 joints, 4 weights, 5 tangent.");
 
         if (info.stage == Ir77PVShaderStage::Task || info.stage == Ir77PVShaderStage::Mesh) {
             bool mesh_shading{false};
@@ -551,7 +561,8 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
                     break;
 
                 default:
-                    if (opcode >= SPV_OP_TYPE_FIRST && opcode <= SPV_OP_TYPE_LAST && count >= 2) module.types[op[1]].assign(op, op + count);
+                    if (((opcode >= SPV_OP_TYPE_FIRST && opcode <= SPV_OP_TYPE_LAST) || opcode == SPV_OP_TYPE_ACCELERATION_STRUCTURE) && count >= 2)
+                        module.types[op[1]].assign(op, op + count);
                     break;
             }
 
@@ -722,6 +733,9 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
                 case SPV_OP_TYPE_SAMPLED_IMAGE:
                     return Ir77PVSpirvDescriptorKind::Texture;
 
+                case SPV_OP_TYPE_ACCELERATION_STRUCTURE:
+                    return Ir77PVSpirvDescriptorKind::AccelerationStructure;
+
                 case SPV_OP_TYPE_IMAGE:
                     // operand 7 "sampled": 2 = storage image
                     return type.size() >= 8 && type[7] == 2 ? Ir77PVSpirvDescriptorKind::StorageImage : Ir77PVSpirvDescriptorKind::Other;
@@ -760,6 +774,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     static constexpr std::uint32_t SPV_OP_TYPE_STRUCT = 30;
     static constexpr std::uint32_t SPV_OP_TYPE_POINTER = 32;
     static constexpr std::uint32_t SPV_OP_TYPE_LAST = 32;
+    static constexpr std::uint32_t SPV_OP_TYPE_ACCELERATION_STRUCTURE = 5341;  // OpTypeAccelerationStructureKHR
     static constexpr std::uint32_t SPV_OP_CONSTANT = 43;
     static constexpr std::uint32_t SPV_OP_VARIABLE = 59;
     static constexpr std::uint32_t SPV_OP_DECORATE = 71;

@@ -25,6 +25,7 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 
 #include "../interface/IIr77PVBuffer.hpp"
+#include "../interface/IIr77PVAcceleration.hpp"
 #include "../interface/IIr77PVCmdBuffer.hpp"
 
 using namespace NSIr77RT;
@@ -259,6 +260,14 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // The acceleration structures this command buffer builds, right after its Compute pass. Paint sets it every frame on the first window it
+    // records and clears it on the rest, so the TLAS is built once a frame. Unset = no builds.
+    std::shared_ptr<IIr77Return const> SetAcceleration(std::shared_ptr<IIr77PVAcceleration> acceleration) {
+        m_acceleration = acceleration;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     /*
     // -------------------------------------------------------------------------------------------------------------------------------------
     // ray tracing / acceleration structures
@@ -418,9 +427,13 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         // one set for everything -- bound once here, untouched by pipeline switches
         m_descriptor_set->Bind(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
 
-        // RecordAccelBuild / RecordRayTrace become pass types once those paths are enabled
+        // the Compute pass also builds the acceleration structures (when this command buffer has them) -- after the dispatches, so the
+        // skinned vertices are posed before the BLAS refits read them
         for (auto const& pass : m_passes) {
             result = pass.type == Ir77PVPassType::Compute ? RecordCompute(cmd) : RecordRasterPass(cmd, pass);
+
+            if (result->ID() == GUIDIr77OperationSucceeded && pass.type == Ir77PVPassType::Compute && m_acceleration)
+                result = m_acceleration->RecordBuild(cmd);
 
             if (result->ID() != GUIDIr77OperationSucceeded) {
                 vkEndCommandBuffer(cmd);
@@ -693,13 +706,18 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         color.clearValue.color = m_clear_color;
 
+        // reversed-Z everywhere but the Shadow pass: the camera maps near to 1 and far to 0 (Ir77View), so depth clears to 0 and the greater
+        // depth wins -- float depth is densest near 0, where the distance is, so precision is near-uniform across the view. The Shadow pass
+        // keeps standard depth: its matrices are Lighting's, and its depth bias and compare sampler expect it.
+        bool const reversed{pass.target != Ir77PVPassTarget::Shadow};
+
         VkRenderingAttachmentInfo depth{};
         depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         depth.imageView = images.depth_view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth.storeOp = sampled_depth ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depth.clearValue.depthStencil = {1.0f, 0};
+        depth.clearValue.depthStencil = {reversed ? 0.0f : 1.0f, 0};
 
         VkRenderingInfo rendering_info{};
         rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -711,7 +729,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         vkCmdBeginRendering(cmd, &rendering_info);
 
-        SetPassState(cmd, images.extent);
+        SetPassState(cmd, images.extent, reversed);
 
         for (auto const list : pass.lists) RecordDraws(cmd, m_draws[static_cast<std::size_t>(list)]);
 
@@ -1160,8 +1178,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_ALL, 0, sizeof(Ir77PVPushConstants), &push);
     }
 
-    // Once per pass, after vkCmdBeginRendering: viewport / scissor to the pass extent, and the one depth compare every kind uses
-    void SetPassState(VkCommandBuffer cmd, VkExtent2D const& extent) const {
+    // Once per pass, after vkCmdBeginRendering: viewport / scissor to the pass extent, and the pass's depth compare -- GREATER for reversed-Z
+    // (every pass but Shadow), LESS for standard depth
+    void SetPassState(VkCommandBuffer cmd, VkExtent2D const& extent, bool const reversed) const {
         VkViewport viewport{};
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -1178,7 +1197,7 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        vkCmdSetDepthCompareOp(cmd, VK_COMPARE_OP_LESS);
+        vkCmdSetDepthCompareOp(cmd, reversed ? VK_COMPARE_OP_GREATER : VK_COMPARE_OP_LESS);
     }
 
     // Per-draw raster / depth state the pipelines leave dynamic -- set only when it differs from the previous draw
@@ -1312,6 +1331,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // compute
     // the compute list -- SetDispatches
     std::vector<Ir77PVDispatch> m_dispatches{};
+
+    // acceleration structures -- SetAcceleration (the frame's first recorded window); built after the Compute pass
+    std::shared_ptr<IIr77PVAcceleration> m_acceleration{};
 
     // queue and recording
     VkQueue m_queue{VK_NULL_HANDLE};

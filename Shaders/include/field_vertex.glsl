@@ -68,7 +68,7 @@ Ir77FieldVertex Ir77BuildFieldVertex(uint vertex) {
     vec2 grid = vec2(g) / vec2(max(dx - 1u, 1u), max(dy - 1u, 1u));
 
     v.world = p.position;
-    v.normal = normalize(cross(along_y, along_x));  // flat sheet in X/Z -> +Y
+    v.normal = normalize(cross(along_x, along_y));  // flat sheet in X/Z -> +Y
     v.color = p.color;
     v.value = p.data.x;
     v.coord = vec2(mix(cfg.domain_x.x, cfg.domain_x.y, grid.x), mix(cfg.domain_x.z, cfg.domain_x.w, grid.y));

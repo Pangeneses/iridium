@@ -41,6 +41,7 @@ inline Ir77GUID GUIDIr77PVTexture{(static_cast<unsigned __int128>(0x6092FBAA42AB
 inline Ir77GUID GUIDIr77PVShader{(static_cast<unsigned __int128>(0xC6E4819A3F720B5D) << 64) | 0x1D30A7F852C9E4B6};
 inline Ir77GUID GUIDIr77PVMaterial{(static_cast<unsigned __int128>(0x3A5D72F1E9C840B6) << 64) | 0x8F2BC4A1057E93D6};
 inline Ir77GUID GUIDIr77PVGeometry{(static_cast<unsigned __int128>(0xF1BA46E129CB4367) << 64) | 0xB63BE55CFE4F84A5};
+inline Ir77GUID GUIDIr77PVAcceleration{(static_cast<unsigned __int128>(0xA60A1A63A819A5CC) << 64) | 0x8B213394D9E62A92};
 inline Ir77GUID GUIDIr77PVTransfer{(static_cast<unsigned __int128>(0x81163A56E7134832) << 64) | 0x8F4126169ED7A5CF};
 inline Ir77GUID GUIDIr77PVPaint{(static_cast<unsigned __int128>(0xC440AC67BB674B9F) << 64) | 0xB3189D0572DE97E4};
 inline Ir77GUID GUIDIr77PVCEF{(static_cast<unsigned __int128>(0xE39ABBA104F7426F) << 64) | 0x8827C847BD1F8936};
@@ -120,6 +121,7 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
         {"GUIDIr77PVShader", &GUIDIr77PVShader},
         {"GUIDIr77PVMaterial", &GUIDIr77PVMaterial},
         {"GUIDIr77PVGeometry", &GUIDIr77PVGeometry},
+        {"GUIDIr77PVAcceleration", &GUIDIr77PVAcceleration},
         {"GUIDIr77PVInit", &GUIDIr77PVInit},
         {"GUIDIr77PVPaint", &GUIDIr77PVPaint},
         {"GUIDIr77PVCEF", &GUIDIr77PVCEF},

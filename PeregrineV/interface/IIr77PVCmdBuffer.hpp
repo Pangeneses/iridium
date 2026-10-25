@@ -19,6 +19,7 @@
 #include "IIr77PVPipelineCPT.hpp"
 #include "IIr77PVPipelineCache.hpp"
 #include "IIr77PVOverlay.hpp"
+#include "IIr77PVAcceleration.hpp"
 
 #include "../types/Ir77PVTypes.hpp"
 
@@ -72,6 +73,10 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     // ---- compute -----------------------------------------------------------------------------------------------------------------------------
     // The dispatch list, replaced whole; recorded in order by the Compute pass, a barrier after each. Empty = no compute work.
     virtual std::shared_ptr<IIr77Return const> SetDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
+
+    // ---- acceleration structures -------------------------------------------------------------------------------------------------------------
+    // Built right after the Compute pass (BLAS refits, TLAS). Paint sets it each frame on the first window it records. Unset = no builds.
+    virtual std::shared_ptr<IIr77Return const> SetAcceleration(std::shared_ptr<IIr77PVAcceleration> acceleration) = 0;
 
     /*
     // ---- ray tracing -------------------------------------------------------------------------------------------------------------------------

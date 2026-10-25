@@ -2,9 +2,17 @@
 // lighting.glsl -- the scene's lights and shadows, shared by every lit fragment shader (frag.frag, the field fragment shader).
 // Needs bindless.glsl first. Ir77Lighting(world, n) = the sum of every light's contribution at a point, shadows included -- the caller adds
 // ambient and multiplies by its albedo.
+//
+// Shadows: a light casts when it has a shadow tile (light.shadow >= 0). Built with IR77_RAY_SHADOWS (frag_ray.frag, field.frag on a ray-query
+// device) a caster's shadow is a ray against the frame's TLAS -- exact, no acne, no resolution limit -- and the shadow map only stands in while
+// there is no TLAS. Without it, the shadow map as always.
 // =============================================================================================================================================
 #ifndef IR77_LIGHTING_GLSL
 #define IR77_LIGHTING_GLSL
+
+#ifdef IR77_RAY_SHADOWS
+#include "raytrace.glsl"
+#endif
 
 // glTF KHR_lights_punctual range falloff: smooth to zero at `range`, inverse square inside it
 float DistanceFalloff(float distance, float range) {
@@ -69,6 +77,18 @@ float LightShadow(int tile, vec3 world, vec3 n, vec3 to_light) {
     return sum / 9.0;
 }
 
+#ifdef IR77_RAY_SHADOWS
+// One light's shadow by ray: from the surface toward the light, ending `distance` along it (the light itself, or unbounded for the sun). 1 = lit.
+// The ray starts a hair off the surface along the normal -- enough that it can't hit the triangle it leaves, growing with the size of the
+// coordinates so float precision far from the origin can't defeat it.
+float LightRayShadow(vec3 world, vec3 n, vec3 to_light, float distance) {
+    float magnitude = max(max(abs(world.x), abs(world.y)), abs(world.z));
+    vec3 origin = world + n * (0.001 + magnitude * 0.00002);
+
+    return Ir77Occluded(origin, to_light, 0.0, distance) ? 0.0 : 1.0;
+}
+#endif
+
 // Every light at one point: colour * intensity * falloff * N.L * shadow, summed
 vec3 Ir77Lighting(vec3 world, vec3 n) {
     vec3 lit = vec3(0.0);
@@ -80,6 +100,7 @@ vec3 Ir77Lighting(vec3 world, vec3 n) {
 
         vec3 to_light;
         float attenuation = 1.0;
+        float ray_length = 1.0e30;  // how far a shadow ray goes -- unbounded toward the sun, up to the light otherwise
 
         if (light.type == 0) {
             to_light = -normalize(light.direction);
@@ -88,12 +109,22 @@ vec3 Ir77Lighting(vec3 world, vec3 n) {
             float distance = length(offset);
             to_light = offset / max(distance, 0.0001);
             attenuation = DistanceFalloff(distance, light.range);
+            ray_length = max(distance - 0.01, 0.0);  // stop short of the light -- a lamp's own bulb mesh doesn't shadow it
 
             if (light.type == 2) attenuation *= SpotFalloff(light, to_light);
         }
 
         float diffuse = max(dot(n, to_light), 0.0);
-        float shadow = (diffuse > 0.0 && attenuation > 0.0) ? LightShadow(light.shadow, world, n, to_light) : 1.0;
+        float shadow = 1.0;
+
+        if (diffuse > 0.0 && attenuation > 0.0) {
+#ifdef IR77_RAY_SHADOWS
+            shadow = (light.shadow >= 0 && IR77_HAS_TLAS) ? LightRayShadow(world, n, to_light, ray_length) : LightShadow(light.shadow, world, n, to_light);
+#else
+            shadow = LightShadow(light.shadow, world, n, to_light);
+#endif
+        }
+
         lit += light.color * light.intensity * attenuation * diffuse * shadow;
     }
 

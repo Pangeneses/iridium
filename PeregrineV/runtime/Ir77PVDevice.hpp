@@ -6,6 +6,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -184,6 +185,13 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         // optional -- kept only if DefineDeviceInfo also finds the features it needs
         if (HasExtension(VK_EXT_MESH_SHADER_EXTENSION_NAME)) m_extensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
 
+        // optional -- ray queries need all three (acceleration structures, the query itself, and the deferred host operations the first
+        // depends on). Requested together or not at all.
+        if (HasExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) && HasExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+            HasExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
+            for (char const* name : RAY_QUERY_EXTENSIONS) m_extensions.push_back(name);
+        }
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
@@ -252,7 +260,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
         if (properties.apiVersion < VK_API_VERSION_1_3) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: Vulkan 1.3 required (dynamic rendering).");
 
-        // query: features2 -> mesh -> vulkan11 -> vulkan12 -> vulkan13
+        // query: features2 -> mesh -> acceleration structure -> ray query -> vulkan11 -> vulkan12 -> vulkan13
         VkPhysicalDeviceVulkan13Features v13_supported{};
         v13_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
 
@@ -264,9 +272,17 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         v11_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         v11_supported.pNext = &v12_supported;
 
+        VkPhysicalDeviceRayQueryFeaturesKHR ray_query_supported{};
+        ray_query_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+        ray_query_supported.pNext = &v11_supported;
+
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_supported{};
+        acceleration_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        acceleration_supported.pNext = &ray_query_supported;
+
         VkPhysicalDeviceMeshShaderFeaturesEXT mesh_supported{};
         mesh_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
-        mesh_supported.pNext = &v11_supported;
+        mesh_supported.pNext = &acceleration_supported;
 
         VkPhysicalDeviceFeatures2 supported{};
         supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -313,7 +329,35 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_mesh_features.meshShader = m_mesh_shading ? VK_TRUE : VK_FALSE;
         m_mesh_features.pNext = nullptr;
 
-        // enable: create info -> features2 -> vulkan11 -> vulkan12 -> vulkan13 -> [mesh]
+        // buffer device address -- a buffer's GPU address, which acceleration-structure builds read geometry through. Enabled whenever
+        // the GPU has it (core in 1.2); the allocator is told so it can hand out addressable memory.
+        m_buffer_device_address = v12_supported.bufferDeviceAddress == VK_TRUE;
+
+        // ray queries -- the three extensions requested, both features supported, and buffer device address; otherwise all three are dropped
+        bool const ray_extensions = std::all_of(std::begin(RAY_QUERY_EXTENSIONS), std::end(RAY_QUERY_EXTENSIONS),
+                                                [this](char const* name) { return FindRequested(name) != m_extensions.end(); });
+
+        // descriptorBindingAccelerationStructureUpdateAfterBind -- the TLAS lives in the bindless set (binding 3), which is update-after-bind
+        m_ray_query = ray_extensions && acceleration_supported.accelerationStructure == VK_TRUE && ray_query_supported.rayQuery == VK_TRUE &&
+                      acceleration_supported.descriptorBindingAccelerationStructureUpdateAfterBind == VK_TRUE && m_buffer_device_address;
+
+        if (!m_ray_query) {
+            for (char const* name : RAY_QUERY_EXTENSIONS) {
+                auto const found = FindRequested(name);
+                if (found != m_extensions.end()) m_extensions.erase(found);
+            }
+        }
+
+        m_acceleration_features = VkPhysicalDeviceAccelerationStructureFeaturesKHR{};
+        m_acceleration_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        m_acceleration_features.accelerationStructure = m_ray_query ? VK_TRUE : VK_FALSE;
+        m_acceleration_features.descriptorBindingAccelerationStructureUpdateAfterBind = m_ray_query ? VK_TRUE : VK_FALSE;
+
+        m_ray_query_features = VkPhysicalDeviceRayQueryFeaturesKHR{};
+        m_ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+        m_ray_query_features.rayQuery = m_ray_query ? VK_TRUE : VK_FALSE;
+
+        // enable: create info -> features2 -> vulkan11 -> vulkan12 -> vulkan13 -> [mesh] -> [acceleration structure -> ray query]
         m_vulkan11 = VkPhysicalDeviceVulkan11Features{};
         m_vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         m_vulkan11.shaderDrawParameters = VK_TRUE;  // required above
@@ -330,6 +374,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_vulkan12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         m_vulkan12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
         m_vulkan12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+        m_vulkan12.bufferDeviceAddress = m_buffer_device_address ? VK_TRUE : VK_FALSE;
         m_vulkan12.pNext = &m_vulkan13;
 
         m_vulkan13 = VkPhysicalDeviceVulkan13Features{};
@@ -338,7 +383,23 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_vulkan13.synchronization2 = VK_TRUE;
         m_vulkan13.maintenance4 = VK_TRUE;                    // LocalSizeId -- task / mesh / compute built for vulkan1.3
         m_vulkan13.shaderDemoteToHelperInvocation = VK_TRUE;  // discard in vulkan1.3 SPIR-V
-        m_vulkan13.pNext = m_mesh_shading ? &m_mesh_features : nullptr;
+        m_vulkan13.pNext = nullptr;
+
+        // the optional structs hang off the end of the chain, each only when it's on
+        void** tail = &m_vulkan13.pNext;
+
+        if (m_mesh_shading) {
+            *tail = &m_mesh_features;
+            tail = &m_mesh_features.pNext;
+        }
+
+        if (m_ray_query) {
+            *tail = &m_acceleration_features;
+            m_acceleration_features.pNext = &m_ray_query_features;
+            tail = &m_ray_query_features.pNext;
+        }
+
+        *tail = nullptr;
 
         m_features2 = VkPhysicalDeviceFeatures2{};
         m_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -372,8 +433,13 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
             vkGetDeviceQueue(m_device, m_queue_families[i].create_info.queueFamilyIndex, 0, &m_queue_families[i].queue);
         }
 
+        // properties: vulkan12 -> [acceleration structure] -- the latter's alignments size the BLAS / TLAS builds
+        m_acceleration_properties = VkPhysicalDeviceAccelerationStructurePropertiesKHR{};
+        m_acceleration_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+
         m_vulkan12_properties = VkPhysicalDeviceVulkan12Properties{};
         m_vulkan12_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES;
+        m_vulkan12_properties.pNext = m_ray_query ? &m_acceleration_properties : nullptr;
 
         VkPhysicalDeviceProperties2 properties2{};
         properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
@@ -410,6 +476,27 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     // true only when VK_EXT_mesh_shader is enabled with task + mesh stages
     std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) {
         enabled = m_mesh_shading;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // true only when VK_KHR_ray_query and VK_KHR_acceleration_structure are enabled with their features (and buffer device address)
+    std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) {
+        enabled = m_ray_query;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // true when buffers can be created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT (the allocator is created to match)
+    std::shared_ptr<IIr77Return const> GetBufferDeviceAddress(bool& enabled) {
+        enabled = m_buffer_device_address;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // acceleration-structure limits (scratch alignment, max geometry / instance counts) -- zeros when ray queries are off
+    std::shared_ptr<IIr77Return const> GetAccelerationStructureProperties(VkPhysicalDeviceAccelerationStructurePropertiesKHR& properties) {
+        properties = m_acceleration_properties;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -558,7 +645,21 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     VkPhysicalDeviceVulkan12Properties m_vulkan12_properties{};
 
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR m_acceleration_features{};
+
+    VkPhysicalDeviceRayQueryFeaturesKHR m_ray_query_features{};
+
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR m_acceleration_properties{};
+
     bool m_mesh_shading{false};
+
+    bool m_ray_query{false};  // acceleration structures + ray queries enabled
+
+    bool m_buffer_device_address{false};
+
+    // requested together or not at all -- acceleration structures need deferred host operations; ray queries need acceleration structures
+    static constexpr std::array<char const*, 3> RAY_QUERY_EXTENSIONS{VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_RAY_QUERY_EXTENSION_NAME,
+                                                                     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME};
 
     VkDeviceCreateInfo m_device_create_info{};
 };

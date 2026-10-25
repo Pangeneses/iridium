@@ -46,7 +46,9 @@ namespace NSIr77Scene {
 //
 //   setup:     SetRenderer / SetLighting / SetDefaultMaterial
 //   program:   CompileField(settings) -> [SetFieldParams / ClearFieldCanvas / ResetField / ShowField]
-//   per frame: WriteDispatches(windows, dt) once, then AppendDraws(window, pass, items) into each pass list
+//   per frame: AppendDispatches(dispatches, dt) once, then AppendDraws(window, pass, items) into each pass list
+//   rays:      on a ray-query device a surface is in the TLAS too -- one surface BLAS over the point buffer and a grid index buffer, rebuilt
+//              every frame after the program runs, so the field casts ray-traced shadows (on itself and the scene). Particles stay out.
 // =============================================================================================================================================
 class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_shared_from_this<Ir77Field> {
    public:
@@ -162,7 +164,13 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
                                                           compute_spirv, compute_errors)
                                     ->ID() == GUIDIr77OperationSucceeded;
 
-        bool const fragment_ok = m_renderer->CompileShader("field.frag", FieldShaderText("IR77_STAGE_FRAGMENT", defines, settings.source, "include/field_fragment.glsl"),
+        // ray-traced shadows on the surface when the device has ray queries (lighting.glsl) -- fragment stage only
+        bool ray_query{false};
+        m_renderer->GetRayQuery(ray_query);
+
+        std::string const fragment_defines = defines + (ray_query ? "#define IR77_RAY_SHADOWS\n" : "");
+
+        bool const fragment_ok = m_renderer->CompileShader("field.frag", FieldShaderText("IR77_STAGE_FRAGMENT", fragment_defines, settings.source, "include/field_fragment.glsl"),
                                                            fragment_spirv, fragment_errors)
                                      ->ID() == GUIDIr77OperationSucceeded;
 
@@ -193,6 +201,10 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
             m_field_has_canvas = true;
         }
 
+        // the surface BLAS reads the points and the grid -- out of the rays before either changes
+        glm::uvec2 const grid{settings.topology == 0 ? glm::uvec2(dims.x, dims.y) : glm::uvec2(0u)};
+        if (count != m_field_count || grid != m_field_ray_grid) DefineRayRelease();
+
         if (count != m_field_count) {
             if (m_field_has_points) m_renderer->DestroyStorageBuffer(m_field_points_buffer);
             if (m_field_has_ink) m_renderer->DestroyStorageBuffer(m_field_ink_buffer);
@@ -207,6 +219,11 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
 
             m_field_has_points = true;
             m_field_count = count;
+        }
+
+        // ray queries -- a surface joins the rays (once per grid size)
+        if (settings.topology == 0 && !m_field_has_ray) {
+            if (Failed(DefineRaySurface(dims), result)) return result;
         }
 
         // point ink -- one vec4 per element, zeroed; kept across recompiles of the same size like the points
@@ -289,16 +306,16 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
 
         DefineBounds();
 
+        if (m_field_has_ray) m_renderer->SetSurfaceAccelerationVisible(m_field_ray_surface, visible);
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The field's compute for this frame -- on window 0's command buffer only, so the simulation steps once a frame however many windows draw
-    // it: Field() over every element, then (with a Pen) the canvas decay / clear and the pens between last frame's t and this one's.
-    // dt = seconds since the last frame (clamped to 0..0.1 here). Hidden or not compiled: every window gets an empty list.
-    std::shared_ptr<IIr77Return const> WriteDispatches(std::size_t const& windows, float const& dt) {
+    // The field's compute for this frame, appended to the frame's dispatch list (recorded once a frame, on the first window Paint draws, so
+    // the simulation steps once however many windows draw it): Field() over every element, then (with a Pen) the canvas decay / clear and the pens
+    // between last frame's t and this one's. dt = seconds since the last frame (clamped to 0..0.1 here). Hidden or not compiled: nothing.
+    std::shared_ptr<IIr77Return const> AppendDispatches(std::vector<Ir77PVDispatch>& dispatches, float const& dt) {
         if (!m_renderer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Field: SetRenderer not called.");
-
-        std::vector<Ir77PVDispatch> dispatches{};
 
         if (m_field_ready && m_field_visible) {
             float const step = std::clamp(dt, 0.0f, 0.1f);
@@ -338,8 +355,6 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
             m_field_first = false;
             m_field_clear = false;
         }
-
-        for (std::size_t w = 0; w < windows; w++) m_renderer->SetDispatches(w, w == 0 ? dispatches : std::vector<Ir77PVDispatch>{});
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -402,6 +417,63 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // The surface in the rays: a grid index buffer over the z = 0 slice of the points -- two triangles a cell, the same corners and winding
+    // field_vertex.glsl draws -- and a surface BLAS over it and the point buffer (position = Ir77FieldPointGPU::position_size.xyz), rebuilt
+    // every frame. No ray queries, or a grid too large to keep a second index copy of -> nothing (the shadow map still covers it).
+    std::shared_ptr<IIr77Return const> DefineRaySurface(glm::uvec3 const& dims) {
+        bool ray_query{false};
+        m_renderer->GetRayQuery(ray_query);
+        if (!ray_query) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        std::uint64_t const cells = static_cast<std::uint64_t>(dims.x - 1) * (dims.y - 1);
+        if (cells > FIELD_MAX_RAY_CELLS)
+            return Ir77RETURN<Ir77OperationSucceeded>(this, "[WARN] Ir77Field: surface over " + std::to_string(FIELD_MAX_RAY_CELLS) +
+                                                                " cells -- left out of the rays (shadow-map shadows).");
+
+        std::vector<std::uint32_t> indices{};
+        indices.reserve(static_cast<std::size_t>(cells * 6));
+
+        for (std::uint32_t y = 0; y + 1 < dims.y; y++)
+            for (std::uint32_t x = 0; x + 1 < dims.x; x++) {
+                std::uint32_t const i = x + y * dims.x;
+
+                // (0,0) (1,0) (1,1) / (0,0) (1,1) (0,1)
+                indices.insert(indices.end(), {i, i + 1, i + 1 + dims.x, i, i + 1 + dims.x, i + dims.x});
+            }
+
+        std::shared_ptr<IIr77Return const> result{};
+
+        if (Failed(m_renderer->CreateStorageBuffer(static_cast<VkDeviceSize>(indices.size() * sizeof(std::uint32_t)), indices.data(), m_field_ray_grid_buffer,
+                                                   m_field_ray_grid_slot),
+                   result))
+            return result;
+
+        if (Failed(m_renderer->CreateSurfaceAcceleration(m_field_points_buffer, sizeof(Ir77FieldPointGPU), dims.x * dims.y, m_field_ray_grid_buffer,
+                                                         static_cast<std::uint32_t>(cells * 2), m_field_ray_surface),
+                   result)) {
+            m_renderer->DestroyStorageBuffer(m_field_ray_grid_buffer);
+            return result;
+        }
+
+        if (!m_field_visible) m_renderer->SetSurfaceAccelerationVisible(m_field_ray_surface, false);
+
+        m_field_ray_grid = glm::uvec2(dims.x, dims.y);
+        m_field_has_ray = true;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The surface out of the rays and its grid freed -- before the point buffer is replaced or the grid changes shape
+    void DefineRayRelease() {
+        if (!m_field_has_ray) return;
+
+        m_renderer->ReleaseSurfaceAcceleration(m_field_ray_surface);
+        m_renderer->DestroyStorageBuffer(m_field_ray_grid_buffer);
+
+        m_field_has_ray = false;
+        m_field_ray_grid = glm::uvec2(0u);
+    }
+
     // 64 threads a group, spread over x and y -- field_compute.glsl rebuilds the flat index
     std::array<std::uint32_t, 3> FieldGroups(std::uint64_t const threads) const {
         std::uint64_t const groups = std::max<std::uint64_t>((threads + 63) / 64, 1);
@@ -452,6 +524,8 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
     static_assert(sizeof(Ir77FieldConfig) == 336, "must match Ir77FieldConfig in field.glsl");
 
     static constexpr std::uint64_t FIELD_MAX_POINTS{16u * 1024u * 1024u};
+
+    static constexpr std::uint64_t FIELD_MAX_RAY_CELLS{4u * 1024u * 1024u};  // a surface past this stays out of the rays (grid copy: 96 MB)
 
     static constexpr std::uint32_t FIELD_JOB_POINTS{0};  // field_compute.glsl jobs
     static constexpr std::uint32_t FIELD_JOB_CANVAS{1};
@@ -508,5 +582,16 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
     Ir77PVPipelineHandle m_field_shadow{IR77PV_NO_PIPELINE};
 
     Ir77PVPipelineHandle m_field_compute{IR77PV_NO_PIPELINE};
+
+    // ray queries -- the surface BLAS and its grid index buffer
+    bool m_field_has_ray{false};
+
+    std::uint32_t m_field_ray_surface{0};  // Acceleration surface handle
+
+    std::uint32_t m_field_ray_grid_buffer{0};
+
+    std::uint32_t m_field_ray_grid_slot{BINDLESS_NO_SLOT};
+
+    glm::uvec2 m_field_ray_grid{0u};  // the grid it was built for -- (0, 0) when none
 };
 }  // namespace NSIr77Scene

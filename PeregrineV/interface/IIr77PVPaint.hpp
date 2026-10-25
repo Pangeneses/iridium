@@ -21,6 +21,7 @@
 #include "IIr77PVTexture.hpp"
 #include "IIr77PVBuffer.hpp"
 #include "IIr77PVOverlay.hpp"
+#include "IIr77PVAcceleration.hpp"
 
 #include "../types/Ir77PVTypes.hpp"
 
@@ -69,6 +70,12 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     // One per window, in window order -- optional; empty = no overlay drawn
     virtual std::shared_ptr<IIr77Return const> SetOverlays(std::vector<std::shared_ptr<IIr77PVOverlay>> const& overlays) = 0;
 
+    // Ray-query devices only -- the first window recorded each frame builds the acceleration structures after its Compute pass
+    virtual std::shared_ptr<IIr77Return const> SetAcceleration(std::shared_ptr<IIr77PVAcceleration> acceleration) = 0;
+
+    // [window] -- the frame table buffers. Each window's copy is rewritten before submit with the TLAS built this frame.
+    virtual std::shared_ptr<IIr77Return const> SetFrameTables(std::vector<std::shared_ptr<IIr77PVBuffer>> const& frame_tables) = 0;
+
     // One command buffer per window. After the wiring and the pipeline cache.
     virtual std::shared_ptr<IIr77Return const> CreateCommandBuffers() = 0;
 
@@ -81,8 +88,11 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     // Replaces one pass's draw list for a window. Persists until replaced.
     virtual std::shared_ptr<IIr77Return const> SetDraws(std::size_t const& window, Ir77PVPass const& pass, std::vector<Ir77PVDrawItem> const& draws) = 0;
 
-    // Replaces a window's compute list -- recorded in order by its Compute pass every frame. Persists until replaced.
+    // Replaces a window's own compute list -- recorded by its Compute pass every frame. Persists until replaced.
     virtual std::shared_ptr<IIr77Return const> SetDispatches(std::size_t const& window, std::vector<Ir77PVDispatch> const& dispatches) = 0;
+
+    // Replaces the once-a-frame compute list (skinning, the field) -- recorded by the first window Draw records. Persists until replaced.
+    virtual std::shared_ptr<IIr77Return const> SetFrameDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
 
     // Replaces a window's pass list. Exactly one pass must target the swapchain.
     virtual std::shared_ptr<IIr77Return const> SetPassList(std::size_t const& window, std::vector<Ir77PVPassDesc> const& passes) = 0;

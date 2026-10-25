@@ -7,6 +7,7 @@
 //   shadow maps:     IR77_SHADOW_TEXTURE(i)                  sampler2DShadow at slot i (depth + compare sampler only)
 //   storage buffers: IR77_BUFFER(Name, Type) once per type,  then Name[i].data[j]
 //   storage images:  IR77_STORAGE_IMAGE(Name, format) once,  then Name[i]
+//   rays:            #include "include/raytrace.glsl" too -- IR77_TLAS, Ir77Occluded (ray-query devices only)
 //   per draw:        pc.model, pc.frame, pc.material ...     (indices into the arrays above)
 // =============================================================================================================================================
 #ifndef IR77_BINDLESS_GLSL
@@ -17,6 +18,7 @@
 #define IR77_BINDING_TEXTURES 0
 #define IR77_BINDING_BUFFERS 1
 #define IR77_BINDING_STORAGE_IMAGES 2
+#define IR77_BINDING_ACCELERATION 3  // declared in include/raytrace.glsl -- only shaders that trace rays include it
 
 #define IR77_PLACEHOLDER_TEXTURE 0u
 
@@ -68,7 +70,8 @@ struct Ir77FrameTable {
     uint bones;            // buffer slot (pc.bones when the draw has no palette of its own)
     uint env;              // texture slot
     uint shadow_map;       // texture slot
-    uint reserved;
+    uint tlas;             // acceleration-structure slot (binding 3, include/raytrace.glsl): the TLAS built this frame; 0xFFFFFFFF = none
+    uint ray_objects;      // buffer slot: Ir77RayObject[] (include/raytrace.glsl) -- row = a hit's custom index; 0xFFFFFFFF = none
 };
 IR77_BUFFER(ir77_frame_tables, Ir77FrameTable);
 #define IR77_FRAME ir77_frame_tables[pc.frame].data[0]

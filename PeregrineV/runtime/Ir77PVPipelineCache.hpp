@@ -58,6 +58,8 @@ namespace NSIr77PeregrineV {
 //
 // Manifest (version 1):
 //   "pipelines": { name: { vertex / fragment / task / mesh: shader registry names,
+//                           fragment_ray: the fragment shader on a ray-query device (ray-traced shadows) -- optional; ignored without ray
+//                                         queries, and while that shader isn't registered,
 //                           pass: main | shadow | offscreen | post, blend: opaque | alpha | additive, cull: back | front | none,
 //                           depth_test / depth_write / depth_bias / flip_back_faces: bool, user: [up to 4 names for pc.user[4..7]] }
 //                  name: { compute: shader registry name, user: [...] } -- a compute pipeline: nothing else applies }
@@ -527,7 +529,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
             if (key == "compute") compute = true;
             else if (key != "user" && graphics_key.empty()) graphics_key = key;
 
-            if (key == "vertex" || key == "fragment" || key == "task" || key == "mesh" || key == "compute") {
+            if (key == "vertex" || key == "fragment" || key == "fragment_ray" || key == "task" || key == "mesh" || key == "compute") {
                 std::string_view value{};
                 if (field.value.get(value) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, where + "\"" + std::string{key} + "\" must be a shader name.");
             } else if (key == "pass") {
@@ -592,8 +594,23 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
             }
         }
 
-        if (desc.vertex == IR77PV_NO_SHADER && desc.mesh == IR77PV_NO_SHADER && desc.compute == IR77PV_NO_SHADER)
+        if (desc.vertex == IR77PV_NO_SHADER && desc.mesh == IR77PV_NO_SHADER && desc.compute == IR77PV_NO_SHADER) {
             missing = "it names no vertex, mesh or compute shader";
+            return;
+        }
+
+        // a ray-query device draws with "fragment_ray" when the entry has one and it's registered -- the same pipeline otherwise, with
+        // ray-traced shadows. Not registered (compile_shaders.sh not run) -> "fragment", with a warning.
+        std::string_view ray{};
+        if (entry["fragment_ray"].get(ray) != simdjson::SUCCESS) return;
+
+        bool ray_query{false};
+        if (m_device) m_device->GetRayQuery(ray_query);
+        if (!ray_query) return;
+
+        Ir77PVShaderHandle handle{IR77PV_NO_SHADER};
+        if (m_shader_stack->FindShader(std::string{ray}, handle)->ID() == GUIDIr77OperationSucceeded) desc.fragment = handle;
+        else Ir77RETURN<Ir77OperationSucceeded>(this, "[WARN] fragment_ray '" + std::string{ray} + "' not registered -- shadow-map shadows (run compile_shaders.sh)");
     }
 
     // "roles": every engine role it names must point at a pipeline in the file; static and cef must point at available ones

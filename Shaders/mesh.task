@@ -8,7 +8,7 @@
 // one mesh workgroup per survivor. local_size_x must match TASK_GROUP_SIZE in Ir77PVCmdBuffer.
 layout(local_size_x = 32) in;
 
-// pc.user[0] -- matches Ir77PVMeshlet (48 bytes)
+// pc.user[0] -- matches Ir77PVMeshlet (64 bytes)
 struct Meshlet {
     vec4 sphere;  // xyz center, w radius -- object space
     vec4 cone;    // xyz axis, w cutoff
@@ -16,6 +16,10 @@ struct Meshlet {
     uint triangle_offset;
     uint vertex_count;
     uint triangle_count;
+    uint material;  // row in the material table
+    uint pad0;
+    uint pad1;
+    uint pad2;
 };
 IR77_BUFFER(ir77_meshlets, Meshlet);
 

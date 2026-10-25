@@ -91,12 +91,14 @@ inline constexpr Ir77PVPipelineHandle IR77PV_NO_PIPELINE = UINT32_MAX;
 inline constexpr std::uint32_t BINDLESS_BINDING_TEXTURES = 0;
 inline constexpr std::uint32_t BINDLESS_BINDING_BUFFERS = 1;
 inline constexpr std::uint32_t BINDLESS_BINDING_STORAGE_IMAGES = 2;
-inline constexpr std::uint32_t BINDLESS_BINDING_COUNT = 3;
+inline constexpr std::uint32_t BINDLESS_BINDING_ACCELERATION = 3;  // ray-query devices only -- the binding doesn't exist without them
+inline constexpr std::uint32_t BINDLESS_BINDING_COUNT = 4;
 
 // requested array sizes -- Ir77PVLayout clamps them to the device's update-after-bind limits
 inline constexpr std::uint32_t BINDLESS_TEXTURES = 4096;
 inline constexpr std::uint32_t BINDLESS_BUFFERS = 4096;
 inline constexpr std::uint32_t BINDLESS_STORAGE_IMAGES = 256;
+inline constexpr std::uint32_t BINDLESS_ACCELERATION_STRUCTURES = 16;  // the TLAS ring, with room to spare
 
 // texture slot 0 always holds the white placeholder, so an unset texture slot samples something valid
 inline constexpr std::uint32_t BINDLESS_PLACEHOLDER_TEXTURE = 0;
@@ -109,6 +111,7 @@ typedef struct Ir77PVBindlessCapacity {
     std::uint32_t textures{0};
     std::uint32_t buffers{0};
     std::uint32_t storage_images{0};
+    std::uint32_t acceleration_structures{0};  // 0 = no binding 3 (no ray queries)
 }* pIr77PVBindlessCapacity;
 
 // One push-constant block for every pipeline -- graphics, compute and ray. 128 bytes, the guaranteed minimum.
@@ -141,10 +144,11 @@ typedef struct Ir77PVFrameTable {
     std::uint32_t bones{BINDLESS_NO_SLOT};                   // buffer slot: bone bases + palettes -- pc.bones when a draw has none
     std::uint32_t env{BINDLESS_PLACEHOLDER_TEXTURE};         // texture slot: environment / IBL
     std::uint32_t shadow_map{BINDLESS_PLACEHOLDER_TEXTURE};  // texture slot: shadow map
-    std::uint32_t reserved{0};
+    std::uint32_t tlas{BINDLESS_NO_SLOT};                    // acceleration-structure slot (binding 3): the TLAS built this frame; NO_SLOT = none
+    std::uint32_t ray_objects{BINDLESS_NO_SLOT};             // buffer slot: Ir77PVRayObject[] -- what a ray hit is (custom index = row); NO_SLOT = none
 }* pIr77PVFrameTable;
 
-static_assert(sizeof(Ir77PVFrameTable) == 32, "Ir77PVFrameTable must match Ir77FrameTable in bindless.glsl");
+static_assert(sizeof(Ir77PVFrameTable) == 36, "Ir77PVFrameTable must match Ir77FrameTable in bindless.glsl");
 
 // Per window per frame: the table's own slot plus a CPU copy of what it holds (Ir77PVCmdBuffer builds push constants from it)
 typedef struct Ir77PVFrameSlots {
@@ -312,11 +316,13 @@ constexpr VkShaderStageFlagBits ToVkStage(Ir77PVShaderStage const stage) {
 inline constexpr std::uint32_t PUSH_CONSTANT_LIMIT = 128;
 
 // Vertex input locations, binding 0. A vertex shader reading 3 or 4 is fed the skinned layout (Ir77PVVertexSkinned), otherwise Ir77PVVertex.
+// 5 (tangent) is in both.
 inline constexpr std::uint32_t VERTEX_LOCATION_POSITION = 0;
 inline constexpr std::uint32_t VERTEX_LOCATION_NORMAL = 1;
 inline constexpr std::uint32_t VERTEX_LOCATION_UV = 2;
 inline constexpr std::uint32_t VERTEX_LOCATION_JOINTS = 3;
 inline constexpr std::uint32_t VERTEX_LOCATION_WEIGHTS = 4;
+inline constexpr std::uint32_t VERTEX_LOCATION_TANGENT = 5;
 
 // What a shader's SPIR-V says about itself
 typedef struct Ir77PVShaderReflection {
@@ -394,23 +400,29 @@ typedef struct Ir77PVMaterialTextures {
 }* pIr77PVMaterialTextures;
 
 // =============================================================================================================================================
-// vertex formats -- CPU-side input. Ir77PVVertex is also read as a raw float[8] stream by the mesh shader (pc.vertices).
+// vertex formats -- CPU-side input. Ir77PVVertex is also read as a raw float[12] stream by the mesh shader and skin.comp (pc.vertices).
+// tangent: xyz runs along +U on the surface, w = handedness (+-1). bitangent = cross(normal, tangent.xyz) * w.
 // =============================================================================================================================================
 typedef struct Ir77PVVertex {
     glm::vec3 position{};
     glm::vec3 normal{};
     glm::vec2 uv{};
+    glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
 }* pIr77PVVertex;
 
-static_assert(sizeof(Ir77PVVertex) == sizeof(float) * 8, "mesh shader reads vertices as 8 tightly packed floats");
+static_assert(sizeof(Ir77PVVertex) == sizeof(float) * 12, "mesh shader / skin.comp read vertices as 12 tightly packed floats");
 
+// skin.comp reads it as 20 words: position 3, normal 3, uv 2, tangent 4, joints 4 (uint), weights 4
 typedef struct Ir77PVVertexSkinned {
     glm::vec3 position{};
     glm::vec3 normal{};
     glm::vec2 uv{};
+    glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
     glm::uvec4 joints{};
     glm::vec4 weights{};
 }* pIr77PVVertexSkinned;
+
+static_assert(sizeof(Ir77PVVertexSkinned) == sizeof(std::uint32_t) * 20, "skin.comp reads skinned vertices as 20 tightly packed words");
 
 // =============================================================================================================================================
 // shader-visible data -- std430, layouts must match the GLSL structs
@@ -476,7 +488,7 @@ typedef struct Ir77PVMaterialRow {
 
 static_assert(sizeof(Ir77PVMaterialRow) == 80, "Ir77PVMaterialRow must match Ir77MaterialRow in bindless.glsl");
 
-// Meshlet record (mesh path, pc.user[0]). std430: vec4, vec4, uvec4.
+// Meshlet record (mesh path, pc.user[0]). std430: vec4, vec4, uvec4, uvec4.
 typedef struct Ir77PVMeshlet {
     std::array<float, 4> sphere{};  // xyz center, w radius -- object space
     std::array<float, 4> cone{};    // xyz axis, w cutoff
@@ -484,9 +496,11 @@ typedef struct Ir77PVMeshlet {
     std::uint32_t triangle_offset{0};
     std::uint32_t vertex_count{0};
     std::uint32_t triangle_count{0};
+    std::uint32_t material{0};  // row in the material table -- every triangle in the meshlet uses it
+    std::array<std::uint32_t, 3> _pad{};
 }* pIr77PVMeshlet;
 
-static_assert(sizeof(Ir77PVMeshlet) == 48, "must match the std430 Meshlet struct in the task / mesh shaders");
+static_assert(sizeof(Ir77PVMeshlet) == 64, "must match the std430 Meshlet struct in the task / mesh shaders");
 
 // Draw record (mesh path, pc.user[3]). std430: uvec4. draws[draw_base + gl_DrawID] says which object a draw is.
 typedef struct Ir77PVMeshDraw {
@@ -525,6 +539,7 @@ typedef struct Ir77PVSceneUpload {
     std::vector<Ir77PVVertexSkinned> vertices_skinned{};
     std::vector<std::uint32_t> indices_skinned{};
     std::vector<VkDrawIndexedIndirectCommand> indirect_commands{};
+    std::vector<std::uint32_t> triangle_materials{};  // mesh path: material row per triangle of `indices` (indices.size() / 3)
 }* pIr77PVSceneUpload;
 
 typedef struct Ir77PVSingleMesh {
@@ -574,7 +589,20 @@ typedef struct Ir77PVSceneSlot {
     std::vector<std::uint8_t> visible{};
     std::uint32_t dirty{0};  // frame copies still to rewrite
     bool alive{false};
+    std::uint32_t vertex_slot{BINDLESS_NO_SLOT};          // GetSceneVertexSlot -- the vertex buffer as a storage buffer
+    std::uint32_t vertex_skinned_slot{BINDLESS_NO_SLOT};  // the same for the skinned channel
+    std::uint32_t vertex_count{0};                        // vertices in `vertex` -- the BLAS builds' upper bound
 }* pIr77PVSceneSlot;
+
+// What Acceleration reads out of a vertex-path scene (Ir77PVGeometry::GetSceneGeometry) -- the buffers it builds from and the commands
+// that cut them into objects
+typedef struct Ir77PVSceneGeometry {
+    std::shared_ptr<IIr77PVBuffer> vertex{};
+    std::shared_ptr<IIr77PVBuffer> index{};
+    std::uint32_t vertex_count{0};
+    std::vector<VkDrawIndexedIndirectCommand> commands{};
+    std::vector<std::uint32_t> instance_counts{};  // per command, whatever its visibility
+}* pIr77PVSceneGeometry;
 
 // mesh path scene -- meshlet buffers plus the per-record command state
 typedef struct Ir77PVMeshletSlot {
@@ -584,6 +612,12 @@ typedef struct Ir77PVMeshletSlot {
     std::vector<std::uint32_t> first_record{};                  // per scene command, plus one end entry
     std::uint32_t dirty{0};
     bool alive{false};
+    // ray queries -- what Acceleration builds the static stream's BLASes from (GetMeshletGeometry). ray_index is the scene's index buffer,
+    // kept only on ray-query devices; the vertices are mesh.vertices.
+    std::shared_ptr<IIr77PVBuffer> ray_index{};
+    std::uint32_t vertex_count{0};
+    std::vector<VkDrawIndexedIndirectCommand> scene_commands{};  // the upload's indirect commands -- one BLAS each
+    std::vector<std::uint32_t> instance_counts{};                // per scene command
 }* pIr77PVMeshletSlot;
 
 // Unloaded buffers -- held until every frame that could still read them has finished. Their bindless slots are released at unload
@@ -652,6 +686,60 @@ typedef struct Ir77PVDispatch {
 // =============================================================================================================================================
 // ray tracing
 // =============================================================================================================================================
+
+// ---- acceleration structures (ray queries) -- Ir77PVAcceleration ----
+
+// One object's BLAS: the triangles of one scene command (or one surface), read from its buffers by GPU address.
+//   static:  built once at load, fastest to trace
+//   dynamic: refit every frame (the posed stream -- same triangles, moved vertices)
+//   rebuild: built from scratch every frame (a field surface -- its shape is whatever the program wrote this frame)
+// material = the material row its alpha test reads (MASK materials) -- BINDLESS_NO_SLOT = opaque, never tested.
+typedef struct Ir77PVBottomLevel {
+    VkAccelerationStructureKHR structure{VK_NULL_HANDLE};
+    std::shared_ptr<IIr77PVBuffer> storage{};
+    VkDeviceAddress address{0};  // what TLAS instances point at
+    std::uint32_t scene_id{0};
+    std::uint32_t command{0};
+    bool dynamic{false};
+    VkDeviceAddress vertex_address{0};
+    VkDeviceAddress index_address{0};
+    std::uint32_t max_vertex{0};
+    std::uint32_t first_index{0};
+    std::int32_t vertex_offset{0};
+    std::uint32_t triangle_count{0};
+    VkDeviceSize build_scratch{0};
+    VkDeviceSize update_scratch{0};
+    VkDeviceSize vertex_stride{sizeof(Ir77PVVertex)};  // bytes; position = the first 3 floats
+    std::uint32_t material{BINDLESS_NO_SLOT};         // alpha-test material row; NO_SLOT = opaque
+    bool rebuild{false};
+    bool visible{true};  // in the TLAS
+    bool alive{true};    // false once released -- its row stays, empty
+}* pIr77PVBottomLevel;
+
+// One TLAS entry -- a BLAS through one models[] slot. The hit's custom index is the BLAS (its Ir77PVRayObject row).
+typedef struct Ir77PVTopInstance {
+    std::uint32_t bottom{0};         // index into Acceleration's BLAS list
+    std::uint32_t slot{UINT32_MAX};  // models[] slot -- its transform; UINT32_MAX = identity (world-space geometry: a field surface)
+}* pIr77PVTopInstance;
+
+// One BLAS as the shaders see it (IR77_FRAME.ray_objects, row = the hit's custom index) -- enough to rebuild a hit triangle's UV for the alpha
+// test. Must match Ir77RayObject in include/raytrace.glsl. Addresses split low / high (no 64-bit ints in the shaders).
+typedef struct Ir77PVRayObject {
+    std::array<std::uint32_t, 2> vertex_address{};
+    std::array<std::uint32_t, 2> index_address{};
+    std::uint32_t first_index{0};
+    std::int32_t vertex_offset{0};
+    std::uint32_t vertex_floats{0};            // vertex stride in floats -- UV at +6 (Ir77PVVertex)
+    std::uint32_t material{BINDLESS_NO_SLOT};  // material row; NO_SLOT = opaque
+}* pIr77PVRayObject;
+
+static_assert(sizeof(Ir77PVRayObject) == 32, "Ir77PVRayObject must match Ir77RayObject in raytrace.glsl");
+
+// One TLAS -- one per frame in flight
+typedef struct Ir77PVTopLevel {
+    VkAccelerationStructureKHR structure{VK_NULL_HANDLE};
+    std::shared_ptr<IIr77PVBuffer> storage{};
+}* pIr77PVTopLevel;
 
 // SBT region a group's handle is written into
 enum class Ir77PVRayRegion : std::uint8_t { RayGen, Miss, Hit, Callable };

@@ -10,6 +10,10 @@
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/tools.hpp>
 
+#include <meshoptimizer.h>
+#include "../external/mikktspace/mikktspace.h"
+
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -35,8 +39,8 @@ namespace NSIr77Scene {
 // =============================================================================================================================================
 // Ir77Mesh -- every triangle primitive of every used glTF mesh, stacked into two streams:
 //
-//   static  -- position, normal, uv                     -> Ir77PVVertex         (vertex path or mesh shading)
-//   skinned -- position, normal, uv, joints, weights    -> Ir77PVVertexSkinned  (vertex path, Skinned pipeline)
+//   static  -- position, normal, uv, tangent                     -> Ir77PVVertex         (vertex path or mesh shading)
+//   skinned -- position, normal, uv, tangent, joints, weights    -> Ir77PVVertexSkinned  (compute skinning -> the posed stream)
 //
 //   a primitive is skinned when it has JOINTS_0 and WEIGHTS_0
 //   one range per primitive, in its own stream; Ir77MeshRange is laid out as a VkDrawIndexedIndirectCommand
@@ -102,7 +106,7 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
 
    public:
     // Appends every triangle primitive of mesh `index` -- one range each, into the static or skinned stream.
-    // Points / lines / strips and primitives without POSITION are skipped.
+    // Points / lines / strips and primitives without POSITION are skipped. Tangents: the file's when it has TANGENT, otherwise MikkTSpace.
     std::shared_ptr<IIr77Return const> AddMesh(fastgltf::Asset const& asset, std::uint32_t const& index) {
         if (index >= asset.meshes.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Mesh: mesh index out of range.");
 
@@ -126,44 +130,72 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
 
             Ir77MeshStream& stream = skinned ? m_skinned : m_static;
 
-            Ir77MeshRange range{};
-            range.vertex_offset = static_cast<std::int32_t>(stream.positions.size());
-            range.index_offset = static_cast<std::uint32_t>(stream.indices.size());
+            // the primitive on its own first -- generated tangents can split vertices at UV seams, so it's appended after
+            Ir77MeshStream prim{};
 
             // positions
-            stream.positions.reserve(stream.positions.size() + vertex_count);
-            fastgltf::iterateAccessor<glm::vec3>(asset, position_accessor, [&](glm::vec3 p) { stream.positions.push_back(p); });
+            prim.positions.reserve(vertex_count);
+            fastgltf::iterateAccessor<glm::vec3>(asset, position_accessor, [&](glm::vec3 p) { prim.positions.push_back(p); });
 
             // normals -- default up when missing or mismatched
             auto const* normal_attr = primitive.findAttribute("NORMAL");
             if (normal_attr != primitive.attributes.end() && asset.accessors.at(normal_attr->accessorIndex).count == vertex_count) {
-                fastgltf::iterateAccessor<glm::vec3>(asset, asset.accessors.at(normal_attr->accessorIndex), [&](glm::vec3 n) { stream.normals.push_back(n); });
+                fastgltf::iterateAccessor<glm::vec3>(asset, asset.accessors.at(normal_attr->accessorIndex), [&](glm::vec3 n) { prim.normals.push_back(n); });
             } else {
-                stream.normals.insert(stream.normals.end(), vertex_count, glm::vec3(0.0f, 1.0f, 0.0f));
+                prim.normals.assign(vertex_count, glm::vec3(0.0f, 1.0f, 0.0f));
             }
 
             // uvs -- zero when missing or mismatched
             auto const* uv_attr = primitive.findAttribute("TEXCOORD_0");
-            if (uv_attr != primitive.attributes.end() && asset.accessors.at(uv_attr->accessorIndex).count == vertex_count) {
-                fastgltf::iterateAccessor<glm::vec2>(asset, asset.accessors.at(uv_attr->accessorIndex), [&](glm::vec2 uv) { stream.uvs.push_back(uv); });
+            bool const has_uv = uv_attr != primitive.attributes.end() && asset.accessors.at(uv_attr->accessorIndex).count == vertex_count;
+            if (has_uv) {
+                fastgltf::iterateAccessor<glm::vec2>(asset, asset.accessors.at(uv_attr->accessorIndex), [&](glm::vec2 uv) { prim.uvs.push_back(uv); });
             } else {
-                stream.uvs.insert(stream.uvs.end(), vertex_count, glm::vec2(0.0f));
+                prim.uvs.assign(vertex_count, glm::vec2(0.0f));
             }
 
             // joints / weights -- joints are u8 or u16 in the file, widened to uint; weights may be normalized u8 / u16
             if (skinned) {
-                fastgltf::iterateAccessor<glm::uvec4>(asset, asset.accessors.at(joints_attr->accessorIndex), [&](glm::uvec4 j) { stream.joints.push_back(j); });
-                fastgltf::iterateAccessor<glm::vec4>(asset, asset.accessors.at(weights_attr->accessorIndex), [&](glm::vec4 w) { stream.weights.push_back(w); });
+                fastgltf::iterateAccessor<glm::uvec4>(asset, asset.accessors.at(joints_attr->accessorIndex), [&](glm::uvec4 j) { prim.joints.push_back(j); });
+                fastgltf::iterateAccessor<glm::vec4>(asset, asset.accessors.at(weights_attr->accessorIndex), [&](glm::vec4 w) { prim.weights.push_back(w); });
             }
 
             // indices -- local to this primitive
             fastgltf::Accessor const& index_accessor = asset.accessors.at(primitive.indicesAccessor.value());
-            stream.indices.reserve(stream.indices.size() + index_accessor.count);
-            fastgltf::iterateAccessor<std::uint32_t>(asset, index_accessor, [&](std::uint32_t i) { stream.indices.push_back(i); });
-            range.index_count = static_cast<std::uint32_t>(index_accessor.count);
+            prim.indices.reserve(index_accessor.count);
+            fastgltf::iterateAccessor<std::uint32_t>(asset, index_accessor, [&](std::uint32_t i) { prim.indices.push_back(i); });
+
+            // tangents -- the file's; MikkTSpace when there are UVs to follow; any perpendicular when there are none
+            auto const* tangent_attr = primitive.findAttribute("TANGENT");
+            if (tangent_attr != primitive.attributes.end() && asset.accessors.at(tangent_attr->accessorIndex).count == vertex_count) {
+                fastgltf::iterateAccessor<glm::vec4>(asset, asset.accessors.at(tangent_attr->accessorIndex), [&](glm::vec4 t) { prim.tangents.push_back(t); });
+            } else if (has_uv) {
+                auto const result = DefineTangents(prim);
+                if (result->ID() != GUIDIr77OperationSucceeded) return result;
+            } else {
+                DefineFlatTangents(prim);
+            }
+
+            // append -- indices stay local, vertex_offset places them in the stream
+            Ir77MeshRange range{};
+            range.vertex_offset = static_cast<std::int32_t>(stream.positions.size());
+            range.index_offset = static_cast<std::uint32_t>(stream.indices.size());
+            range.index_count = static_cast<std::uint32_t>(prim.indices.size());
+
+            stream.positions.insert(stream.positions.end(), prim.positions.begin(), prim.positions.end());
+            stream.normals.insert(stream.normals.end(), prim.normals.begin(), prim.normals.end());
+            stream.uvs.insert(stream.uvs.end(), prim.uvs.begin(), prim.uvs.end());
+            stream.tangents.insert(stream.tangents.end(), prim.tangents.begin(), prim.tangents.end());
+
+            if (skinned) {
+                stream.joints.insert(stream.joints.end(), prim.joints.begin(), prim.joints.end());
+                stream.weights.insert(stream.weights.end(), prim.weights.begin(), prim.weights.end());
+            }
+
+            stream.indices.insert(stream.indices.end(), prim.indices.begin(), prim.indices.end());
 
             stream.ranges.push_back(range);
-            stream.range_vertex_counts.push_back(static_cast<std::uint32_t>(vertex_count));
+            stream.range_vertex_counts.push_back(static_cast<std::uint32_t>(prim.positions.size()));
             stream.range_materials.push_back(primitive.materialIndex.has_value() ? static_cast<std::uint32_t>(primitive.materialIndex.value()) : NO_MATERIAL);
             stream.ranges_of_mesh[index].push_back(stream.ranges.size() - 1);
         }
@@ -230,7 +262,8 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
         vertex_buffer.clear();
         vertex_buffer.reserve(m_static.positions.size());
 
-        for (std::size_t i = 0; i < m_static.positions.size(); i++) vertex_buffer.push_back({m_static.positions[i], m_static.normals[i], m_static.uvs[i]});
+        for (std::size_t i = 0; i < m_static.positions.size(); i++)
+            vertex_buffer.push_back({m_static.positions[i], m_static.normals[i], m_static.uvs[i], m_static.tangents[i]});
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -262,7 +295,8 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
         vertex_buffer.reserve(m_skinned.positions.size());
 
         for (std::size_t i = 0; i < m_skinned.positions.size(); i++)
-            vertex_buffer.push_back({m_skinned.positions[i], m_skinned.normals[i], m_skinned.uvs[i], m_skinned.joints[i], m_skinned.weights[i]});
+            vertex_buffer.push_back(
+                {m_skinned.positions[i], m_skinned.normals[i], m_skinned.uvs[i], m_skinned.tangents[i], m_skinned.joints[i], m_skinned.weights[i]});
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -328,7 +362,8 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
         std::vector<glm::vec3> positions{};
         std::vector<glm::vec3> normals{};
         std::vector<glm::vec2> uvs{};
-        std::vector<glm::uvec4> joints{};  // skinned stream only
+        std::vector<glm::vec4> tangents{};  // xyz along +U, w = handedness
+        std::vector<glm::uvec4> joints{};   // skinned stream only
         std::vector<glm::vec4> weights{};  // skinned stream only
         std::vector<std::uint32_t> indices{};
 
@@ -352,6 +387,124 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
                     m_bounds_max = glm::max(m_bounds_max, p);
                 }
             }
+        }
+    }
+
+
+    // MikkTSpace -- the algorithm Blender bakes normal maps with, so baked maps line up. Runs on the primitive unwelded (one vertex per triangle
+    // corner), then welds corners that came out identical. A vertex on a UV seam or mirror line becomes two vertices, each with its own tangent.
+    // The primitive's vertices and indices are replaced.
+    std::shared_ptr<IIr77Return const> DefineTangents(Ir77MeshStream& prim) {
+        std::size_t const corner_count = prim.indices.size();
+        if (corner_count == 0 || corner_count % 3 != 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Mesh: primitive is not whole triangles.");
+
+        bool const skinned = !prim.joints.empty();
+
+        // 1. unweld -- corner f * 3 + v is vertex v of triangle f
+        Ir77MeshStream corners{};
+        corners.positions.reserve(corner_count);
+        corners.normals.reserve(corner_count);
+        corners.uvs.reserve(corner_count);
+
+        for (std::uint32_t const i : prim.indices) {
+            if (i >= prim.positions.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Mesh: index past the primitive's vertices.");
+
+            corners.positions.push_back(prim.positions[i]);
+            corners.normals.push_back(prim.normals[i]);
+            corners.uvs.push_back(prim.uvs[i]);
+
+            if (skinned) {
+                corners.joints.push_back(prim.joints[i]);
+                corners.weights.push_back(prim.weights[i]);
+            }
+        }
+
+        corners.tangents.assign(corner_count, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
+
+        // 2. MikkTSpace reads and writes the corners through these
+        SMikkTSpaceInterface callbacks{};
+        callbacks.m_getNumFaces = [](SMikkTSpaceContext const* context) -> int {
+            return static_cast<int>(static_cast<Ir77MeshStream const*>(context->m_pUserData)->positions.size() / 3);
+        };
+        callbacks.m_getNumVerticesOfFace = [](SMikkTSpaceContext const*, int const) -> int { return 3; };
+        callbacks.m_getPosition = [](SMikkTSpaceContext const* context, float out[], int const face, int const vert) {
+            glm::vec3 const& p = static_cast<Ir77MeshStream const*>(context->m_pUserData)->positions[face * 3 + vert];
+            out[0] = p.x;
+            out[1] = p.y;
+            out[2] = p.z;
+        };
+        callbacks.m_getNormal = [](SMikkTSpaceContext const* context, float out[], int const face, int const vert) {
+            glm::vec3 const& n = static_cast<Ir77MeshStream const*>(context->m_pUserData)->normals[face * 3 + vert];
+            out[0] = n.x;
+            out[1] = n.y;
+            out[2] = n.z;
+        };
+        callbacks.m_getTexCoord = [](SMikkTSpaceContext const* context, float out[], int const face, int const vert) {
+            glm::vec2 const& uv = static_cast<Ir77MeshStream const*>(context->m_pUserData)->uvs[face * 3 + vert];
+            out[0] = uv.x;
+            out[1] = uv.y;
+        };
+        callbacks.m_setTSpaceBasic = [](SMikkTSpaceContext const* context, float const tangent[], float const sign, int const face, int const vert) {
+            static_cast<Ir77MeshStream*>(context->m_pUserData)->tangents[face * 3 + vert] = glm::vec4(tangent[0], tangent[1], tangent[2], sign);
+        };
+
+        SMikkTSpaceContext context{};
+        context.m_pInterface = &callbacks;
+        context.m_pUserData = &corners;
+
+        if (!genTangSpaceDefault(&context)) {
+            DefineFlatTangents(prim);
+            return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77Mesh: MikkTSpace failed on a primitive -- flat tangents.");
+        }
+
+        // glTF puts the UV origin top-left, MikkTSpace assumes bottom-left -- flip the handedness so the bitangent points up the normal map
+        for (glm::vec4& t : corners.tangents) t.w = -t.w;
+
+        // 3. weld -- corners identical in every attribute become one vertex again
+        std::vector<meshopt_Stream> streams{{corners.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3)},
+                                            {corners.normals.data(), sizeof(glm::vec3), sizeof(glm::vec3)},
+                                            {corners.uvs.data(), sizeof(glm::vec2), sizeof(glm::vec2)},
+                                            {corners.tangents.data(), sizeof(glm::vec4), sizeof(glm::vec4)}};
+        if (skinned) {
+            streams.push_back({corners.joints.data(), sizeof(glm::uvec4), sizeof(glm::uvec4)});
+            streams.push_back({corners.weights.data(), sizeof(glm::vec4), sizeof(glm::vec4)});
+        }
+
+        std::vector<unsigned int> remap(corner_count, 0);
+        std::size_t const unique =
+            meshopt_generateVertexRemapMulti(remap.data(), nullptr, corner_count, corner_count, streams.data(), streams.size());
+
+        prim.positions.assign(unique, glm::vec3{});
+        prim.normals.assign(unique, glm::vec3{});
+        prim.uvs.assign(unique, glm::vec2{});
+        prim.tangents.assign(unique, glm::vec4{});
+        meshopt_remapVertexBuffer(prim.positions.data(), corners.positions.data(), corner_count, sizeof(glm::vec3), remap.data());
+        meshopt_remapVertexBuffer(prim.normals.data(), corners.normals.data(), corner_count, sizeof(glm::vec3), remap.data());
+        meshopt_remapVertexBuffer(prim.uvs.data(), corners.uvs.data(), corner_count, sizeof(glm::vec2), remap.data());
+        meshopt_remapVertexBuffer(prim.tangents.data(), corners.tangents.data(), corner_count, sizeof(glm::vec4), remap.data());
+
+        if (skinned) {
+            prim.joints.assign(unique, glm::uvec4{});
+            prim.weights.assign(unique, glm::vec4{});
+            meshopt_remapVertexBuffer(prim.joints.data(), corners.joints.data(), corner_count, sizeof(glm::uvec4), remap.data());
+            meshopt_remapVertexBuffer(prim.weights.data(), corners.weights.data(), corner_count, sizeof(glm::vec4), remap.data());
+        }
+
+        // corners were in index order, so the new index list is the remap itself
+        meshopt_remapIndexBuffer(prim.indices.data(), nullptr, corner_count, remap.data());
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // No UVs (or MikkTSpace gave up): any unit vector perpendicular to the normal. With no texture direction there is nothing to follow,
+    // and a normal map can't be sampled without UVs anyway.
+    void DefineFlatTangents(Ir77MeshStream& prim) {
+        prim.tangents.clear();
+        prim.tangents.reserve(prim.normals.size());
+
+        for (glm::vec3 const& n : prim.normals) {
+            glm::vec3 const axis = std::abs(n.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+            prim.tangents.push_back(glm::vec4(glm::normalize(glm::cross(axis, n)), 1.0f));
         }
     }
 

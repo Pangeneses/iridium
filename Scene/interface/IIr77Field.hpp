@@ -26,7 +26,7 @@ using namespace NSIr77PeregrineV;
 namespace NSIr77Scene {
 
 // One compute-driven visual -- a surface or particle cloud, its program compiled from source at runtime (include/field.glsl is the contract).
-//   SetRenderer / SetLighting -> CompileField -> per frame: WriteDispatches(windows, dt) -> AppendDraws(window, pass, items)
+//   SetRenderer / SetLighting -> CompileField -> per frame: AppendDispatches(dispatches, dt) -> AppendDraws(window, pass, items)
 typedef struct IIr77Field : virtual public IIr77Enlisted {
     IIr77Field() = default;
 
@@ -54,10 +54,10 @@ typedef struct IIr77Field : virtual public IIr77Enlisted {
     // Hidden: no compute, no draws -- the state stays where it was
     virtual std::shared_ptr<IIr77Return const> ShowField(bool const& visible) = 0;
 
-    // The field's compute for this frame -- on window 0's command buffer only, so the simulation steps once a frame however many windows draw
-    // it: Field() over every element, then (with a Pen) the canvas decay / clear and the pens between last frame's t and this one's.
-    // dt = seconds since the last frame (clamped to 0..0.1 here). Hidden or not compiled: every window gets an empty list.
-    virtual std::shared_ptr<IIr77Return const> WriteDispatches(std::size_t const& windows, float const& dt) = 0;
+    // The field's compute for this frame, appended to the frame's dispatch list (Animate gives the list to window 0 only, so the simulation
+    // steps once a frame however many windows draw it): Field() over every element, then (with a Pen) the canvas decay / clear and the pens
+    // between last frame's t and this one's. dt = seconds since the last frame (clamped to 0..0.1 here). Hidden or not compiled: nothing.
+    virtual std::shared_ptr<IIr77Return const> AppendDispatches(std::vector<Ir77PVDispatch>& dispatches, float const& dt) = 0;
 
     // The field's draws for one pass list: surface -> Opaque + one Shadow draw per casting light; particles -> Transparent (additive). A
     // pipeline that can't be built yet just leaves the field out of this frame.

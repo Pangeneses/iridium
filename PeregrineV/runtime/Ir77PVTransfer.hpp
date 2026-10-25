@@ -156,20 +156,18 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
         });
 
         // 2. graveyard
-        auto& graves = m_graveyard;
-
         std::size_t keep{0};
-        for (std::size_t i = 0; i < graves.size(); i++) {
-            if (graves[i].frames_left > 0) {
-                graves[i].frames_left--;
-                if (keep != i) graves[keep] = std::move(graves[i]);  // self-move would empty the vectors
+        for (std::size_t i = 0; i < m_graveyard.size(); i++) {
+            if (m_graveyard[i].frames_left > 0) {
+                m_graveyard[i].frames_left--;
+                if (keep != i) m_graveyard[keep] = std::move(m_graveyard[i]);  // self-move would empty the vectors
                 keep++;
                 continue;
             }
 
-            for (auto const& buffer : graves[i].buffers) std::erase(m_buffers, buffer);
+            for (auto const& buffer : m_graveyard[i].buffers) std::erase(m_buffers, buffer);
         }
-        graves.resize(keep);
+        m_graveyard.resize(keep);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -253,7 +251,8 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
     // =========================================================================================================================================
     // storage buffers -- GPU data a compute pass writes and shaders read by slot (storage buffers, set 0 binding 1): height fields, particle
     // state, indirect commands. One copy shared by every frame in flight; the Compute pass waits for the previous frame's readers before
-    // writing. Also usable as a draw's / dispatch's indirect buffer, or bound as vertex / index data.
+    // writing. Also usable as a draw's / dispatch's indirect buffer, or bound as vertex / index data -- and on a ray-query device as an
+    // acceleration-structure build input (a field surface's points and grid).
     // =========================================================================================================================================
 
     // size bytes, filled from data (zeros when data is null). Blocking upload. buffer_id for Get / Upload / Destroy; slot for the shaders.
@@ -263,7 +262,7 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
         std::shared_ptr<IIr77PVBuffer> buffer{};
 
         if (CreateStaticBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                                   VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                   VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | RayInputUsage(),
                                size, buffer)
                 ->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: storage buffer creation failed.");
@@ -328,6 +327,14 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
     }
 
    private:
+    // With ray queries on, storage buffers can also be acceleration-structure build inputs, read by GPU address
+    VkBufferUsageFlags RayInputUsage() const {
+        bool ray_query{false};
+        if (m_device) m_device->GetRayQuery(ray_query);
+
+        return ray_query ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0;
+    }
+
     std::shared_ptr<IIr77Return const> DefineBuffer(VkBufferUsageFlags const& usage, VkDeviceSize const& size, Ir77PVBufferMode const& mode,
                                                     std::uint32_t const& copies, std::shared_ptr<IIr77PVBuffer>& buffer) {
         buffer.reset();

@@ -73,9 +73,9 @@ void main() {
         return;
     }
 
-    // surface -- both sides lit from the side being looked at
+    // surface -- one lit side, the side the normal points out of; the underside gets ambient only. Shadows: rays on a ray-query device
+    // (CompileField defines IR77_RAY_SHADOWS), the shadow map otherwise.
     vec3 n = normalize(fragNormal);
-    if (!gl_FrontFacing) n = -n;
 
     vec3 albedo = cfg.shading.x == 0u ? fragColor.rgb : Ir77Colormap(cfg.shading.y, t);
 
@@ -86,7 +86,7 @@ void main() {
         albedo = mix(albedo, albedo * 0.15, Ir77Line(d, cfg.contour.y));
     }
 
-    vec3 color = albedo * (IR77_FIELD_AMBIENT + Ir77Lighting(fragWorldPos, n));
+    vec3 color = albedo * (IR77_FIELD_AMBIENT + (gl_FrontFacing ? Ir77Lighting(fragWorldPos, n) : vec3(0.0)));
     color = color / (1.0 + color);
 
     float params[8] = float[8](cfg.params[0].x, cfg.params[0].y, cfg.params[0].z, cfg.params[0].w, cfg.params[1].x, cfg.params[1].y,

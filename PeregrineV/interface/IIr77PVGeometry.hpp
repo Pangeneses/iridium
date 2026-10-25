@@ -68,17 +68,17 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     // The id stays reserved; GetMesh fails for it afterwards. Remove its draw items from Paint first.
     virtual std::shared_ptr<IIr77Return const> UnloadSingleMeshBuffer(std::uint32_t const& mesh_id) = 0;
 
-    // ---- scene path (vertex) -- one stacked upload, one indirect command per object, one draw item per material run ------------------------
+    // ---- scene path (vertex) -- one stacked upload, one indirect command per object, one draw item for the lot -------------------------------
 
     // scene path (vertex) -- the client stacks every object into one Ir77PVSceneUpload and prebuilds one indirect command per object:
     //   firstIndex / indexCount   -> its slice of indices (indices stay local, 0-based)
     //   vertexOffset              -> where its vertices start
     //   instanceCount / firstInstance -> how many copies, and their slots in models[] (set 0 binding 2)
-    // Sort objects by material so each material is one contiguous run of commands; one draw item per run (MakeIndirectDrawItem).
+    // One draw item covers every command (MakeIndirectDrawItem); the vertex shader finds each command's material in a per-draw table (gl_DrawID).
     // The indirect buffer is Dynamic, so objects can be hidden / shown / resized per frame without re-uploading geometry.
     virtual std::shared_ptr<IIr77Return const> UploadScene(Ir77PVSceneUpload const& data, std::uint32_t& scene_id, bool const& wait = true) = 0;
 
-    // Draw item for commands [first_command, first_command + command_count) of a scene -- one material run -- through an engine role
+    // Draw item for commands [first_command, first_command + command_count) of a scene through an engine role
     virtual std::shared_ptr<IIr77Return const> MakeIndirectDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& scene_id,
                                                                     std::uint32_t const& material_id, std::uint32_t const& first_command,
                                                                     std::uint32_t const& command_count, bool const& skinned, Ir77PVDrawItem& item) = 0;
@@ -97,19 +97,31 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> SetSceneObjectInstances(std::uint32_t const& scene_id, std::uint32_t const& command,
                                                                        std::uint32_t const& count) = 0;
 
+    // A scene's vertex buffer (skinned = the skinned channel) as a bindless storage buffer -- compute reads / writes the vertices in place.
+    // Registered on the first call, the same slot after; UnloadScene releases it.
+    virtual std::shared_ptr<IIr77Return const> GetSceneVertexSlot(std::uint32_t const& scene_id, bool const& skinned, std::uint32_t& slot) = 0;
+
+    // What Acceleration builds from: the scene's vertex / index buffers, its vertex count and its commands
+    virtual std::shared_ptr<IIr77Return const> GetSceneGeometry(std::uint32_t const& scene_id, Ir77PVSceneGeometry& geometry) = 0;
+
     // Frees the scene's buffers once no frame in flight can read them. Remove its draw items from Paint first.
     virtual std::shared_ptr<IIr77Return const> UnloadScene(std::uint32_t const& scene_id) = 0;
 
     // ---- meshlet path -- Mesh pipeline kind only (VK_EXT_mesh_shader) ----------------------------------------------------------------------
 
     // meshlet path -- Mesh pipeline kind only (VK_EXT_mesh_shader). Takes the same stacked Ir77PVSceneUpload as UploadScene.
-    // Each indirect command is one object's range; meshlets are cut from that range only, so none ever spans two objects.
+    // Each indirect command is one object's range; meshlets are cut from that range only, so none ever spans two objects -- and from one
+    // material row's triangles at a time (triangle_materials), so each meshlet has exactly one material.
     // One draw record + one mesh command per instance. Static (non-skinned) vertices only.
     // record_count = records written. Fails when the device has no mesh shading.
     virtual std::shared_ptr<IIr77Return const> UploadMeshlets(Ir77PVSceneUpload const& scene, std::uint32_t& meshlet_id, std::uint32_t& record_count,
                                                               bool const& wait = true) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetMeshlets(std::uint32_t const& meshlet_id, Ir77PVMeshletMesh& mesh) = 0;
+
+    // What Acceleration builds the mesh path's static stream from: the vertices, the scene's index buffer (ray-query devices only) and its
+    // commands -- the same shape as GetSceneGeometry
+    virtual std::shared_ptr<IIr77Return const> GetMeshletGeometry(std::uint32_t const& meshlet_id, Ir77PVSceneGeometry& geometry) = 0;
 
     // First record of a scene command -- record = first_record + instance offset, for SetMeshletRecordVisible.
     virtual std::shared_ptr<IIr77Return const> GetMeshletFirstRecord(std::uint32_t const& meshlet_id, std::uint32_t const& command,
@@ -135,7 +147,7 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
                                                                            Ir77PVDrawItem& item) = 0;
 
     // Same as MakeIndirectDrawItem but on the mesh path: commands [first_command, first_command + command_count) of the uploaded scene,
-    // mapped to their records. This is how a material run becomes one mesh draw.
+    // mapped to their records. Every meshlet carries its own material row, so the whole scene is one mesh draw.
     virtual std::shared_ptr<IIr77Return const> MakeMeshletSceneDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id,
                                                                         std::uint32_t const& material_id, std::uint32_t const& first_command,
                                                                         std::uint32_t const& command_count, Ir77PVDrawItem& item) = 0;

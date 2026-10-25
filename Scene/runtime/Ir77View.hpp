@@ -141,6 +141,9 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
 
         if (!built) camera = MakeControlledCamera(aspect);
 
+        // reversed-Z -- PeregrineV's main pass clears depth to 0 and keeps the greater (Ir77PVCmdBuffer)
+        DefineReversedDepth(camera);
+
         m_camera_view = camera.view;  // where the next switch to orbit / fly starts from
 
         // the lens too -- an orthographic projection has none, it keeps the last one
@@ -317,6 +320,18 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
 
     glm::vec3 CameraForward() const {
         return glm::vec3(std::cos(m_camera_pitch) * std::sin(m_camera_yaw), std::sin(m_camera_pitch), std::cos(m_camera_pitch) * std::cos(m_camera_yaw));
+    }
+
+    // Standard Vulkan depth (near 0, far 1) -> reversed (near 1, far 0): z' = w - z, for perspective and orthographic alike. Float depth is
+    // densest near 0, so reversed puts that precision at the distance, where standard depth runs out -- what stops crossing meshes from
+    // fighting. Every camera passes through here; x, y and w are untouched (the lens read back from proj[1][1] is unchanged).
+    void DefineReversedDepth(Ir77PVCamera& camera) const {
+        glm::mat4 reverse{1.0f};
+        reverse[2][2] = -1.0f;  // z' = -z ...
+        reverse[3][2] = 1.0f;   //      ... + w
+
+        camera.proj = reverse * camera.proj;
+        camera.view_proj = camera.proj * camera.view;
     }
 
     // The controlled camera's matrices. Planes hug the scene: whole bounds in front of far, near as large as depth precision allows.

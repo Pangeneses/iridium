@@ -41,6 +41,9 @@ typedef struct IIr77PVDescriptorSet : virtual public IIr77Enlisted {
     // Image must be in VK_IMAGE_LAYOUT_GENERAL when a shader uses it
     virtual std::shared_ptr<IIr77Return const> RegisterStorageImage(VkImageView const& view, std::uint32_t& index) = 0;
 
+    // Binding 3 -- a TLAS for ray queries. Ray-query devices only (fails otherwise: the binding doesn't exist).
+    virtual std::shared_ptr<IIr77Return const> RegisterAccelerationStructure(VkAccelerationStructureKHR const& structure, std::uint32_t& index) = 0;
+
     // ---- update: rewrite an existing slot (resize, regrow). Only when no frame in flight reads the slot; otherwise register + Release ----
     virtual std::shared_ptr<IIr77Return const> UpdateTexture(std::uint32_t const& index, VkImageView const& view, VkSampler const& sampler,
                                                              VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) = 0;
@@ -50,8 +53,10 @@ typedef struct IIr77PVDescriptorSet : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> UpdateStorageImage(std::uint32_t const& index, VkImageView const& view) = 0;
 
+    virtual std::shared_ptr<IIr77Return const> UpdateAccelerationStructure(std::uint32_t const& index, VkAccelerationStructureKHR const& structure) = 0;
+
     // ---- release / per frame -----------------------------------------------------------------------------------------------------------
-    // binding = BINDLESS_BINDING_TEXTURES / _BUFFERS / _STORAGE_IMAGES. The slot is reused only after MAX_FRAMES_IN_FLIGHT Ticks.
+    // binding = BINDLESS_BINDING_TEXTURES / _BUFFERS / _STORAGE_IMAGES / _ACCELERATION. The slot is reused only after MAX_FRAMES_IN_FLIGHT Ticks.
     virtual std::shared_ptr<IIr77Return const> Release(std::uint32_t const& binding, std::uint32_t const& index) = 0;
 
     // Once per frame, before recording

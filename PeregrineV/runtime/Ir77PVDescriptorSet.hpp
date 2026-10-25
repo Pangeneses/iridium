@@ -33,8 +33,9 @@ namespace NSIr77PeregrineV {
 // Ir77PVDescriptorSet -- THE descriptor set. One per device: the bindless table every pipeline reads through Ir77PVLayout.
 //
 //   create:   SetDevice / SetLayout -> CreateDescriptorSet -> DefinePool -> DefineSet
-//   register: RegisterTexture / RegisterBuffer / RegisterStorageImage -> slot index for push constants or other buffers
-//   change:   UpdateTexture / UpdateBuffer / UpdateStorageImage -- same slot, new view or buffer (overlay resize, buffer regrow)
+//   register: RegisterTexture / RegisterBuffer / RegisterStorageImage / RegisterAccelerationStructure -> slot index for push constants or other
+//             buffers
+//   change:   UpdateTexture / UpdateBuffer / UpdateStorageImage / UpdateAccelerationStructure -- same slot, new view, buffer or TLAS
 //   free:     Release -> slot is retired, reused only after MAX_FRAMES_IN_FLIGHT Ticks (frames in flight may still read it)
 //   per frame Tick, then per command buffer Bind
 //
@@ -138,6 +139,7 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         m_slots[BINDLESS_BINDING_TEXTURES].capacity = m_capacity.textures;
         m_slots[BINDLESS_BINDING_BUFFERS].capacity = m_capacity.buffers;
         m_slots[BINDLESS_BINDING_STORAGE_IMAGES].capacity = m_capacity.storage_images;
+        m_slots[BINDLESS_BINDING_ACCELERATION].capacity = m_capacity.acceleration_structures;  // 0 without ray queries -- every register fails
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Bindless Descriptor Set.");
     }
@@ -167,6 +169,14 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         return UpdateStorageImage(index, view);
+    }
+
+    // Binding 3 -- ray-query devices only
+    std::shared_ptr<IIr77Return const> RegisterAccelerationStructure(VkAccelerationStructureKHR const& structure, std::uint32_t& index) {
+        auto const result = DefineSlot(BINDLESS_BINDING_ACCELERATION, index);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        return UpdateAccelerationStructure(index, structure);
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -213,10 +223,24 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> UpdateAccelerationStructure(std::uint32_t const& index, VkAccelerationStructureKHR const& structure) {
+        if (index >= m_capacity.acceleration_structures)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: acceleration-structure slot out of range (no ray queries?).");
+
+        VkWriteDescriptorSetAccelerationStructureKHR structure_info{};
+        structure_info.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        structure_info.accelerationStructureCount = 1;
+        structure_info.pAccelerationStructures = &structure;
+
+        WriteSlot(BINDLESS_BINDING_ACCELERATION, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, index, nullptr, nullptr, &structure_info);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // -------------------------------------------------------------------------------------------------------------------------------------
     // release / per frame
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // binding = BINDLESS_BINDING_TEXTURES / _BUFFERS / _STORAGE_IMAGES. The slot is reused only after MAX_FRAMES_IN_FLIGHT Ticks.
+    // binding = BINDLESS_BINDING_TEXTURES / _BUFFERS / _STORAGE_IMAGES / _ACCELERATION. The slot is reused only after MAX_FRAMES_IN_FLIGHT Ticks.
     std::shared_ptr<IIr77Return const> Release(std::uint32_t const& binding, std::uint32_t const& index) {
         if (binding >= BINDLESS_BINDING_COUNT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: unknown binding.");
         if (index >= m_slots[binding].next) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: slot was never registered.");
@@ -275,10 +299,12 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
-        std::array<VkDescriptorPoolSize, BINDLESS_BINDING_COUNT> pool_sizes{};
-        pool_sizes[BINDLESS_BINDING_TEXTURES] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, m_capacity.textures};
-        pool_sizes[BINDLESS_BINDING_BUFFERS] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, m_capacity.buffers};
-        pool_sizes[BINDLESS_BINDING_STORAGE_IMAGES] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, m_capacity.storage_images};
+        std::vector<VkDescriptorPoolSize> pool_sizes{};
+        pool_sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, m_capacity.textures});
+        pool_sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, m_capacity.buffers});
+        pool_sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, m_capacity.storage_images});
+
+        if (m_capacity.acceleration_structures > 0) pool_sizes.push_back({VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, m_capacity.acceleration_structures});
 
         VkDescriptorPoolCreateInfo pool_info{};
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -333,13 +359,15 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
     }
 
    private:
+    // next -- VkWriteDescriptorSetAccelerationStructureKHR for binding 3, which carries its structure in pNext instead of image / buffer info
     void WriteSlot(std::uint32_t const binding, VkDescriptorType const type, std::uint32_t const index, VkDescriptorImageInfo const* image_info,
-                   VkDescriptorBufferInfo const* buffer_info) {
+                   VkDescriptorBufferInfo const* buffer_info, void const* next = nullptr) {
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
         VkWriteDescriptorSet write{};
         write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.pNext = next;
         write.dstSet = m_set;
         write.dstBinding = binding;
         write.dstArrayElement = index;

@@ -67,7 +67,8 @@ namespace NSIr77Scene {
 //
 //   setup:     SetRenderer / SetViewSize / SetPipeline -> CreateScene(path, use_mesh) -- Pose parses, the geometry / textures / materials go up
 //              through the renderer, Lighting packs the lights, View frames the scene
-//   per frame: Update(dt) -> CreateFrame(seconds) -- camera (View), transforms and bones (Pose), lights (Lighting), dispatches and draws (Field)
+//   per frame: Update(dt) -> CreateFrame(seconds) -- camera (View), transforms and bones (Pose), lights (Lighting), the skin dispatch, the
+//              field's dispatches and draws (Field)
 //   the UI:    the scene server reaches the peers through GetPose / GetView / GetField for its ops
 // =============================================================================================================================================
 class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable_shared_from_this<Ir77Animate> {
@@ -174,7 +175,6 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
-
 
     // Once, after CreatePipelines. Parses the glTF, stacks every primitive into one upload, sorts the commands into material runs, uploads
     // textures / materials / geometry through the Asset and packs the lights. use_mesh -> mesh shading for the static stream when the device has it.
@@ -402,6 +402,19 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         m_mesh_path = false;
         if (!ranges.empty()) {
             std::uint32_t records{0};
+
+            // mesh path -- the material row of every triangle, at its place in upload.indices. Meshlets are cut per row.
+            if (use_mesh) {
+                upload.triangle_materials.assign(upload.indices.size() / 3, 0);
+
+                for (std::size_t c = 0; c < upload.indirect_commands.size(); c++) {
+                    Ir77PVMaterialData material{};
+                    if (Failed(m_renderer->GetMaterial(MaterialId(static_command_materials[c]), material), result)) return result;
+
+                    VkDrawIndexedIndirectCommand const& cmd = upload.indirect_commands[c];
+                    std::fill_n(upload.triangle_materials.begin() + cmd.firstIndex / 3, cmd.indexCount / 3, material.row);
+                }
+            }
             m_mesh_path = use_mesh && m_renderer->UploadMeshlets(upload, m_static_id, records)->ID() == GUIDIr77OperationSucceeded;
 
             if (!m_mesh_path) {
@@ -414,12 +427,49 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         if (m_has_skinned) {
             result = m_renderer->UploadScene(skinned_upload, m_skinned_id);
             if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+            // compute skinning -- the skinned opaque geometry as a posed stream; the skinned upload above is its source
+            if (Failed(DefinePosedStream(skinned_upload, skinned_command_materials), result)) return result;
         }
 
         // static transparent: its own compacted scene
         if (!blend_upload.indirect_commands.empty()) {
             result = m_renderer->UploadScene(blend_upload, m_blend_id);
             if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        }
+
+        // ray queries -- one BLAS per object of the static stream (either path) and of the posed stream (refit every frame). MASK materials
+        // go in alpha-tested: the material row per command, BINDLESS_NO_SLOT for everything opaque. Transparent objects stay out.
+        m_ray_query = false;
+        m_renderer->GetRayQuery(m_ray_query);
+
+        if (m_ray_query) {
+            auto const alpha_rows = [&](std::vector<std::uint32_t> const& command_materials, std::vector<std::uint32_t>& rows) {
+                rows.assign(command_materials.size(), BINDLESS_NO_SLOT);
+
+                for (std::size_t c = 0; c < command_materials.size(); c++) {
+                    std::uint32_t const gltf = command_materials[c];
+                    if (gltf >= material_constants.size() || material_constants[gltf].alpha_cutoff <= 0.0f) continue;  // not MASK
+
+                    Ir77PVMaterialData material{};
+                    if (m_renderer->GetMaterial(MaterialId(gltf), material)->ID() == GUIDIr77OperationSucceeded) rows[c] = material.row;
+                }
+            };
+
+            std::vector<std::uint32_t> rows{};
+
+            if (m_static_command_count > 0) {
+                alpha_rows(static_command_materials, rows);
+
+                result = m_mesh_path ? m_renderer->BuildMeshletAcceleration(m_static_id, rows) : m_renderer->BuildSceneAcceleration(m_static_id, false, rows);
+                if (result->ID() != GUIDIr77OperationSucceeded) return result;
+            }
+
+            if (m_has_posed) {
+                alpha_rows(m_posed_materials, rows);
+
+                if (Failed(m_renderer->BuildSceneAcceleration(m_posed_id, true, rows), result)) return result;
+            }
         }
 
         // lights -- unit conversion, a default sun when the file has none, shadow casters over these bounds
@@ -444,11 +494,12 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         // stats -- filled once here, read by the app through GetSceneStats
         m_stats = Ir77SceneStats{};
         m_stats.path = path;
-        m_stats.render_path = m_mesh_path ? "mesh shading indirect" : "vertex indirect";
+        m_stats.render_path = std::string{m_mesh_path ? "mesh shading indirect" : "vertex indirect"} + (m_ray_query ? ", ray queries" : "");
 
         m_renderer->GetDeviceName(m_stats.gpu);
 
-        m_pose->GetAssetCounts(m_stats.nodes, m_stats.meshes, m_stats.materials, m_stats.textures, m_stats.cameras, m_stats.skins, m_stats.bones, m_stats.clips);
+        m_pose->GetAssetCounts(m_stats.nodes, m_stats.meshes, m_stats.materials, m_stats.textures, m_stats.cameras, m_stats.skins, m_stats.bones,
+                               m_stats.clips);
 
         m_stats.clip_names.assign(m_stats.clips, std::string{});
         for (std::uint32_t c = 0; c < m_stats.clips; c++) scene_animations->GetClipName(c, m_stats.clip_names[c]);
@@ -491,13 +542,29 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         m_pose->WriteInstanceTransforms(m_transforms);
 
+        // the TLAS instances take their transforms from the same models[] slots
+        if (m_ray_query) m_renderer->SetAccelerationTransforms(m_transforms);
+
         // bones -- uint bone_base[8192] then every joint palette, the layout skinned.vert reads at set 0 binding 4
         bool const skinned = m_has_skinned;
         if (skinned) m_pose->WritePackedBones(m_transforms.size(), m_bones_packed);
 
         float const aspect = m_view_height > 0 ? static_cast<float>(m_view_width) / static_cast<float>(m_view_height) : 1.78f;
 
-        m_field->WriteDispatches(m_view_windows, seconds - m_last_seconds);
+        // compute -- skinning first (its posed vertices feed every pass), then the field. Once a frame: Paint records it on the first window it draws.
+        std::vector<Ir77PVDispatch> dispatches{};
+
+        if (m_has_posed) {
+            Ir77PVDispatch skin{};
+            skin.pipeline = m_skin_compute;
+            skin.push.user = {m_skin_jobs_slot, m_skin_source_slot, m_skin_destination_slot, m_posed_vertex_count, 0u, 0u, 0u, 0u};
+            skin.groups = SkinGroups(m_posed_vertex_count);
+            dispatches.push_back(skin);
+        }
+
+        m_field->AppendDispatches(dispatches, seconds - m_last_seconds);
+
+        m_renderer->SetFrameDispatches(dispatches);
 
         std::uint32_t shadow_count{0};
         m_lighting->GetShadowCount(shadow_count);
@@ -520,15 +587,11 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
             std::vector<Ir77PVDrawItem> items{};
 
             if (m_mesh_path) {
-                // mesh shading takes its material per call -- one draw per material run
-                for (Ir77SceneRun const& run : m_runs) {
-                    Ir77PVDrawItem item{};
-                    if (Failed(m_renderer->MakeMeshletSceneDrawItem(w, m_static_id, MaterialId(run.gltf_material), run.first_command, run.command_count, item),
-                               result))
-                        return result;
+                // mesh shading -- one draw for every record; each meshlet carries its own material row
+                Ir77PVDrawItem item{};
+                if (Failed(m_renderer->MakeMeshletSceneDrawItem(w, m_static_id, m_default_material, 0, m_static_command_count, item), result)) return result;
 
-                    items.push_back(item);
-                }
+                items.push_back(item);
             } else if (m_static_command_count > 0) {
                 Ir77PVDrawItem item{};
                 if (Failed(m_renderer->MakeIndirectDrawItem(w, m_pipeline, m_static_id, m_default_material, 0, m_static_command_count, false, item), result))
@@ -539,7 +602,18 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
                 items.push_back(item);
             }
 
-            if (m_skinned_opaque_count > 0) {
+            if (m_has_posed) {
+                // compute-skinned -- the posed stream through the static pipeline, one command per (primitive, instance)
+                Ir77PVDrawItem item{};
+                if (Failed(m_renderer->MakeIndirectDrawItem(w, Ir77PVPipelineKind::Static, m_posed_id, m_default_material, 0, m_posed_command_count, false,
+                                                            item),
+                           result))
+                    return result;
+
+                item.user[0] = m_posed_material_table;
+                item.user[1] = 0;
+                items.push_back(item);
+            } else if (m_skinned_opaque_count > 0) {
                 Ir77PVDrawItem item{};
                 if (Failed(m_renderer->MakeIndirectDrawItem(w, Ir77PVPipelineKind::Skinned, m_skinned_id, m_default_material, 0, m_skinned_opaque_count, true,
                                                             item),
@@ -573,7 +647,16 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
                     shadow_items.push_back(item);
                 }
 
-                if (m_skinned_opaque_count > 0) {
+                if (m_has_posed) {
+                    Ir77PVDrawItem item{};
+                    if (Failed(m_renderer->MakeIndirectDrawItem(w, Ir77PVPipelineKind::Shadow, m_posed_id, m_default_material, 0, m_posed_command_count,
+                                                                false, item),
+                               result))
+                        return result;
+
+                    item.light_index = tile;
+                    shadow_items.push_back(item);
+                } else if (m_skinned_opaque_count > 0) {
                     Ir77PVDrawItem item{};
                     if (Failed(m_renderer->MakeIndirectDrawItem(w, Ir77PVPipelineKind::ShadowSkinned, m_skinned_id, m_default_material, 0,
                                                                 m_skinned_opaque_count, true, item),
@@ -725,6 +808,76 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return m_renderer->CreateStorageBuffer(static_cast<VkDeviceSize>(rows.size() * sizeof(std::uint32_t)), rows.data(), buffer_id, slot);
     }
 
+    // Compute skinning -- the skinned opaque commands become the posed stream: one region of plain vertices per (primitive, instance), filled
+    // with the bind pose here and posed by skin.comp every frame. It draws through the static and shadow pipelines like any static geometry.
+    // No skin.compute pipeline -> the skinned geometry stays on the Skinned pipelines.
+    std::shared_ptr<IIr77Return const> DefinePosedStream(Ir77PVSceneUpload const& skinned_upload, std::vector<std::uint32_t> const& skinned_command_materials) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        m_has_posed = false;
+        if (m_skinned_opaque_count == 0) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        if (m_renderer->FindPipeline(std::string{"skin.compute"}, m_skin_compute)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77Animate: no skin.compute pipeline -- skinned geometry stays on the Skinned pipeline.");
+
+        Ir77PVSceneUpload posed{};
+        std::vector<glm::uvec2> jobs{};               // per posed vertex: source vertex, instance slot
+        std::vector<std::uint32_t> posed_materials{};  // glTF material per posed command
+
+        posed.indices = skinned_upload.indices_skinned;  // shared by every instance -- vertexOffset picks the region
+
+        for (std::uint32_t c = 0; c < m_skinned_opaque_count; c++) {
+            VkDrawIndexedIndirectCommand const& cmd = skinned_upload.indirect_commands[c];
+            if (cmd.indexCount == 0) continue;
+
+            // vertices this primitive uses -- indices are local, so highest + 1
+            std::uint32_t highest{0};
+            for (std::uint32_t i = 0; i < cmd.indexCount; i++) highest = std::max(highest, skinned_upload.indices_skinned[cmd.firstIndex + i]);
+
+            for (std::uint32_t inst = 0; inst < cmd.instanceCount; inst++) {
+                std::uint32_t const region = static_cast<std::uint32_t>(posed.vertices.size());
+                std::uint32_t const slot = cmd.firstInstance + inst;
+
+                for (std::uint32_t v = 0; v <= highest; v++) {
+                    std::uint32_t const source = static_cast<std::uint32_t>(cmd.vertexOffset) + v;
+                    Ir77PVVertexSkinned const& bind = skinned_upload.vertices_skinned[source];
+
+                    posed.vertices.push_back({bind.position, bind.normal, bind.uv, bind.tangent});
+                    jobs.push_back(glm::uvec2(source, slot));
+                }
+
+                posed.indirect_commands.push_back(VkDrawIndexedIndirectCommand{cmd.indexCount, 1, cmd.firstIndex, static_cast<std::int32_t>(region), slot});
+                posed_materials.push_back(skinned_command_materials[c]);
+            }
+        }
+
+        if (posed.indirect_commands.empty()) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        if (Failed(m_renderer->UploadScene(posed, m_posed_id), result)) return result;
+        if (Failed(m_renderer->GetSceneVertexSlot(m_posed_id, false, m_skin_destination_slot), result)) return result;
+        if (Failed(m_renderer->GetSceneVertexSlot(m_skinned_id, true, m_skin_source_slot), result)) return result;
+        if (Failed(m_renderer->CreateStorageBuffer(static_cast<VkDeviceSize>(jobs.size() * sizeof(glm::uvec2)), jobs.data(), m_skin_jobs_buffer,
+                                                   m_skin_jobs_slot),
+                   result))
+            return result;
+        if (Failed(DefineMaterialTable(posed_materials, m_posed_material_buffer, m_posed_material_table), result)) return result;
+
+        m_posed_materials = posed_materials;
+        m_posed_command_count = static_cast<std::uint32_t>(posed.indirect_commands.size());
+        m_posed_vertex_count = static_cast<std::uint32_t>(posed.vertices.size());
+        m_has_posed = true;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // 64 threads a group, spread over x and y -- skin.comp rebuilds the flat index
+    std::array<std::uint32_t, 3> SkinGroups(std::uint64_t const threads) const {
+        std::uint64_t const groups = std::max<std::uint64_t>((threads + 63) / 64, 1);
+        std::uint64_t const x = std::min<std::uint64_t>(groups, 65535);
+
+        return {static_cast<std::uint32_t>(x), static_cast<std::uint32_t>((groups + x - 1) / x), 1u};
+    }
+
     // The scene stats into the return log -- until the app displays them
     void PrintSceneStats() const {
         Ir77SceneStats const& s = m_stats;
@@ -733,12 +886,11 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         Ir77RETURN<Ir77OperationSucceeded>(this, "[STATS] gpu " + s.gpu + ", " + s.render_path);
         Ir77RETURN<Ir77OperationSucceeded>(this, "[STATS] nodes " + std::to_string(s.nodes) + ", meshes " + std::to_string(s.meshes) + ", materials " +
                                                      std::to_string(s.materials) + ", textures " + std::to_string(s.textures) + ", cameras " +
-                                                     std::to_string(s.cameras) + ", skins " + std::to_string(s.skins) + ", bones " +
-                                                     std::to_string(s.bones) + ", clips " + std::to_string(s.clips));
-        Ir77RETURN<Ir77OperationSucceeded>(this, "[STATS] static " + std::to_string(s.static_vertices) + " verts / " +
-                                                     std::to_string(s.static_primitives) + " prims, skinned " + std::to_string(s.skinned_vertices) +
-                                                     " verts / " + std::to_string(s.skinned_primitives) + " prims, " + std::to_string(s.instances) +
-                                                     " instances");
+                                                     std::to_string(s.cameras) + ", skins " + std::to_string(s.skins) + ", bones " + std::to_string(s.bones) +
+                                                     ", clips " + std::to_string(s.clips));
+        Ir77RETURN<Ir77OperationSucceeded>(this, "[STATS] static " + std::to_string(s.static_vertices) + " verts / " + std::to_string(s.static_primitives) +
+                                                     " prims, skinned " + std::to_string(s.skinned_vertices) + " verts / " +
+                                                     std::to_string(s.skinned_primitives) + " prims, " + std::to_string(s.instances) + " instances");
         Ir77RETURN<Ir77OperationSucceeded>(this, "[STATS] runs: " + std::to_string(s.opaque_runs) + " opaque, " + std::to_string(s.skinned_runs) +
                                                      " skinned; " + std::to_string(s.transparent_objects) + " transparent objects");
 
@@ -782,6 +934,8 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     bool m_mesh_path{false};  // static stream on the mesh shading path
 
+    bool m_ray_query{false};  // the device has ray queries -- the scene's BLASes are built and the TLAS follows models[] every frame
+
     std::uint32_t m_static_id{0};  // UploadScene id, or UploadMeshlets id when m_mesh_path
 
     std::uint32_t m_skinned_id{0};  // UploadScene id of the skinned stream
@@ -812,6 +966,31 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     std::uint32_t m_static_command_count{0};  // opaque commands in the static scene -- one draw covers them all
 
     std::uint32_t m_skinned_opaque_count{0};  // opaque commands in the skinned scene (its blends follow them)
+
+    // compute skinning -- the posed stream: skinned opaque geometry, posed by skin.comp each frame, drawn as static
+    bool m_has_posed{false};
+
+    std::uint32_t m_posed_id{0};  // UploadScene id of the posed stream
+
+    std::uint32_t m_posed_command_count{0};  // one command per (skinned primitive, instance)
+
+    std::uint32_t m_posed_vertex_count{0};  // threads in the skin dispatch
+
+    std::uint32_t m_posed_material_buffer{0};
+
+    std::uint32_t m_posed_material_table{BINDLESS_NO_SLOT};
+
+    std::vector<std::uint32_t> m_posed_materials{};  // glTF material per posed command -- the rays' alpha test
+
+    std::uint32_t m_skin_jobs_buffer{0};
+
+    std::uint32_t m_skin_jobs_slot{BINDLESS_NO_SLOT};  // uvec2 per posed vertex: source vertex, instance slot
+
+    std::uint32_t m_skin_source_slot{BINDLESS_NO_SLOT};  // the skinned stream's vertices
+
+    std::uint32_t m_skin_destination_slot{BINDLESS_NO_SLOT};  // the posed stream's vertices
+
+    Ir77PVPipelineHandle m_skin_compute{IR77PV_NO_PIPELINE};
 
     std::uint32_t m_default_material{0};
 
