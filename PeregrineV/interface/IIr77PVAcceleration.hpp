@@ -53,11 +53,20 @@ typedef struct IIr77PVAcceleration : virtual public IIr77Enlisted {
 
     // One BLAS per command of a vertex-path scene (UploadScene), and one TLAS instance per (command, instance). Blocking. dynamic = the
     // vertices move every frame (compute skinning) -> refit every frame. alpha = per command, the material row of a MASK material or
-    // BINDLESS_NO_SLOT (opaque); missing entries are opaque. The TLAS buffers grow to fit.
-    virtual std::shared_ptr<IIr77Return const> BuildScene(std::uint32_t const& scene_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha) = 0;
+    // BINDLESS_NO_SLOT (opaque); missing entries are opaque. The TLAS buffers grow to fit. objects = the BLASes it made, [first, first + count)
+    // -- for SetObjectsVisible / ReleaseObjects.
+    virtual std::shared_ptr<IIr77Return const> BuildScene(std::uint32_t const& scene_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha,
+                                                          glm::uvec2& objects) = 0;
 
     // The same for the mesh path's static stream (UploadMeshlets) -- static
-    virtual std::shared_ptr<IIr77Return const> BuildMeshlets(std::uint32_t const& meshlet_id, std::vector<std::uint32_t> const& alpha) = 0;
+    virtual std::shared_ptr<IIr77Return const> BuildMeshlets(std::uint32_t const& meshlet_id, std::vector<std::uint32_t> const& alpha,
+                                                             glm::uvec2& objects) = 0;
+
+    // A scene's BLASes in the TLAS or not, from the next frame -- an asset left out of a frame
+    virtual std::shared_ptr<IIr77Return const> SetObjectsVisible(glm::uvec2 const& objects, bool const& visible) = 0;
+
+    // A scene's BLASes gone for good -- waits for the device. Release before unloading the scene.
+    virtual std::shared_ptr<IIr77Return const> ReleaseObjects(glm::uvec2 const& objects) = 0;
 
     // ---- surfaces -- world-space geometry rebuilt every frame (a field) ----------------------------------------------------------------------
 

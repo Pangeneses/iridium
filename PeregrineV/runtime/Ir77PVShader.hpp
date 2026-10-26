@@ -48,7 +48,8 @@ namespace NSIr77PeregrineV {
 // DefineContract rejects a shader that breaks the contract (Ir77PVTypes.hpp) with a message naming the shader and the rule.
 //   query:     FindShader (name -> handle) / GetShaderInfo / GetPipelineShaderStageInfos (handles -> stage create infos)
 //   startup:   Ir77PVInit -- SetDevice / SetShaderRoot -> LoadShaders (every <name>.<stage>.spv in the root)
-//   compile:   CompileShader (GLSL text -> SPIR-V through glslangValidator) -> Ir77PVInit::ReloadShader puts it in and rebuilds pipelines
+//   compile:   CompileShader (GLSL text -> SPIR-V through glslangValidator) -> Ir77PVInit::ReloadShader puts it in and rebuilds pipelines.
+//              The device's defines go in here (DeviceDefines) -- a caller sends what its shader says, never what the GPU can do.
 //
 // Modules live until the registry is destroyed or replaced -- pipelines are built from them on demand, at any time.
 // =============================================================================================================================================
@@ -148,7 +149,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         if (!std::filesystem::is_directory(m_shader_root, error))
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: shader root not found: " + m_shader_root);
 
-        // only <name>.<stage>.spv -- what shader.sh writes. A bare <name>.spv is a leftover from the old naming and would shadow nothing
+        // only <name>.<stage>.spv -- what compile_shaders.sh writes. A bare <name>.spv is a leftover from the old naming and would shadow nothing
         // but still register, so a manifest naming it would silently get stale code; it's skipped with a warning instead.
         static std::array<std::string_view, 8> const stages{".vert", ".frag", ".comp", ".task", ".mesh", ".geom", ".tesc", ".tese"};
 
@@ -159,8 +160,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
             std::string const stage{std::filesystem::path(name).extension().string()};
 
             if (std::find(stages.begin(), stages.end(), stage) == stages.end()) {
-                Ir77RETURN<Ir77OperationFailed>(nullptr, std::string{"[WARN] shader skipped: "} + entry.path().filename().string() +
-                                                             " -- name it <name>.<stage>.spv (e.g. " + name + ".frag.spv)\n");
+                Ir77RETURN<Ir77OperationFailed>(nullptr, std::string{"[WARN] shader skipped: "} + entry.path().filename().string() + " -- name it <name>.<stage>.spv (e.g. " + name + ".frag.spv)\n");
                 continue;
             }
 
@@ -177,8 +177,9 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     }
 
     // GLSL text -> SPIR-V, through the shader compiler (glslangValidator, on PATH). The text is written to <shader root>/generated/<name> and
-    // compiled with the shader root on the include path, so it can #include "include/bindless.glsl". name is the registry name to be, so it
-    // ends in its stage ("field.comp"). errors = the compiler's ERROR / WARNING lines, with the file path cut down to the name.
+    // compiled with the shader root on the include path, so it can #include "include/bindless.glsl", and with the device's defines
+    // (DeviceDefines). name is the registry name to be, so it ends in its stage ("field.comp"). errors = the compiler's ERROR / WARNING lines,
+    // with the file path cut down to the name.
     // Blocking (a compiler process) -- for hot compiles between frames, not every frame.
     std::shared_ptr<IIr77Return const> CompileShader(std::string const& name, std::string const& text, std::vector<std::uint32_t>& spirv, std::string& errors) {
         spirv.clear();
@@ -200,8 +201,8 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
 
         std::filesystem::remove(output, error);
 
-        std::string const command =
-            m_shader_compiler + " -V --target-env vulkan1.3 -I\"" + m_shader_root + "\" \"" + source.string() + "\" -o \"" + output.string() + "\" 2>&1";
+        std::string const command = m_shader_compiler + " -V --target-env vulkan1.3" + DeviceDefines() + " -I\"" + m_shader_root + "\" \"" +
+                                    source.string() + "\" -o \"" + output.string() + "\" 2>&1";
 
         FILE* pipe = popen(command.c_str(), "r");
         if (!pipe) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: cannot run " + m_shader_compiler);
@@ -273,8 +274,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: SetDevice not called.");
         if (name.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: a shader needs a name.");
         if (m_names.count(name) != 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: '" + name + "' is already registered.");
-        if (spirv.size() < SPIRV_HEADER_WORDS || spirv[0] != SPIRV_MAGIC)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: '" + name + "' is not SPIR-V.");
+        if (spirv.size() < SPIRV_HEADER_WORDS || spirv[0] != SPIRV_MAGIC) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: '" + name + "' is not SPIR-V.");
 
         Ir77PVShaderInfo info{};
         info.name = name;
@@ -304,8 +304,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         info.name = m_shaders[handle].name;
         info.spirv = spirv;
 
-        if (spirv.size() < SPIRV_HEADER_WORDS || spirv[0] != SPIRV_MAGIC)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: '" + info.name + "' is not SPIR-V.");
+        if (spirv.size() < SPIRV_HEADER_WORDS || spirv[0] != SPIRV_MAGIC) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: '" + info.name + "' is not SPIR-V.");
 
         auto result = DefineReflection(info);
         if (result->ID() == GUIDIr77OperationSucceeded) result = DefineContract(info);
@@ -395,7 +394,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         std::uint32_t execution_model{UINT32_MAX};
         std::map<std::uint32_t, std::vector<std::uint32_t>> types{};
         std::map<std::uint32_t, std::uint32_t> constants{};
-        std::map<std::uint32_t, std::map<std::uint32_t, std::uint32_t>> decorations{};                                  // id -> decoration -> literal
+        std::map<std::uint32_t, std::map<std::uint32_t, std::uint32_t>> decorations{};                                       // id -> decoration -> literal
         std::map<std::uint32_t, std::map<std::uint32_t, std::map<std::uint32_t, std::uint32_t>>> member_decorations{};  // struct -> member -> ...
         std::vector<Ir77PVSpirvVariable> variables{};
     };
@@ -411,8 +410,8 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
         if (!module.has_main) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: '" + info.name + "' has no entry point named main.");
 
         if (!StageOf(module.execution_model, info.stage))
-            return Ir77RETURN<Ir77NotConfigured>(
-                this, "Ir77PVShader: '" + info.name + "' has an unsupported execution model (" + std::to_string(module.execution_model) + ").");
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVShader: '" + info.name + "' has an unsupported execution model (" +
+                                                           std::to_string(module.execution_model) + ").");
 
         info.reflection = Ir77PVShaderReflection{};
         m_descriptors.clear();
@@ -445,8 +444,7 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
                     descriptor.kind = DescriptorKind(module, variable);
 
                     if (decorations != module.decorations.end()) {
-                        if (auto const set = decorations->second.find(SPV_DECORATION_DESCRIPTOR_SET); set != decorations->second.end())
-                            descriptor.set = set->second;
+                        if (auto const set = decorations->second.find(SPV_DECORATION_DESCRIPTOR_SET); set != decorations->second.end()) descriptor.set = set->second;
                         if (auto const binding = decorations->second.find(SPV_DECORATION_BINDING); binding != decorations->second.end())
                             descriptor.binding = binding->second;
                     }
@@ -487,30 +485,26 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
                     bool ray_query{false};
                     m_device->GetRayQuery(ray_query);
 
-                    if (!ray_query)
-                        return Ir77RETURN<Ir77NotConfigured>(this, shader + "traces rays (include/raytrace.glsl) and this device has no ray queries.");
+                    if (!ray_query) return Ir77RETURN<Ir77NotConfigured>(this, shader + "traces rays (include/raytrace.glsl) and this device has no ray queries.");
 
                     expected = BINDLESS_BINDING_ACCELERATION;
                     break;
                 }
                 default:
-                    return Ir77RETURN<Ir77NotConfigured>(
-                        this, shader + "uses a descriptor type the bindless set doesn't have (set " + std::to_string(descriptor.set) + ", binding " +
-                                  std::to_string(descriptor.binding) +
-                                  ") -- use sampler2D (binding 0), storage buffers (1), storage images (2) or acceleration structures (3).");
+                    return Ir77RETURN<Ir77NotConfigured>(this, shader + "uses a descriptor type the bindless set doesn't have (set " + std::to_string(descriptor.set) +
+                                                                   ", binding " + std::to_string(descriptor.binding) +
+                                                                   ") -- use sampler2D (binding 0), storage buffers (1), storage images (2) or acceleration structures (3).");
             }
 
             if (descriptor.set != 0 || descriptor.binding != expected)
-                return Ir77RETURN<Ir77NotConfigured>(
-                    this, shader + "binds set " + std::to_string(descriptor.set) + ", binding " + std::to_string(descriptor.binding) +
-                              " -- only the bindless set 0 exists (0 textures, 1 storage buffers, 2 storage images, 3 acceleration "
-                              "structures); include bindless.glsl / raytrace.glsl.");
+                return Ir77RETURN<Ir77NotConfigured>(this, shader + "binds set " + std::to_string(descriptor.set) + ", binding " + std::to_string(descriptor.binding) +
+                                                               " -- only the bindless set 0 exists (0 textures, 1 storage buffers, 2 storage images, 3 acceleration "
+                                                               "structures); include bindless.glsl / raytrace.glsl.");
         }
 
         if (info.reflection.push_constant_size > PUSH_CONSTANT_LIMIT)
             return Ir77RETURN<Ir77NotConfigured>(this, shader + "has a " + std::to_string(info.reflection.push_constant_size) +
-                                                           "-byte push-constant block -- the limit is " + std::to_string(PUSH_CONSTANT_LIMIT) +
-                                                           " (Ir77PushConstants).");
+                                                           "-byte push-constant block -- the limit is " + std::to_string(PUSH_CONSTANT_LIMIT) + " (Ir77PushConstants).");
 
         if (info.stage == Ir77PVShaderStage::Vertex)
             for (auto const location : info.reflection.inputs)
@@ -607,6 +601,15 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
     // SPIR-V reading -- values only
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
+    // What this device can do, as compiler defines for runtime-compiled shaders -- the same variants shader.sh builds ahead of time:
+    //   IR77_RAY_SHADOWS  ray queries -- lighting.glsl traces its shadows and ambient occlusion against the TLAS
+    std::string DeviceDefines() const {
+        bool ray_query{false};
+        if (m_device) m_device->GetRayQuery(ray_query);
+
+        return ray_query ? " -DIR77_RAY_SHADOWS" : "";
+    }
+
     // "main\0" packed four chars per word, little-endian
     std::string LiteralString(std::uint32_t const* words, std::uint32_t const count) const {
         std::string text{};
@@ -623,50 +626,21 @@ class Ir77PVShader : public Ir77Enlisted, public IIr77PVShader, public std::enab
 
     bool StageOf(std::uint32_t const model, Ir77PVShaderStage& stage) const {
         switch (model) {
-            case 0:
-                stage = Ir77PVShaderStage::Vertex;
-                return true;
-            case 1:
-                stage = Ir77PVShaderStage::TessellationControl;
-                return true;
-            case 2:
-                stage = Ir77PVShaderStage::TessellationEvaluation;
-                return true;
-            case 3:
-                stage = Ir77PVShaderStage::Geometry;
-                return true;
-            case 4:
-                stage = Ir77PVShaderStage::Fragment;
-                return true;
-            case 5:
-                stage = Ir77PVShaderStage::Compute;
-                return true;
-            case 5364:
-                stage = Ir77PVShaderStage::Task;
-                return true;  // TaskEXT
-            case 5365:
-                stage = Ir77PVShaderStage::Mesh;
-                return true;  // MeshEXT
-            case 5313:
-                stage = Ir77PVShaderStage::RayGeneration;
-                return true;
-            case 5314:
-                stage = Ir77PVShaderStage::RayIntersection;
-                return true;
-            case 5315:
-                stage = Ir77PVShaderStage::RayAnyHit;
-                return true;
-            case 5316:
-                stage = Ir77PVShaderStage::RayClosestHit;
-                return true;
-            case 5317:
-                stage = Ir77PVShaderStage::RayMiss;
-                return true;
-            case 5318:
-                stage = Ir77PVShaderStage::RayCallable;
-                return true;
-            default:
-                return false;
+            case 0: stage = Ir77PVShaderStage::Vertex; return true;
+            case 1: stage = Ir77PVShaderStage::TessellationControl; return true;
+            case 2: stage = Ir77PVShaderStage::TessellationEvaluation; return true;
+            case 3: stage = Ir77PVShaderStage::Geometry; return true;
+            case 4: stage = Ir77PVShaderStage::Fragment; return true;
+            case 5: stage = Ir77PVShaderStage::Compute; return true;
+            case 5364: stage = Ir77PVShaderStage::Task; return true;  // TaskEXT
+            case 5365: stage = Ir77PVShaderStage::Mesh; return true;  // MeshEXT
+            case 5313: stage = Ir77PVShaderStage::RayGeneration; return true;
+            case 5314: stage = Ir77PVShaderStage::RayIntersection; return true;
+            case 5315: stage = Ir77PVShaderStage::RayAnyHit; return true;
+            case 5316: stage = Ir77PVShaderStage::RayClosestHit; return true;
+            case 5317: stage = Ir77PVShaderStage::RayMiss; return true;
+            case 5318: stage = Ir77PVShaderStage::RayCallable; return true;
+            default: return false;
         }
     }
 

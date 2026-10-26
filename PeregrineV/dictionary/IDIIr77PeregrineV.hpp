@@ -38,7 +38,6 @@ inline Ir77GUID GUIDIIr77PVLayout{(static_cast<unsigned __int128>(0xF1FC7315669F
 inline Ir77GUID GUIDIIr77PVPipeline{(static_cast<unsigned __int128>(0xB10BE474EAC70D1A) << 64) | 0xFEFDBF8EA6C37F9D};
 inline Ir77GUID GUIDIIr77PVPipelineCache{(static_cast<unsigned __int128>(0xA299C54C906948DC) << 64) | 0x952ECFA401376D92};
 inline Ir77GUID GUIDIIr77PVPipelineCPT{(static_cast<unsigned __int128>(0x46C20AB047F94AE2) << 64) | 0x9A1201B0DEE5A384};
-inline Ir77GUID GUIDIIr77PVPipelineRay{(static_cast<unsigned __int128>(0xA9B8A5CE4B7C49F0) << 64) | 0xA3C627B3D928C9A9};
 inline Ir77GUID GUIDIIr77PVCmdBuffer{(static_cast<unsigned __int128>(0xF71D19D109D2114D) << 64) | 0x1186ADBD29983077};
 inline Ir77GUID GUIDIIr77PVTransfer{(static_cast<unsigned __int128>(0xF2EB13C0DE42440D) << 64) | 0xA4C63B730CE9408A};
 inline Ir77GUID GUIDIIr77PVTexture{(static_cast<unsigned __int128>(0x3748583BB9C81720) << 64) | 0x08ACB330BEBFAC4F};
@@ -46,6 +45,7 @@ inline Ir77GUID GUIDIIr77PVShader{(static_cast<unsigned __int128>(0xF4D60A74F199
 inline Ir77GUID GUIDIIr77PVMaterial{(static_cast<unsigned __int128>(0x033C555AF2E0ABF5) << 64) | 0x1EF45C1405FEA446};
 inline Ir77GUID GUIDIIr77PVGeometry{(static_cast<unsigned __int128>(0xED2CD3736BC44EA5) << 64) | 0x96C0F6529F271508};
 inline Ir77GUID GUIDIIr77PVAcceleration{(static_cast<unsigned __int128>(0x0EB276772F434013) << 64) | 0x296E56C9E75074A8};
+inline Ir77GUID GUIDIIr77PVWorld{(static_cast<unsigned __int128>(0xE56137519E43451D) << 64) | 0xA7CFA60C5581EE80};
 inline Ir77GUID GUIDIIr77PVPaint{(static_cast<unsigned __int128>(0x3B1F109C15C24A2D) << 64) | 0x8D13DF17E5848FD2};
 inline Ir77GUID GUIDIIr77PVCEF{(static_cast<unsigned __int128>(0x50C4C87A4D8A41B5) << 64) | 0xA1481E8D50E5DA94};
 
@@ -141,6 +141,7 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
         {"GUIDIIr77PVMaterial", &GUIDIIr77PVMaterial},
         {"GUIDIIr77PVGeometry", &GUIDIIr77PVGeometry},
         {"GUIDIIr77PVAcceleration", &GUIDIIr77PVAcceleration},
+        {"GUIDIIr77PVWorld", &GUIDIIr77PVWorld},
 
         // Compute
         {"GUIDIIr77PVCompute", &GUIDIIr77PVCompute},
@@ -153,7 +154,6 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
         {"GUIDIIr77PVPipeline", &GUIDIIr77PVPipeline},
         {"GUIDIIr77PVPipelineCache", &GUIDIIr77PVPipelineCache},
         {"GUIDIIr77PVPipelineCPT", &GUIDIIr77PVPipelineCPT},
-        {"GUIDIIr77PVPipelineRay", &GUIDIIr77PVPipelineRay},
 
         // Command Recording
         {"GUIDIIr77PVCmdBuffer", &GUIDIIr77PVCmdBuffer},

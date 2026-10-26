@@ -26,23 +26,25 @@ using namespace NSIr77PeregrineV;
 
 namespace NSIr77Scene {
 
-// The scene module's work -- owns and wires Pose, View, Lighting and Field; loads the scene through the renderer and hands it each frame.
+// The scene module's work -- owns and wires Pose, View, Lighting and Field; hands the renderer the file as one asset and each frame as one
+// frame.
 //   SetRenderer / SetViewSize / SetPipeline -> CreateScene -> per frame: Update(dt) -> CreateFrame(seconds)
 typedef struct IIr77Animate : virtual public IIr77Enlisted {
     IIr77Animate() = default;
 
-    // The renderer's server -- where the scene's textures, materials and geometry go (CreateScene), which pipelines its draw items use, and
-    // where each frame goes (CreateFrame). Field and Lighting get it too. Its forwarding methods are the only way into PeregrineV.
+    // The renderer's server -- where the scene's asset goes (CreateScene) and each frame goes (CreateFrame). Field gets it too (its
+    // program, buffers and draw items). Its forwarding methods are the only way into PeregrineV.
     virtual std::shared_ptr<IIr77Return const> SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) = 0;
 
     // The windows CreateFrame fills, and their size -- the cameras' aspect. Any time; the next frame uses it.
     virtual std::shared_ptr<IIr77Return const> SetViewSize(std::size_t const& windows, int const& width, int const& height) = 0;
 
-    // What the static (non-skinned, opaque) runs draw with -- a manifest pipeline or role. Unset -> the "static" role.
+    // What the static (non-skinned, opaque) geometry draws with -- a manifest pipeline or role. Unset -> the "static" role. Taken by the next
+    // CreateScene.
     virtual std::shared_ptr<IIr77Return const> SetPipeline(Ir77PVPipelineHandle const& pipeline) = 0;
 
-    // Once, after CreatePipelines. Parses the glTF, stacks every primitive into one upload, sorts the commands into material runs, uploads
-    // textures / materials / geometry through the Asset and packs the lights. use_mesh -> mesh shading for the static stream when the device has it.
+    // Parses the glTF and hands it to the renderer as one asset bundle (LoadAsset), replacing the scene loaded before; then the lights, the
+    // cameras and the clips. use_mesh -> mesh shading for the static geometry when the device has it.
     // No geometry is fine: an empty path, a file with nothing drawable, or a file that fails to load all leave a running scene with no
     // geometry. A file that fails to load is logged (and listed in the stats warnings), not a failure.
     virtual std::shared_ptr<IIr77Return const> CreateScene(std::string const& path, bool const& use_mesh) = 0;
@@ -50,8 +52,8 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
     // Once per frame, before CreateFrame: animation, world matrices and joint palettes (Pose), then the held camera keys (View)
     virtual std::shared_ptr<IIr77Return const> Update(float const& dt) = 0;
 
-    // Every frame, after Update: hands the frame's results to Paint -- camera, instance transforms, lights, bones, one draw item per material
-    // run and the sorted transparent draws, for every window.
+    // Every frame, after Update: the frame -- every window's camera, the asset's transforms and bones, the lights, the field's dispatches and
+    // draws -- to the renderer in one SubmitFrame.
     virtual std::shared_ptr<IIr77Return const> CreateFrame(float const& seconds) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPose(std::shared_ptr<IIr77Pose>& pose) = 0;

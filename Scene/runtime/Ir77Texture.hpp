@@ -12,10 +12,13 @@
 
 #include "../build/_deps/stb-src/stb_image.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
@@ -108,7 +111,9 @@ class Ir77Texture : public Ir77Enlisted, public IIr77Texture, public std::enable
     }
 
    public:
-    // Decodes every glTF texture. A texture that can't be read stays invalid (its material slot falls back to the placeholder).
+    // Decodes every glTF texture, in parallel -- one worker per core, each taking the next texture until none are left. Every texture is
+    // written only by the worker that took it, so nothing is shared; all are done before this returns. A texture that can't be read stays
+    // invalid (its material slot falls back to the placeholder).
     std::shared_ptr<IIr77Return const> LoadTexturesFromAsset(fastgltf::Asset const& asset) {
         m_textures.assign(asset.textures.size(), Ir77TextureImage{});
 
@@ -119,35 +124,21 @@ class Ir77Texture : public Ir77Enlisted, public IIr77Texture, public std::enable
             if (material.emissiveTexture.has_value()) MarkColor(color, material.emissiveTexture->textureIndex);
         }
 
-        std::size_t decoded{0};
+        for (std::size_t t = 0; t < m_textures.size(); t++) m_textures[t].srgb = color[t];
 
-        for (std::size_t t = 0; t < asset.textures.size(); t++) {
-            fastgltf::Texture const& texture = asset.textures[t];
-            if (!texture.imageIndex.has_value()) continue;  // only a WebP / KTX2 extension source -- not supported yet
+        std::atomic<std::size_t> next{0};
 
-            Ir77TextureImage& out = m_textures[t];
-            out.srgb = color[t];
+        std::size_t const workers = std::min<std::size_t>(std::max(std::thread::hardware_concurrency(), 1u), m_textures.size());
 
-            if (!ImageBytes(asset, asset.images.at(texture.imageIndex.value()), out.encoded)) {
-                std::printf("[Ir77Texture] texture %zu: image bytes not available\n", t);
-                continue;
-            }
+        {
+            std::vector<std::jthread> pool{};
+            pool.reserve(workers);
 
-            int w{0}, h{0}, channels{0};
-            stbi_uc* pixels = stbi_load_from_memory(out.encoded.data(), static_cast<int>(out.encoded.size()), &w, &h, &channels, 4);
-            if (!pixels) {
-                std::printf("[Ir77Texture] texture %zu: decode failed (%s)\n", t, stbi_failure_reason());
-                continue;
-            }
-
-            out.width = static_cast<std::uint32_t>(w);
-            out.height = static_cast<std::uint32_t>(h);
-            out.rgba.assign(pixels, pixels + static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4);
-            out.valid = true;
-
-            stbi_image_free(pixels);
-            decoded++;
-        }
+            for (std::size_t w = 0; w < workers; w++)
+                pool.emplace_back([this, &asset, &next]() {
+                    for (std::size_t t = next++; t < m_textures.size(); t = next++) DefineTexture(asset, t);
+                });
+        }  // jthreads join here
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -173,6 +164,33 @@ class Ir77Texture : public Ir77Enlisted, public IIr77Texture, public std::enable
     }
 
    private:
+    // One texture: its encoded bytes out of the asset, then stb_image to RGBA8. Runs on a decode worker -- touches only m_textures[t].
+    void DefineTexture(fastgltf::Asset const& asset, std::size_t const t) {
+        fastgltf::Texture const& texture = asset.textures[t];
+        if (!texture.imageIndex.has_value()) return;  // only a WebP / KTX2 extension source -- not supported yet
+
+        Ir77TextureImage& out = m_textures[t];
+
+        if (!ImageBytes(asset, asset.images.at(texture.imageIndex.value()), out.encoded)) {
+            std::printf("[Ir77Texture] texture %zu: image bytes not available\n", t);
+            return;
+        }
+
+        int w{0}, h{0}, channels{0};
+        stbi_uc* pixels = stbi_load_from_memory(out.encoded.data(), static_cast<int>(out.encoded.size()), &w, &h, &channels, 4);
+        if (!pixels) {
+            std::printf("[Ir77Texture] texture %zu: decode failed (%s)\n", t, stbi_failure_reason());
+            return;
+        }
+
+        out.width = static_cast<std::uint32_t>(w);
+        out.height = static_cast<std::uint32_t>(h);
+        out.rgba.assign(pixels, pixels + static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4);
+        out.valid = true;
+
+        stbi_image_free(pixels);
+    }
+
     static void MarkColor(std::vector<bool>& color, std::size_t const& index) {
         if (index < color.size()) color[index] = true;
     }

@@ -39,7 +39,10 @@ namespace NSIr77PeregrineV {
 //
 //   configure: SetDevice / SetAllocator / SetUsage / SetMode
 //   create:    CreateResources -> DefineBuffer (per copy)
-//   upload:    UploadBatch -> CreateResources -> DefineStagingData -> DefineUploadCommands -> DefineUploadFence -> SubmitUpload
+//   upload:    UploadBatch -> CreateResources -> BuildStagingData -> RecordCopyBuffers -> SubmitCmdBuffer
+//
+// Destruction never waits for the device: whoever drops a buffer a frame in flight may still read hands it to Transfer's graveyard first.
+// Replacing a live buffer (CreateResources on one that has copies) does wait -- its old copies may still be in use.
 // =============================================================================================================================================
 class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enable_shared_from_this<Ir77PVBuffer> {
    public:
@@ -131,7 +134,8 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
     // -------------------------------------------------------------------------------------------------------------------------------------
     // create
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // copies = frames in flight for Dynamic; ignored (forced to 1) for Static and Staging. Replaces any previous buffers.
+    // copies = frames in flight for Dynamic; ignored (forced to 1) for Static and Staging. Replaces any previous buffers -- after the device
+    // goes idle, since a frame in flight may still read them (Staging skips the wait: its only reader is its own upload, already waited for).
     std::shared_ptr<IIr77Return const> CreateResources(VkDeviceSize const& size, std::uint32_t const& copies) {
         if (m_allocator == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: SetAllocator not called.");
         if (m_usage == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: SetUsage not called.");
@@ -139,6 +143,13 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
 
         std::uint32_t const count{m_mode == Ir77PVBufferMode::Dynamic ? copies : 1};
         if (count == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: copy count is zero.");
+
+        if (!m_buffers.empty() && m_mode != Ir77PVBufferMode::Staging && m_device) {
+            VkDevice device{VK_NULL_HANDLE};
+            m_device->GetDevice(&device);
+
+            vkDeviceWaitIdle(device);
+        }
 
         Release();
 
@@ -202,13 +213,12 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         std::vector<VkBufferCopy> regions{};
-        DefineStagingData(entries, regions);
+        BuildStagingData(entries, regions);
 
         m_upload_pool = pool;
 
-        result = DefineUploadCommands(entries, regions);
-        if (result->ID() == GUIDIr77OperationSucceeded) result = DefineUploadFence();
-        if (result->ID() == GUIDIr77OperationSucceeded) result = SubmitUpload(queue);
+        result = RecordCopyBuffers(entries, regions);
+        if (result->ID() == GUIDIr77OperationSucceeded) result = SubmitCmdBuffer(queue);
 
         if (result->ID() != GUIDIr77OperationSucceeded) {
             ReleaseUpload();
@@ -330,7 +340,7 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
     }
 
     // Packs the entries back to back into the mapped staging memory; regions[i] is entry i's copy (size 0 = skipped)
-    std::shared_ptr<IIr77Return const> DefineStagingData(std::vector<Ir77PVUploadEntry> const& entries, std::vector<VkBufferCopy>& regions) {
+    std::shared_ptr<IIr77Return const> BuildStagingData(std::vector<Ir77PVUploadEntry> const& entries, std::vector<VkBufferCopy>& regions) {
         regions.assign(entries.size(), VkBufferCopy{});
 
         VkDeviceSize cursor{0};
@@ -353,7 +363,8 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DefineUploadCommands(std::vector<Ir77PVUploadEntry> const& entries, std::vector<VkBufferCopy> const& regions) {
+    // One command buffer from the borrowed pool: a copy per entry, then one barrier so everything submitted later on the queue sees them
+    std::shared_ptr<IIr77Return const> RecordCopyBuffers(std::vector<Ir77PVUploadEntry> const& entries, std::vector<VkBufferCopy> const& regions) {
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
@@ -392,7 +403,8 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> DefineUploadFence() {
+    // The command buffer onto the queue with its own fence -- what UploadBatch's wait and IsUploadFinished watch
+    std::shared_ptr<IIr77Return const> SubmitCmdBuffer(VkQueue const& queue) {
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
@@ -402,10 +414,6 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
         if (vkCreateFence(device, &fence_info, nullptr, &m_upload_fence) != VK_SUCCESS)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVBuffer: vkCreateFence failed.");
 
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> SubmitUpload(VkQueue const& queue) {
         VkSubmitInfo submit_info{};
         submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit_info.commandBufferCount = 1;
@@ -425,17 +433,9 @@ class Ir77PVBuffer : public Ir77Enlisted, public IIr77PVBuffer, public std::enab
    private:
     std::uint32_t CopyIndex(std::uint32_t const& copy) const { return m_mode == Ir77PVBufferMode::Dynamic ? copy : 0; }
 
-    // Frees every copy. Waits for the GPU first -- a frame in flight may still be reading the old buffers.
-    // Staging skips the device-wide wait: its only reader is its own upload, which ReleaseUpload has already waited for.
+    // Frees every copy, now. No wait: the graveyard (or teardown's idle) has already made sure nothing reads them.
     void Release() {
         if (m_buffers.empty()) return;
-
-        if (m_device && m_mode != Ir77PVBufferMode::Staging) {
-            VkDevice device{VK_NULL_HANDLE};
-            m_device->GetDevice(&device);
-
-            vkDeviceWaitIdle(device);
-        }
 
         for (std::size_t i = 0; i < m_buffers.size(); i++)
             if (m_buffers[i] != VK_NULL_HANDLE) vmaDestroyBuffer(m_allocator, m_buffers[i], m_allocations[i]);

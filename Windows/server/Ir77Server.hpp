@@ -62,7 +62,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (m_empty_parser.parse(std::string_view{"{}"}).get(m_empty_args) != simdjson::SUCCESS)  // what a handler sees when a message has no "args"
             throw std::runtime_error{"Ir77Server: empty args"};
 
-        DefineOperations();
+        RegisterPipeOperations();
     }
 
    public:
@@ -233,7 +233,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         std::size_t operator()(std::string_view const& op) const { return std::hash<std::string_view>{}(op); }
     };
 
-    void DefineOperations() {
+    void RegisterPipeOperations() {
         DefineWindowOperations();
         DefinePageOperations();
     }

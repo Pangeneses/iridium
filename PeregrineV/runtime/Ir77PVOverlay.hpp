@@ -165,7 +165,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         auto result = DefineSampler();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        result = DefineUploadCommands();
+        result = RecordCopyBuffers();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         result = DefineExtentResources();
@@ -232,7 +232,8 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         submit_info.commandBufferCount = 1;
         submit_info.pCommandBuffers = &m_upload_cmd;
 
-        if (vkQueueSubmit(queue, 1, &submit_info, m_upload_fence) != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: vkQueueSubmit failed.");
+        if (vkQueueSubmit(queue, 1, &submit_info, m_upload_fence) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: vkQueueSubmit failed.");
 
         m_ever_uploaded = true;
 
@@ -311,7 +312,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
 
     // Own pool with RESET_COMMAND_BUFFER -- the one command buffer is re-recorded every paint (the device's upload pool is transient,
     // for record-once buffers), and a fence created signalled so the first UploadFrame doesn't wait
-    std::shared_ptr<IIr77Return const> DefineUploadCommands() {
+    std::shared_ptr<IIr77Return const> RecordCopyBuffers() {
         if (m_upload_pool != VK_NULL_HANDLE) return Ir77RETURN<Ir77OperationSucceeded>();
 
         VkDevice device{VK_NULL_HANDLE};
@@ -380,7 +381,8 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         m_device->GetDeviceProperties(properties);
 
         std::uint32_t const limit = properties.limits.maxImageDimension2D;
-        if (frame_width > limit || frame_height > limit) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: frame larger than the device's maximum image size.");
+        if (frame_width > limit || frame_height > limit)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: frame larger than the device's maximum image size.");
 
         auto const headroom = [limit](std::uint32_t const& v) { return std::min((v + 511u) & ~511u, limit); };
 
@@ -439,7 +441,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
 
         if (vmaCreateImage(m_allocator, &image_info, &alloc_info, &m_image, &m_image_allocation, nullptr) != VK_SUCCESS)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: image creation failed.");
-        
+
         m_image_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -481,7 +483,8 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-        if (vkBeginCommandBuffer(m_upload_cmd, &begin_info) != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: vkBeginCommandBuffer failed.");
+        if (vkBeginCommandBuffer(m_upload_cmd, &begin_info) != VK_SUCCESS)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVOverlay: vkBeginCommandBuffer failed.");
 
         bool const first = m_image_layout == VK_IMAGE_LAYOUT_UNDEFINED;
 

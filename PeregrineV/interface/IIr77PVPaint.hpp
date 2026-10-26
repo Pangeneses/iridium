@@ -88,9 +88,6 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     // Replaces one pass's draw list for a window. Persists until replaced.
     virtual std::shared_ptr<IIr77Return const> SetDraws(std::size_t const& window, Ir77PVPass const& pass, std::vector<Ir77PVDrawItem> const& draws) = 0;
 
-    // Replaces a window's own compute list -- recorded by its Compute pass every frame. Persists until replaced.
-    virtual std::shared_ptr<IIr77Return const> SetDispatches(std::size_t const& window, std::vector<Ir77PVDispatch> const& dispatches) = 0;
-
     // Replaces the once-a-frame compute list (skinning, the field) -- recorded by the first window Draw records. Persists until replaced.
     virtual std::shared_ptr<IIr77Return const> SetFrameDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
 

@@ -87,6 +87,14 @@ target_link_libraries(Ir77Scene PUBLIC mikktspace)
 # meshoptimizer -- the target PeregrineV fetches; welding after MikkTSpace
 target_link_libraries(Ir77Scene PUBLIC meshoptimizer)
 
+# the load-time workhorses run optimised in every build type -- unoptimised, MikkTSpace / welding / PNG decoding cost seconds per scene.
+# Nobody steps through them; the engine's own code keeps the build's flags.
+foreach(target mikktspace stb_image meshoptimizer)
+    if(TARGET ${target})
+        target_compile_options(${target} PRIVATE -O2)
+    endif()
+endforeach()
+
 # SDL3
 find_package(SDL3 REQUIRED)
 target_link_libraries(Ir77Scene PRIVATE SDL3::SDL3)

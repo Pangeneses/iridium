@@ -35,13 +35,13 @@ inline Ir77GUID GUIDIr77PVLayout{(static_cast<unsigned __int128>(0xF9C41B8E3A706
 inline Ir77GUID GUIDIr77PVPipeline{(static_cast<unsigned __int128>(0x7B3F90D2C5A418E6) << 64) | 0x4A8E610F93B2D75C};
 inline Ir77GUID GUIDIr77PVPipelineCache{(static_cast<unsigned __int128>(0x4A8BE9D7C5864E4E) << 64) | 0x9DAF83B8725FE597};
 inline Ir77GUID GUIDIr77PVPipelineCPT{(static_cast<unsigned __int128>(0x57FC2CBC7273408B) << 64) | 0x9A8AB5F638EA5DBB};
-inline Ir77GUID GUIDIr77PVPipelineRay{(static_cast<unsigned __int128>(0x6840B8B4F51A4C90) << 64) | 0xB774318E8E8DA57A};
 inline Ir77GUID GUIDIr77PVCmdBuffer{(static_cast<unsigned __int128>(0x83E6A0D2F1794C5B) << 64) | 0xC1A4E7930F2D85B6};
 inline Ir77GUID GUIDIr77PVTexture{(static_cast<unsigned __int128>(0x6092FBAA42AB407D) << 64) | 0x86EC49B4247721D3};
 inline Ir77GUID GUIDIr77PVShader{(static_cast<unsigned __int128>(0xC6E4819A3F720B5D) << 64) | 0x1D30A7F852C9E4B6};
 inline Ir77GUID GUIDIr77PVMaterial{(static_cast<unsigned __int128>(0x3A5D72F1E9C840B6) << 64) | 0x8F2BC4A1057E93D6};
 inline Ir77GUID GUIDIr77PVGeometry{(static_cast<unsigned __int128>(0xF1BA46E129CB4367) << 64) | 0xB63BE55CFE4F84A5};
 inline Ir77GUID GUIDIr77PVAcceleration{(static_cast<unsigned __int128>(0xA60A1A63A819A5CC) << 64) | 0x8B213394D9E62A92};
+inline Ir77GUID GUIDIr77PVWorld{(static_cast<unsigned __int128>(0x1210BE89D29F416F) << 64) | 0x900A8DBD2970CE02};
 inline Ir77GUID GUIDIr77PVTransfer{(static_cast<unsigned __int128>(0x81163A56E7134832) << 64) | 0x8F4126169ED7A5CF};
 inline Ir77GUID GUIDIr77PVPaint{(static_cast<unsigned __int128>(0xC440AC67BB674B9F) << 64) | 0xB3189D0572DE97E4};
 inline Ir77GUID GUIDIr77PVCEF{(static_cast<unsigned __int128>(0xE39ABBA104F7426F) << 64) | 0x8827C847BD1F8936};
@@ -108,7 +108,6 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
         {"GUIDIr77PVPipeline", &GUIDIr77PVPipeline},
         {"GUIDIr77PVPipelineCache", &GUIDIr77PVPipelineCache},
         {"GUIDIr77PVPipelineCPT", &GUIDIr77PVPipelineCPT},
-        {"GUIDIr77PVPipelineRay", &GUIDIr77PVPipelineRay},
         {"GUIDIr77PVRenderPass", &GUIDIr77PVRenderPass},
         {"GUIDIr77PVOverlay", &GUIDIr77PVOverlay},
         {"GUIDIr77PVBuffer", &GUIDIr77PVBuffer},
@@ -122,6 +121,7 @@ class IDIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public std
         {"GUIDIr77PVMaterial", &GUIDIr77PVMaterial},
         {"GUIDIr77PVGeometry", &GUIDIr77PVGeometry},
         {"GUIDIr77PVAcceleration", &GUIDIr77PVAcceleration},
+        {"GUIDIr77PVWorld", &GUIDIr77PVWorld},
         {"GUIDIr77PVInit", &GUIDIr77PVInit},
         {"GUIDIr77PVPaint", &GUIDIr77PVPaint},
         {"GUIDIr77PVCEF", &GUIDIr77PVCEF},

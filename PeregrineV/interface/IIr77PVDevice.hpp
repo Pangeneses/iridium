@@ -1,62 +1,49 @@
 #pragma once
+
 #include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
+
+#include <cstdint>
+#include <memory>
+#include <string>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
 #include "IIr77PVInstance.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
-
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-static const std::uint8_t IR77_UNKNOWN__BIT = 0b00000000;
-static const std::uint8_t IR77_GRAPHICS_BIT = 0b00000001;
-static const std::uint8_t IR77_COMPUTE_BIT = 0b00000010;
-static const std::uint8_t IR77_TRANSFER_BIT = 0b00000100;
-static const std::uint8_t IR77_SPARSE_BIT = 0b00001000;
-static const std::uint8_t IR77_PROTECTED_BIT = 0b00010000;
-static const std::uint8_t IR77_ENCODE_BIT = 0b00100000;
-static const std::uint8_t IR77_DECODE_BIT = 0b01000000;
-
-typedef struct Ir77PVQueueFamily {
-    std::uint8_t type{IR77_UNKNOWN__BIT};
-    VkQueueFamilyProperties family_properties;
-    VkDeviceQueueCreateInfo create_info;
-    VkBool32 presentation{UINT32_MAX};
-    VkQueue queue{VK_NULL_HANDLE};
-}* pIr77PVQueueFamily;
-
+// One physical device and, once chosen, its logical device -- extensions, features, queues, the upload and transfer pools.
+//   SetInstance -> SetPhysicalDevice(index) -> QueryDisplaySupport (Init ranks the candidates) -> CreateDevice -> Get*
 typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
     IIr77PVDevice() = default;
 
+    // ---- setup -- Ir77PVInit -----------------------------------------------------------------------------------------------------------------
+
     virtual std::shared_ptr<IIr77Return const> SetInstance(std::shared_ptr<IIr77PVInstance> instance) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices(std::uint32_t const& device_index) = 0;
+    // The instance's index-th physical device
+    virtual std::shared_ptr<IIr77Return const> SetPhysicalDevice(std::uint32_t const& index) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> DefineQueueFamilyProps(SDL_Window* window) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> DefineQueueCreateInfos() = 0;
-
-    virtual std::shared_ptr<IIr77Return const> QueryDeviceExtensionSupport() = 0;
-
+    // Can it drive a display, before any logical device exists: VK_KHR_swapchain and a graphics family that can present to an SDL window.
+    // rank 4 discrete, 3 integrated, 2 virtual, 1 other, 0 CPU; fails (rank -1) when it can't.
     virtual std::shared_ptr<IIr77Return const> QueryDisplaySupport(int& rank, std::string& name) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> DefineDeviceInfo() = 0;
+    // The logical device: one queue per family, the required extensions and features plus every optional one the GPU has (mesh shading,
+    // ray queries, buffer device address). Fails when a requirement is missing.
+    virtual std::shared_ptr<IIr77Return const> CreateDevice() = 0;
 
-    virtual std::shared_ptr<IIr77Return const> DefineDevice() = 0;
+    // ---- the device -- valid after CreateDevice ----------------------------------------------------------------------------------------------
 
-    virtual std::shared_ptr<IIr77Return const> GetPhysicalDevice(VkPhysicalDevice* phys_device) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetPhysicalDevice(VkPhysicalDevice* physical_device) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetDeviceProperties(VkPhysicalDeviceProperties& phys_device_props) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetDeviceFeatures(VkPhysicalDeviceFeatures& phys_device_features) = 0;
+    virtual std::shared_ptr<IIr77Return const> GetDeviceProperties(VkPhysicalDeviceProperties& properties) = 0;
 
+    // VK_EXT_mesh_shader enabled with task + mesh stages
     virtual std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) = 0;
 
     // acceleration structures + ray queries enabled (VK_KHR_acceleration_structure / ray_query / deferred_host_operations + features)
@@ -68,14 +55,15 @@ typedef struct IIr77PVDevice : virtual public IIr77Enlisted {
     // scratch alignment and build limits for BLAS / TLAS -- zeros when ray queries are off
     virtual std::shared_ptr<IIr77Return const> GetAccelerationStructureProperties(VkPhysicalDeviceAccelerationStructurePropertiesKHR& properties) = 0;
 
+    // descriptor-indexing limits -- Ir77PVLayout sizes the bindless arrays from these
     virtual std::shared_ptr<IIr77Return const> GetVulkan12Properties(VkPhysicalDeviceVulkan12Properties& properties) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) = 0;
+    // ---- queues and pools -- valid after CreateDevice ----------------------------------------------------------------------------------------
 
-    virtual std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVQueueFamily>& queue_family) = 0;
-
+    // first graphics family that can present
     virtual std::shared_ptr<IIr77Return const> GetPresentQueue(VkQueue& queue, std::uint32_t& family) = 0;
 
+    // transient pool on the present family for one-shot uploads
     virtual std::shared_ptr<IIr77Return const> GetUploadPool(VkCommandPool& pool, VkQueue& queue) = 0;
 
     // first transfer-only family (copy engine); the present queue when the GPU has none -- compare families to know if ownership transfers apply

@@ -44,7 +44,7 @@ namespace NSIr77Scene {
 // Ir77Field -- one compute-driven visual: a surface or particle cloud whose program (GLSL, include/field.glsl is the contract) is compiled from
 // source at runtime. Owned by Ir77Animate; the UI reaches it through the scene server's field.* ops.
 //
-//   setup:     SetRenderer / SetLighting / SetDefaultMaterial
+//   setup:     SetRenderer / SetLighting
 //   program:   CompileField(settings) -> [SetFieldParams / ClearFieldCanvas / ResetField / ShowField]
 //   per frame: AppendDispatches(dispatches, dt) once, then AppendDraws(window, pass, items) into each pass list
 //   rays:      on a ray-query device a surface is in the TLAS too -- one surface BLAS over the point buffer and a grid index buffer, rebuilt
@@ -118,13 +118,6 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The material the field's draw items carry -- the scene's grey default (the field shades itself)
-    std::shared_ptr<IIr77Return const> SetDefaultMaterial(std::uint32_t const& material) {
-        m_default_material = material;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // -------------------------------------------------------------------------------------------------------------------------------------
     // field -- one compute-driven visual. The program (GLSL, include/field.glsl is the contract) is compiled twice, into field.comp and
     // field.frag, and swapped in only when both compile; the running field keeps going otherwise. Every frame: Field() per element, then the
@@ -164,13 +157,8 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
                                                           compute_spirv, compute_errors)
                                     ->ID() == GUIDIr77OperationSucceeded;
 
-        // ray-traced shadows on the surface when the device has ray queries (lighting.glsl) -- fragment stage only
-        bool ray_query{false};
-        m_renderer->GetRayQuery(ray_query);
-
-        std::string const fragment_defines = defines + (ray_query ? "#define IR77_RAY_SHADOWS\n" : "");
-
-        bool const fragment_ok = m_renderer->CompileShader("field.frag", FieldShaderText("IR77_STAGE_FRAGMENT", fragment_defines, settings.source, "include/field_fragment.glsl"),
+        // ray-traced shadows on a ray-query device: the renderer adds that define itself (Ir77PVShader::DeviceDefines)
+        bool const fragment_ok = m_renderer->CompileShader("field.frag", FieldShaderText("IR77_STAGE_FRAGMENT", defines, settings.source, "include/field_fragment.glsl"),
                                                            fragment_spirv, fragment_errors)
                                      ->ID() == GUIDIr77OperationSucceeded;
 
@@ -222,7 +210,7 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
         }
 
         // ray queries -- a surface joins the rays (once per grid size)
-        if (settings.topology == 0 && !m_field_has_ray) {
+        if (settings.topology == 0 && !m_field_has_ray && !m_field_rays_off) {
             if (Failed(DefineRaySurface(dims), result)) return result;
         }
 
@@ -373,7 +361,7 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
 
         auto const make = [&](Ir77PVPipelineHandle const pipeline, std::uint32_t const light) {
             Ir77PVDrawItem item{};
-            if (m_renderer->MakeProceduralDrawItem(w, pipeline, m_default_material, vertices, 1, item)->ID() != GUIDIr77OperationSucceeded) return;
+            if (m_renderer->MakeProceduralDrawItem(w, pipeline, vertices, 1, item)->ID() != GUIDIr77OperationSucceeded) return;
 
             item.mode = surface ? 0u : 1u;
             item.user[0] = m_field_config_slot;  // -> pc.user[4]
@@ -419,12 +407,9 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
 
     // The surface in the rays: a grid index buffer over the z = 0 slice of the points -- two triangles a cell, the same corners and winding
     // field_vertex.glsl draws -- and a surface BLAS over it and the point buffer (position = Ir77FieldPointGPU::position_size.xyz), rebuilt
-    // every frame. No ray queries, or a grid too large to keep a second index copy of -> nothing (the shadow map still covers it).
+    // every frame. A grid too large to keep a second index copy of -> nothing (the shadow map still covers it). No ray queries -> the
+    // renderer hands back IR77PV_NO_SURFACE; the grid is freed and the field stops trying.
     std::shared_ptr<IIr77Return const> DefineRaySurface(glm::uvec3 const& dims) {
-        bool ray_query{false};
-        m_renderer->GetRayQuery(ray_query);
-        if (!ray_query) return Ir77RETURN<Ir77OperationSucceeded>();
-
         std::uint64_t const cells = static_cast<std::uint64_t>(dims.x - 1) * (dims.y - 1);
         if (cells > FIELD_MAX_RAY_CELLS)
             return Ir77RETURN<Ir77OperationSucceeded>(this, "[WARN] Ir77Field: surface over " + std::to_string(FIELD_MAX_RAY_CELLS) +
@@ -453,6 +438,13 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
                    result)) {
             m_renderer->DestroyStorageBuffer(m_field_ray_grid_buffer);
             return result;
+        }
+
+        if (m_field_ray_surface == IR77PV_NO_SURFACE) {
+            m_renderer->DestroyStorageBuffer(m_field_ray_grid_buffer);
+            m_field_rays_off = true;
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
         }
 
         if (!m_field_visible) m_renderer->SetSurfaceAccelerationVisible(m_field_ray_surface, false);
@@ -494,8 +486,6 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
     std::shared_ptr<NSIr77PeregrineV::Ir77Server> m_renderer{};
 
     std::shared_ptr<IIr77Lighting> m_lighting{};
-
-    std::uint32_t m_default_material{0};
 
     // field -- GPU layouts, must match include/field.glsl
     struct Ir77FieldPointGPU {
@@ -586,7 +576,9 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
     // ray queries -- the surface BLAS and its grid index buffer
     bool m_field_has_ray{false};
 
-    std::uint32_t m_field_ray_surface{0};  // Acceleration surface handle
+    bool m_field_rays_off{false};  // the device has no ray queries -- learned from the first surface
+
+    std::uint32_t m_field_ray_surface{IR77PV_NO_SURFACE};  // Acceleration surface handle
 
     std::uint32_t m_field_ray_grid_buffer{0};
 

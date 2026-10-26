@@ -107,19 +107,19 @@ inline constexpr std::uint32_t BINDLESS_PLACEHOLDER_TEXTURE = 0;
 inline constexpr std::uint32_t BINDLESS_NO_SLOT = UINT32_MAX;
 
 // array sizes actually in use on this device
-typedef struct Ir77PVBindlessCapacity {
+struct Ir77PVBindlessCapacity {
     std::uint32_t textures{0};
     std::uint32_t buffers{0};
     std::uint32_t storage_images{0};
     std::uint32_t acceleration_structures{0};  // 0 = no binding 3 (no ray queries)
-}* pIr77PVBindlessCapacity;
+};
 
 // One push-constant block for every pipeline -- graphics, compute and ray. 128 bytes, the guaranteed minimum.
 // Must match the Ir77PushConstants block in bindless.glsl byte for byte.
 //   Mesh:   vertices = vertices slot, user[0] = meshlets, [1] = meshlet vertex indices, [2] = meshlet triangles, [3] = draw records
 //   Shadow: user[0] = light index
 //   CEF:    user[0] = overlay texture slot
-typedef struct Ir77PVPushConstants {
+struct Ir77PVPushConstants {
     std::array<float, 16> model{};        // column-major, like glm::mat4
     std::uint32_t frame{0};               // buffer slot: this frame's frame table
     std::uint32_t instances{0};           // buffer slot: instance table
@@ -130,13 +130,13 @@ typedef struct Ir77PVPushConstants {
     std::uint32_t draw_base{0};           // first draw / meshlet for this call
     std::uint32_t mode{0};                // shading mode -> pc.mode
     std::array<std::uint32_t, 8> user{};  // per-kind data, see above
-}* pIr77PVPushConstants;
+};
 
 static_assert(sizeof(Ir77PVPushConstants) == 128, "Ir77PVPushConstants must be exactly 128 bytes");
 
 // Frame table -- one row per window per frame in flight, in its own buffer slot (pc.frame): the slots of that frame's buffers and textures.
 // std430, 32 bytes. Must match Ir77FrameTable in bindless.glsl.
-typedef struct Ir77PVFrameTable {
+struct Ir77PVFrameTable {
     std::uint32_t camera{BINDLESS_NO_SLOT};                  // buffer slot: Ir77PVCamera
     std::uint32_t lights{BINDLESS_NO_SLOT};                  // buffer slot: Ir77PVLightsHeader + Ir77PVLight[]
     std::uint32_t instances{BINDLESS_NO_SLOT};               // buffer slot: mat4[] -- also pc.instances
@@ -146,15 +146,15 @@ typedef struct Ir77PVFrameTable {
     std::uint32_t shadow_map{BINDLESS_PLACEHOLDER_TEXTURE};  // texture slot: shadow map
     std::uint32_t tlas{BINDLESS_NO_SLOT};                    // acceleration-structure slot (binding 3): the TLAS built this frame; NO_SLOT = none
     std::uint32_t ray_objects{BINDLESS_NO_SLOT};             // buffer slot: Ir77PVRayObject[] -- what a ray hit is (custom index = row); NO_SLOT = none
-}* pIr77PVFrameTable;
+};
 
 static_assert(sizeof(Ir77PVFrameTable) == 36, "Ir77PVFrameTable must match Ir77FrameTable in bindless.glsl");
 
 // Per window per frame: the table's own slot plus a CPU copy of what it holds (Ir77PVCmdBuffer builds push constants from it)
-typedef struct Ir77PVFrameSlots {
+struct Ir77PVFrameSlots {
     std::uint32_t table{BINDLESS_NO_SLOT};
     Ir77PVFrameTable values{};
-}* pIr77PVFrameSlots;
+};
 
 // =============================================================================================================================================
 // passes
@@ -187,13 +187,13 @@ enum class Ir77PVPassType : std::uint8_t { Compute, Raster };
 // Shadow    -- the shadow target (SetShadowTarget), depth only; ends ready to be sampled. Skipped while it has no draws or no target.
 enum class Ir77PVPassTarget : std::uint8_t { Swapchain, Shadow };
 
-typedef struct Ir77PVPassDesc {
+struct Ir77PVPassDesc {
     Ir77PVPassType type{Ir77PVPassType::Raster};
     Ir77PVPassTarget target{Ir77PVPassTarget::Swapchain};
     Ir77PVRenderPassKind formats{Ir77PVRenderPassKind::Main};  // the attachment formats the pass's pipelines were built for
     std::vector<Ir77PVPass> lists{};                           // draw lists, recorded in this order
     bool overlay{false};                                       // CEF composite after the lists
-}* pIr77PVPassDesc;
+};
 
 // =============================================================================================================================================
 // pipelines -- a pipeline is described by Ir77PVPipelineDesc and built on first request by the device's Ir77PVPipelineCache.
@@ -211,7 +211,7 @@ enum class Ir77PVPipelineKind : std::uint8_t { Static, Skinned, Shadow, ShadowSk
 // Opaque -- no blending. Alpha -- straight alpha over the target. Additive -- src * alpha added to the target (glow, sparks; order-free).
 enum class Ir77PVBlend : std::uint8_t { Opaque, Alpha, Additive };
 
-typedef struct Ir77PVPipelineDesc {
+struct Ir77PVPipelineDesc {
     // stages -- registry handles (Ir77PVShader::FindShader / LoadShader). Raster: vertex [+ fragment]. Mesh: [task +] mesh [+ fragment].
     // Vertex input comes from the vertex shader's reflected input locations -- see VERTEX_LOCATION_*.
     Ir77PVShaderHandle vertex{IR77PV_NO_SHADER};
@@ -239,7 +239,7 @@ typedef struct Ir77PVPipelineDesc {
 
     // Cache key -- every field compares, so two descriptions share a pipeline only when they are identical
     auto operator<=>(Ir77PVPipelineDesc const&) const = default;
-}* pIr77PVPipelineDesc;
+};
 
 // Compute passes -- graphics-adjacent, dispatched before or alongside the render pass
 enum class Ir77PVComputeKind : std::uint8_t { Culling, SkinningUpdate, MorphUpdate, ClothSim, ParticleSim, TerrainLOD, GPUOcclusion, IndirectPrep };
@@ -325,20 +325,20 @@ inline constexpr std::uint32_t VERTEX_LOCATION_WEIGHTS = 4;
 inline constexpr std::uint32_t VERTEX_LOCATION_TANGENT = 5;
 
 // What a shader's SPIR-V says about itself
-typedef struct Ir77PVShaderReflection {
+struct Ir77PVShaderReflection {
     std::vector<std::uint32_t> inputs{};   // Input locations, sorted (built-ins excluded)
     std::vector<std::uint32_t> outputs{};  // Output locations, sorted (built-ins excluded)
     std::uint32_t push_constant_size{0};   // bytes; 0 = no push constants
-}* pIr77PVShaderReflection;
+};
 
 // One registered shader -- its name, stage (from the SPIR-V entry point), module (in stage_create_info), reflection and SPIR-V
-typedef struct Ir77PVShaderInfo {
+struct Ir77PVShaderInfo {
     std::string name{};
     Ir77PVShaderStage stage{Ir77PVShaderStage::Vertex};
     VkPipelineShaderStageCreateInfo stage_create_info{};
     Ir77PVShaderReflection reflection{};
     std::vector<std::uint32_t> spirv{};
-}* pIr77PVShaderInfo;
+};
 
 // =============================================================================================================================================
 // buffers / textures
@@ -363,64 +363,64 @@ enum class Ir77PVTextureKind : std::uint8_t { Color, Data, Cube, Depth, Storage 
 // Default textures for texture slots that have no real texture yet. White is always texture slot 0.
 enum class Ir77PVPlaceholderKind : std::uint8_t { White, Normal };
 
-typedef struct Ir77PVFrameSizes {
+struct Ir77PVFrameSizes {
     VkDeviceSize camera{256};                       // view, proj, view_proj, eye position
     VkDeviceSize lights{16 + 64 * 64};              // 16-byte header + 64 lights x 64 bytes
     VkDeviceSize instances{8192 * 64};              // 8192 instances x mat4
     VkDeviceSize shadow_matrices{4 * 64};           // 4 cascades / lights x mat4
     VkDeviceSize bones{8192 * 4 + 256 * 128 * 64};  // bone_base per instance slot + 256 skeletons x 128 joints x mat4
     VkDeviceSize indirect{8192 * sizeof(VkDrawIndexedIndirectCommand)};
-}* pIr77PVFrameSizes;
+};
 
 // One destination buffer + the data going into it, for a batched multi-buffer upload
 // (one staging buffer, one command buffer, one submit covering several entries at once).
-typedef struct Ir77PVUploadEntry {
+struct Ir77PVUploadEntry {
     VkBuffer dst{VK_NULL_HANDLE};
     void const* data{nullptr};
     VkDeviceSize size{0};
     VkDeviceSize dst_offset{0};  // where in dst this entry lands -- 0 = start of the buffer
-}* pIr77PVUploadEntry;
+};
 
-typedef struct Ir77PVSamplerDesc {
+struct Ir77PVSamplerDesc {
     VkFilter filter{VK_FILTER_LINEAR};
     VkSamplerAddressMode address{VK_SAMPLER_ADDRESS_MODE_REPEAT};
     float anisotropy{0.0f};  // 0 = off; >0 requires samplerAnisotropy enabled on the device
     bool compare{false};     // depth compare (sampler2DShadow / PCF); Depth kind only
-}* pIr77PVSamplerDesc;
+};
 
 inline constexpr std::uint32_t IR77PV_NO_TEXTURE = UINT32_MAX;
 
 // Texture ids (Ir77PVAsset::CreateTexture) for a material's maps. IR77PV_NO_TEXTURE = placeholder (flat normal for the normal map).
-typedef struct Ir77PVMaterialTextures {
+struct Ir77PVMaterialTextures {
     std::uint32_t albedo{IR77PV_NO_TEXTURE};
     std::uint32_t normal{IR77PV_NO_TEXTURE};
     std::uint32_t orm{IR77PV_NO_TEXTURE};
     std::uint32_t emissive{IR77PV_NO_TEXTURE};
     std::uint32_t ao{IR77PV_NO_TEXTURE};
-}* pIr77PVMaterialTextures;
+};
 
 // =============================================================================================================================================
 // vertex formats -- CPU-side input. Ir77PVVertex is also read as a raw float[12] stream by the mesh shader and skin.comp (pc.vertices).
 // tangent: xyz runs along +U on the surface, w = handedness (+-1). bitangent = cross(normal, tangent.xyz) * w.
 // =============================================================================================================================================
-typedef struct Ir77PVVertex {
+struct Ir77PVVertex {
     glm::vec3 position{};
     glm::vec3 normal{};
     glm::vec2 uv{};
     glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
-}* pIr77PVVertex;
+};
 
 static_assert(sizeof(Ir77PVVertex) == sizeof(float) * 12, "mesh shader / skin.comp read vertices as 12 tightly packed floats");
 
 // skin.comp reads it as 20 words: position 3, normal 3, uv 2, tangent 4, joints 4 (uint), weights 4
-typedef struct Ir77PVVertexSkinned {
+struct Ir77PVVertexSkinned {
     glm::vec3 position{};
     glm::vec3 normal{};
     glm::vec2 uv{};
     glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
     glm::uvec4 joints{};
     glm::vec4 weights{};
-}* pIr77PVVertexSkinned;
+};
 
 static_assert(sizeof(Ir77PVVertexSkinned) == sizeof(std::uint32_t) * 20, "skin.comp reads skinned vertices as 20 tightly packed words");
 
@@ -429,7 +429,7 @@ static_assert(sizeof(Ir77PVVertexSkinned) == sizeof(std::uint32_t) * 20, "skin.c
 // =============================================================================================================================================
 
 // frame table .camera:  struct Camera { mat4 view; mat4 proj; mat4 view_proj; vec4 eye; };
-typedef struct Ir77PVCamera {
+struct Ir77PVCamera {
     glm::mat4 view{1.0f};
     glm::mat4 proj{1.0f};
     glm::mat4 view_proj{1.0f};
@@ -437,9 +437,9 @@ typedef struct Ir77PVCamera {
 
     // x seconds since start, y seconds since last frame, z frame number -- the caller's clock
     glm::vec4 time{0.0f};
-}* pIr77PVCamera;
+};
 
-typedef struct Ir77PVLight {
+struct Ir77PVLight {
     glm::vec3 position{};
     std::int32_t shadow{-1};  // shadow atlas tile = ShadowMatrices index; -1 = casts no shadow
     glm::vec3 direction{};
@@ -450,7 +450,7 @@ typedef struct Ir77PVLight {
     float innerConeAngle{};
     float outerConeAngle{};
     int type{};
-}* pIr77PVLight;
+};
 
 static_assert(sizeof(Ir77PVLight) == 64, "lights buffer is read as 64-byte std430 structs");
 
@@ -460,36 +460,36 @@ inline constexpr std::uint32_t SHADOW_ATLAS_SIDE = 2;
 inline constexpr std::uint32_t MAX_SHADOW_LIGHTS = SHADOW_ATLAS_SIDE * SHADOW_ATLAS_SIDE;
 
 // frame table .lights header -- the light count, padded to 16 bytes; the Ir77PVLight array follows it
-typedef struct Ir77PVLightsHeader {
+struct Ir77PVLightsHeader {
     std::uint32_t count{0};
     std::uint32_t _pad[3]{};
-}* pIr77PVLightsHeader;
+};
 
 static_assert(sizeof(Ir77PVLightsHeader) == 16, "lights header must stay 16 bytes so the array stays aligned");
 
 // Material constants -- the head of each material-table row. vec4, vec4, then 4 floats; must stay a 16-byte multiple.
-typedef struct Ir77PVMaterialConstants {
+struct Ir77PVMaterialConstants {
     std::array<float, 4> base_color{1.0f, 1.0f, 1.0f, 1.0f};
     std::array<float, 4> emissive{0.0f, 0.0f, 0.0f, 0.0f};
     float roughness{1.0f};
     float metallic{0.0f};
     float alpha_cutoff{0.5f};
     float normal_scale{1.0f};
-}* pIr77PVMaterialConstants;
+};
 
 static_assert(sizeof(Ir77PVMaterialConstants) % 16 == 0, "Ir77PVMaterialConstants must be a 16-byte multiple for the std430 material table");
 
 // One row of the material table (pc.materials, row pc.material). Must match Ir77MaterialRow in bindless.glsl.
-typedef struct Ir77PVMaterialRow {
+struct Ir77PVMaterialRow {
     Ir77PVMaterialConstants constants{};
     std::array<std::uint32_t, 4> textures0{};  // texture slots: albedo, normal, ORM, emissive
     std::array<std::uint32_t, 4> textures1{};  // texture slots: AO, -, -, -
-}* pIr77PVMaterialRow;
+};
 
 static_assert(sizeof(Ir77PVMaterialRow) == 80, "Ir77PVMaterialRow must match Ir77MaterialRow in bindless.glsl");
 
 // Meshlet record (mesh path, pc.user[0]). std430: vec4, vec4, uvec4, uvec4.
-typedef struct Ir77PVMeshlet {
+struct Ir77PVMeshlet {
     std::array<float, 4> sphere{};  // xyz center, w radius -- object space
     std::array<float, 4> cone{};    // xyz axis, w cutoff
     std::uint32_t vertex_offset{0};
@@ -498,28 +498,28 @@ typedef struct Ir77PVMeshlet {
     std::uint32_t triangle_count{0};
     std::uint32_t material{0};  // row in the material table -- every triangle in the meshlet uses it
     std::array<std::uint32_t, 3> _pad{};
-}* pIr77PVMeshlet;
+};
 
 static_assert(sizeof(Ir77PVMeshlet) == 64, "must match the std430 Meshlet struct in the task / mesh shaders");
 
 // Draw record (mesh path, pc.user[3]). std430: uvec4. draws[draw_base + gl_DrawID] says which object a draw is.
-typedef struct Ir77PVMeshDraw {
+struct Ir77PVMeshDraw {
     std::uint32_t instance{0};  // index into the instance table
     std::uint32_t meshlet_offset{0};
     std::uint32_t meshlet_count{0};
     std::uint32_t _pad{0};
-}* pIr77PVMeshDraw;
+};
 
 static_assert(sizeof(Ir77PVMeshDraw) == 16, "must match MeshDraw in mesh.task");
 
 // Indirect command record -- same layout as VkDrawIndexedIndirectCommand
-typedef struct Ir77MeshRange {
+struct Ir77MeshRange {
     std::uint32_t index_count{0};
     std::uint32_t instance_count{0};
     std::uint32_t index_offset{0};
     std::int32_t vertex_offset{0};
     std::uint32_t first_instance{0};
-}* pIr77MeshRange;
+};
 
 static_assert(sizeof(Ir77MeshRange) == sizeof(VkDrawIndexedIndirectCommand));
 
@@ -533,40 +533,40 @@ static_assert(sizeof(Ir77MeshRange) == sizeof(VkDrawIndexedIndirectCommand));
 // per-mesh ranges or hand back CPU-side mesh IDs; GPU-side indexing comes entirely from
 // indirect_commands at draw time via vkCmdDrawIndexedIndirect.
 // Materials, textures and animation are separate channels -- not stacked into this struct.
-typedef struct Ir77PVSceneUpload {
+struct Ir77PVSceneUpload {
     std::vector<Ir77PVVertex> vertices{};
     std::vector<std::uint32_t> indices{};
     std::vector<Ir77PVVertexSkinned> vertices_skinned{};
     std::vector<std::uint32_t> indices_skinned{};
     std::vector<VkDrawIndexedIndirectCommand> indirect_commands{};
     std::vector<std::uint32_t> triangle_materials{};  // mesh path: material row per triangle of `indices` (indices.size() / 3)
-}* pIr77PVSceneUpload;
+};
 
-typedef struct Ir77PVSingleMesh {
+struct Ir77PVSingleMesh {
     std::vector<Ir77PVVertex> vertex_data{};
     std::vector<std::uint32_t> index_data{};
-}* pIr77PVSingleMesh;
+};
 
 // Uploaded mesh: device-local vertex + index buffers (single-mesh path, used by the testbed and any
 // one-off load). Scene loading uses UploadScene instead -- one shared buffer per channel, not
 // one buffer pair per mesh.
-typedef struct Ir77PVSingleMeshBuffer {
+struct Ir77PVSingleMeshBuffer {
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
     std::uint32_t index_count{0};
     VkIndexType index_type{VK_INDEX_TYPE_UINT32};
-}* pIr77PVSingleMeshBuffer;
+};
 
 // A material is a row in the material table
-typedef struct Ir77PVMaterialData {
+struct Ir77PVMaterialData {
     std::uint32_t row{0};
-}* pIr77PVMaterialData;
+};
 
 // Meshlet buffers and their bindless slots. Slot order matches Ir77PVDrawItem::meshlet_slots:
 //   [0] meshlets   [1] meshlet vertex indices   [2] meshlet triangles   [3] vertices   [4] draw records
 inline constexpr std::size_t MESHLET_SLOT_COUNT = 5;
 
-typedef struct Ir77PVMeshletMesh {
+struct Ir77PVMeshletMesh {
     std::shared_ptr<IIr77PVBuffer> meshlets{};
     std::shared_ptr<IIr77PVBuffer> meshlet_vertices{};
     std::shared_ptr<IIr77PVBuffer> meshlet_triangles{};
@@ -575,10 +575,10 @@ typedef struct Ir77PVMeshletMesh {
     std::shared_ptr<IIr77PVBuffer> indirect{};
     std::array<std::uint32_t, MESHLET_SLOT_COUNT> slots{BINDLESS_NO_SLOT, BINDLESS_NO_SLOT, BINDLESS_NO_SLOT, BINDLESS_NO_SLOT, BINDLESS_NO_SLOT};
     std::uint32_t meshlet_count{0};
-}* pIr77PVMeshletMesh;
+};
 
 // vertex path scene -- one buffer per channel for every stacked object
-typedef struct Ir77PVSceneSlot {
+struct Ir77PVSceneSlot {
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
     std::shared_ptr<IIr77PVBuffer> vertex_skinned{};
@@ -592,20 +592,20 @@ typedef struct Ir77PVSceneSlot {
     std::uint32_t vertex_slot{BINDLESS_NO_SLOT};          // GetSceneVertexSlot -- the vertex buffer as a storage buffer
     std::uint32_t vertex_skinned_slot{BINDLESS_NO_SLOT};  // the same for the skinned channel
     std::uint32_t vertex_count{0};                        // vertices in `vertex` -- the BLAS builds' upper bound
-}* pIr77PVSceneSlot;
+};
 
 // What Acceleration reads out of a vertex-path scene (Ir77PVGeometry::GetSceneGeometry) -- the buffers it builds from and the commands
 // that cut them into objects
-typedef struct Ir77PVSceneGeometry {
+struct Ir77PVSceneGeometry {
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
     std::uint32_t vertex_count{0};
     std::vector<VkDrawIndexedIndirectCommand> commands{};
     std::vector<std::uint32_t> instance_counts{};  // per command, whatever its visibility
-}* pIr77PVSceneGeometry;
+};
 
 // mesh path scene -- meshlet buffers plus the per-record command state
-typedef struct Ir77PVMeshletSlot {
+struct Ir77PVMeshletSlot {
     Ir77PVMeshletMesh mesh{};
     std::vector<VkDrawMeshTasksIndirectCommandEXT> commands{};  // live, one per record -- groupCountX 0 = hidden
     std::vector<std::uint32_t> groups{};                        // what a visible record dispatches
@@ -618,14 +618,14 @@ typedef struct Ir77PVMeshletSlot {
     std::uint32_t vertex_count{0};
     std::vector<VkDrawIndexedIndirectCommand> scene_commands{};  // the upload's indirect commands -- one BLAS each
     std::vector<std::uint32_t> instance_counts{};                // per scene command
-}* pIr77PVMeshletSlot;
+};
 
 // Unloaded buffers -- held until every frame that could still read them has finished. Their bindless slots are released at unload
 // (the table delays slot reuse on its own).
-typedef struct Ir77PVGrave {
+struct Ir77PVGrave {
     std::vector<std::shared_ptr<IIr77PVBuffer>> buffers{};
     std::uint32_t frames_left{0};
-}* pIr77PVGrave;
+};
 
 // =============================================================================================================================================
 // draw
@@ -633,7 +633,7 @@ typedef struct Ir77PVGrave {
 
 // One draw in a pass list. Everything a shader reads beyond vertex input comes through push constants built from these fields
 // (Ir77PVCmdBuffer). Raster kinds use vertex / index; Mesh uses meshlet_slots and meshlet_offset / meshlet_count.
-typedef struct Ir77PVDrawItem {
+struct Ir77PVDrawItem {
     Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};  // FindPipeline(name / kind) -- NO_PIPELINE items are skipped
 
     std::uint32_t material{0};              // row in the material table -> pc.material
@@ -668,12 +668,12 @@ typedef struct Ir77PVDrawItem {
 
     std::array<float, 16> model{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};  // -> pc.model
     std::uint32_t light_index{0};                                                                                                 // shadow pass -> pc.user[0]
-}* pIr77PVDrawItem;
+};
 
 // One compute dispatch -- the Compute pass records the list in order, each followed by a barrier, so a dispatch sees the ones before it and
 // every draw sees them all. pipeline: FindPipeline on a manifest entry with "compute". push: what the shader reads (slots in user[],
 // vertices ...); frame / instances / bones / materials are filled in at record time.
-typedef struct Ir77PVDispatch {
+struct Ir77PVDispatch {
     Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
     Ir77PVPushConstants push{};
     std::array<std::uint32_t, 3> groups{1, 1, 1};
@@ -681,7 +681,111 @@ typedef struct Ir77PVDispatch {
     // indirect -- groups from a VkDispatchIndirectCommand another dispatch wrote; groups ignored
     std::shared_ptr<IIr77PVBuffer> indirect{};
     VkDeviceSize indirect_offset{0};
-}* pIr77PVDispatch;
+};
+
+// =============================================================================================================================================
+// world -- what the renderer is handed: assets once (LoadAsset), then one frame at a time (SubmitFrame). Ir77PVWorld turns them into
+// uploads, material tables, acceleration structures, frame data and draw lists.
+// =============================================================================================================================================
+
+inline constexpr std::uint32_t IR77PV_NO_ASSET = UINT32_MAX;
+
+inline constexpr std::uint32_t IR77PV_NO_SURFACE = UINT32_MAX;  // CreateSurfaceAcceleration on a device without ray queries
+
+// models[] slots and joint matrices every loaded asset shares -- must match Ir77PVFrameSizes::instances / bones and bone_base[] in skinned.vert
+inline constexpr std::uint32_t WORLD_INSTANCE_CAPACITY = 8192;
+inline constexpr std::uint32_t WORLD_BONE_CAPACITY = 256 * 128;
+
+// One decoded texture -- RGBA8, tightly packed. srgb = color data (albedo, emissive); data maps (normal, ORM, AO) are linear.
+struct Ir77PVAssetTexture {
+    std::uint32_t width{0};
+    std::uint32_t height{0};
+    bool srgb{false};
+    std::vector<std::uint8_t> rgba{};
+};
+
+// One material. textures name the bundle's textures by index (IR77PV_NO_TEXTURE = placeholder).
+//   blend: BLEND -- drawn in the Transparent pass, one object at a time, back to front
+//   mask:  MASK  -- alpha-tested by the rays too (the raster pipelines test alpha_cutoff themselves)
+struct Ir77PVAssetMaterial {
+    Ir77PVMaterialConstants constants{};
+    Ir77PVMaterialTextures textures{};
+    bool blend{false};
+    bool mask{false};
+};
+
+// One primitive: its slice of the bundle's indices / vertices, the instances it draws through, its material. range.first_instance is
+// the asset's own slot (0 .. instance_count - 1) -- LoadAsset moves it to wherever the asset lands in models[].
+struct Ir77PVAssetPrimitive {
+    Ir77MeshRange range{};
+    std::uint32_t material{UINT32_MAX};  // index into materials; out of range -> the grey default
+};
+
+// One asset (one glTF file) -- geometry stacked per channel, its textures and materials, how many models[] slots and joint matrices it uses.
+struct Ir77PVAssetBundle {
+    std::string name{};  // for the log
+
+    std::vector<Ir77PVVertex> vertices{};
+    std::vector<std::uint32_t> indices{};
+    std::vector<Ir77PVAssetPrimitive> primitives{};
+
+    std::vector<Ir77PVVertexSkinned> vertices_skinned{};
+    std::vector<std::uint32_t> indices_skinned{};
+    std::vector<Ir77PVAssetPrimitive> primitives_skinned{};
+
+    std::vector<Ir77PVAssetTexture> textures{};
+    std::vector<Ir77PVAssetMaterial> materials{};
+
+    std::uint32_t instance_count{0};          // models[] slots -- SubmitFrame's transforms for it, in this order
+    std::vector<std::uint32_t> bone_bases{};  // per instance: where its joint palette starts in the asset's bones (0 when unskinned)
+    std::uint32_t bone_count{0};              // joint matrices -- SubmitFrame's bones for it
+
+    bool use_mesh{false};                                 // static opaque geometry on the mesh path when the device has it
+    Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};  // what the static opaque geometry draws with; NO_PIPELINE -> the Static role
+};
+
+// What LoadAsset made of a bundle
+struct Ir77PVAssetReport {
+    std::string device{};  // the GPU it went to
+    bool mesh_path{false};
+    bool ray_query{false};
+    std::uint32_t instance_base{0};  // its first models[] slot
+    std::uint32_t opaque_runs{0};    // material runs in the static / skinned opaque streams
+    std::uint32_t skinned_runs{0};
+    std::uint32_t transparent_objects{0};
+};
+
+// One asset in a frame. An asset left out of a frame is neither drawn nor in the rays.
+struct Ir77PVFrameAsset {
+    std::uint32_t asset{IR77PV_NO_ASSET};
+    std::vector<glm::mat4> transforms{};  // instance_count world matrices
+    std::vector<glm::mat4> bones{};       // bone_count joint matrices
+};
+
+// One window in a frame -- its camera, and draws the assets don't make (a field), appended after theirs
+struct Ir77PVFrameWindow {
+    Ir77PVCamera camera{};
+    std::vector<Ir77PVDrawItem> opaque{};
+    std::vector<Ir77PVDrawItem> shadow{};
+    std::vector<Ir77PVDrawItem> transparent{};
+};
+
+// Everything one frame needs. lights in engine units, each with its shadow tile; shadow_matrices[tile]. dispatches run after the assets'
+// skinning, once a frame.
+struct Ir77PVFrame {
+    std::vector<Ir77PVFrameWindow> windows{};
+    std::vector<Ir77PVLight> lights{};
+    std::vector<glm::mat4> shadow_matrices{};
+    std::vector<Ir77PVFrameAsset> assets{};
+    std::vector<Ir77PVDispatch> dispatches{};
+};
+
+// What SubmitFrame drew -- the last window's lists
+struct Ir77PVFrameReport {
+    std::uint32_t opaque_items{0};
+    std::uint32_t shadow_items{0};
+    std::uint32_t transparent_items{0};
+};
 
 // =============================================================================================================================================
 // ray tracing
@@ -694,7 +798,7 @@ typedef struct Ir77PVDispatch {
 //   dynamic: refit every frame (the posed stream -- same triangles, moved vertices)
 //   rebuild: built from scratch every frame (a field surface -- its shape is whatever the program wrote this frame)
 // material = the material row its alpha test reads (MASK materials) -- BINDLESS_NO_SLOT = opaque, never tested.
-typedef struct Ir77PVBottomLevel {
+struct Ir77PVBottomLevel {
     VkAccelerationStructureKHR structure{VK_NULL_HANDLE};
     std::shared_ptr<IIr77PVBuffer> storage{};
     VkDeviceAddress address{0};  // what TLAS instances point at
@@ -714,32 +818,32 @@ typedef struct Ir77PVBottomLevel {
     bool rebuild{false};
     bool visible{true};  // in the TLAS
     bool alive{true};    // false once released -- its row stays, empty
-}* pIr77PVBottomLevel;
+};
 
 // One TLAS entry -- a BLAS through one models[] slot. The hit's custom index is the BLAS (its Ir77PVRayObject row).
-typedef struct Ir77PVTopInstance {
+struct Ir77PVTopInstance {
     std::uint32_t bottom{0};         // index into Acceleration's BLAS list
     std::uint32_t slot{UINT32_MAX};  // models[] slot -- its transform; UINT32_MAX = identity (world-space geometry: a field surface)
-}* pIr77PVTopInstance;
+};
 
 // One BLAS as the shaders see it (IR77_FRAME.ray_objects, row = the hit's custom index) -- enough to rebuild a hit triangle's UV for the alpha
 // test. Must match Ir77RayObject in include/raytrace.glsl. Addresses split low / high (no 64-bit ints in the shaders).
-typedef struct Ir77PVRayObject {
+struct Ir77PVRayObject {
     std::array<std::uint32_t, 2> vertex_address{};
     std::array<std::uint32_t, 2> index_address{};
     std::uint32_t first_index{0};
     std::int32_t vertex_offset{0};
     std::uint32_t vertex_floats{0};            // vertex stride in floats -- UV at +6 (Ir77PVVertex)
     std::uint32_t material{BINDLESS_NO_SLOT};  // material row; NO_SLOT = opaque
-}* pIr77PVRayObject;
+};
 
 static_assert(sizeof(Ir77PVRayObject) == 32, "Ir77PVRayObject must match Ir77RayObject in raytrace.glsl");
 
 // One TLAS -- one per frame in flight
-typedef struct Ir77PVTopLevel {
+struct Ir77PVTopLevel {
     VkAccelerationStructureKHR structure{VK_NULL_HANDLE};
     std::shared_ptr<IIr77PVBuffer> storage{};
-}* pIr77PVTopLevel;
+};
 
 // SBT region a group's handle is written into
 enum class Ir77PVRayRegion : std::uint8_t { RayGen, Miss, Hit, Callable };
@@ -747,13 +851,13 @@ enum class Ir77PVRayRegion : std::uint8_t { RayGen, Miss, Hit, Callable };
 // One shader group. Indices refer to Ir77PVPipelineRay::SetStages.
 // General (raygen / miss / callable) sets `general`; triangle hit groups set closest_hit / any_hit;
 // procedural hit groups also set intersection.
-typedef struct Ir77PVRayGroup {
+struct Ir77PVRayGroup {
     Ir77PVRayRegion region{Ir77PVRayRegion::RayGen};
     VkRayTracingShaderGroupTypeKHR type{VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR};
     std::uint32_t general{VK_SHADER_UNUSED_KHR};
     std::uint32_t closest_hit{VK_SHADER_UNUSED_KHR};
     std::uint32_t any_hit{VK_SHADER_UNUSED_KHR};
     std::uint32_t intersection{VK_SHADER_UNUSED_KHR};
-}* pIr77PVRayGroup;
+};
 
 }  // namespace NSIr77PeregrineV

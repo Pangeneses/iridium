@@ -106,7 +106,8 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
 
    public:
     // Appends every triangle primitive of mesh `index` -- one range each, into the static or skinned stream.
-    // Points / lines / strips and primitives without POSITION are skipped. Tangents: the file's when it has TANGENT, otherwise MikkTSpace.
+    // Points / lines / strips and primitives without POSITION are skipped. Tangents: the file's when it has TANGENT; MikkTSpace when its
+    // material has a normal map (the only thing that reads them); flat otherwise -- MikkTSpace costs seconds on a dense mesh.
     std::shared_ptr<IIr77Return const> AddMesh(fastgltf::Asset const& asset, std::uint32_t const& index) {
         if (index >= asset.meshes.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Mesh: mesh index out of range.");
 
@@ -165,11 +166,14 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
             prim.indices.reserve(index_accessor.count);
             fastgltf::iterateAccessor<std::uint32_t>(asset, index_accessor, [&](std::uint32_t i) { prim.indices.push_back(i); });
 
-            // tangents -- the file's; MikkTSpace when there are UVs to follow; any perpendicular when there are none
+            // tangents -- the file's; MikkTSpace when a normal map will read them and there are UVs to follow; any perpendicular otherwise
+            bool const normal_mapped = primitive.materialIndex.has_value() && primitive.materialIndex.value() < asset.materials.size() &&
+                                       asset.materials[primitive.materialIndex.value()].normalTexture.has_value();
+
             auto const* tangent_attr = primitive.findAttribute("TANGENT");
             if (tangent_attr != primitive.attributes.end() && asset.accessors.at(tangent_attr->accessorIndex).count == vertex_count) {
                 fastgltf::iterateAccessor<glm::vec4>(asset, asset.accessors.at(tangent_attr->accessorIndex), [&](glm::vec4 t) { prim.tangents.push_back(t); });
-            } else if (has_uv) {
+            } else if (has_uv && normal_mapped) {
                 auto const result = DefineTangents(prim);
                 if (result->ID() != GUIDIr77OperationSucceeded) return result;
             } else {

@@ -27,8 +27,7 @@
 
 #include "../interface/IIr77Lighting.hpp"
 
-// the direct link -- Scene -> PeregrineV's server, one way
-#include "../../PeregrineV/server/Ir77Server.hpp"
+#include "../../PeregrineV/types/Ir77PVTypes.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -37,12 +36,12 @@ namespace NSIr77Scene {
 
 // =============================================================================================================================================
 // Ir77Lighting -- the scene's lights and their shadows. Converts the file's lights to engine units (a default sun when there are none), picks
-// the shadow casters and builds their matrices over the scene's bounds (plus the field's while it is up), and packs the lights buffer.
-// Owned by Ir77Animate; Ir77Field reports its box here.
+// the shadow casters and builds their matrices over the scene's bounds (plus the field's while it is up). Never sees the renderer: Animate
+// hands the frame it fills to PeregrineV. Owned by Ir77Animate; Ir77Field reports its box here.
 //
-//   scene:     SetRenderer -> SetBounds -> CreateLights
+//   scene:     SetBounds -> CreateLights
 //   field:     SetFieldBounds -- the sun's box grows / shrinks with the field
-//   per frame: WriteFrameData(window) -- Lights + ShadowMatrices; GetShadowCount for the shadow draws
+//   per frame: WriteFrame(frame) -- the lights and shadow matrices; GetShadowCount for the field's shadow draws
 // =============================================================================================================================================
 class Ir77Lighting : public Ir77Enlisted, public IIr77Lighting, public std::enable_shared_from_this<Ir77Lighting> {
    public:
@@ -98,19 +97,12 @@ class Ir77Lighting : public Ir77Enlisted, public IIr77Lighting, public std::enab
     }
 
    public:
-    // PeregrineV's server -- WriteFrameData hands it the lights and shadow matrices
-    std::shared_ptr<IIr77Return const> SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) {
-        m_renderer = renderer;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // The scene's bounds -- the sun's shadow box covers them. Rebuilds the casters.
     std::shared_ptr<IIr77Return const> SetBounds(glm::vec3 const& low, glm::vec3 const& high) {
         m_bounds_min = low;
         m_bounds_max = high;
 
-        DefineLights();
+        DefineShadowCasters(m_light_list);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -121,7 +113,7 @@ class Ir77Lighting : public Ir77Enlisted, public IIr77Lighting, public std::enab
         m_field_min = low;
         m_field_max = high;
 
-        DefineLights();
+        DefineShadowCasters(m_light_list);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -148,7 +140,7 @@ class Ir77Lighting : public Ir77Enlisted, public IIr77Lighting, public std::enab
         if (light_list.size() > 64) light_list.resize(64);  // Ir77PVFrameSizes::lights capacity
 
         m_light_list = light_list;
-        DefineLights();
+        DefineShadowCasters(m_light_list);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -167,16 +159,10 @@ class Ir77Lighting : public Ir77Enlisted, public IIr77Lighting, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // One window's Lights (header + Ir77PVLight[], set 0 binding 1) and ShadowMatrices frame data
-    std::shared_ptr<IIr77Return const> WriteFrameData(std::size_t const& window) {
-        if (!m_renderer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Lighting: SetRenderer not called.");
-
-        std::shared_ptr<IIr77Return const> result{};
-
-        if (Failed(m_renderer->SetFrameData(window, Ir77PVBufferSlot::Lights, m_lights_packed.data(), m_lights_packed.size()), result)) return result;
-
-        if (!m_shadow_matrices.empty())
-            return m_renderer->SetFrameData(window, Ir77PVBufferSlot::ShadowMatrices, m_shadow_matrices.data(), m_shadow_matrices.size() * sizeof(glm::mat4));
+    // The frame's lights (each with its shadow tile) and shadow matrices (index = tile)
+    std::shared_ptr<IIr77Return const> WriteFrame(Ir77PVFrame& frame) {
+        frame.lights = m_light_list;
+        frame.shadow_matrices = m_shadow_matrices;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -184,7 +170,7 @@ class Ir77Lighting : public Ir77Enlisted, public IIr77Lighting, public std::enab
    private:
     // Picks the shadow casters and builds their matrices -- the first directional light (orthographic box around the scene) and the spots
     // after it (perspective over the cone), up to MAX_SHADOW_LIGHTS. Each caster's tile goes into its Ir77PVLight::shadow; the rest keep -1.
-    // Lights don't move yet (packed once), so this runs when the bounds change. Point lights need cube maps -- not yet.
+    // Lights don't move yet (set once), so this runs when they or the bounds change. Point lights need cube maps -- not yet.
     void DefineShadowCasters(std::vector<Ir77PVLight>& lights) {
         m_shadow_matrices.clear();
 
@@ -237,22 +223,7 @@ class Ir77Lighting : public Ir77Enlisted, public IIr77Lighting, public std::enab
         }
     }
 
-    // Shadow casters for the current bounds, then the lights buffer: header + Ir77PVLight[] (set 0 binding 1). Runs at load, and again
-    // whenever the bounds change.
-    void DefineLights() {
-        DefineShadowCasters(m_light_list);
-
-        Ir77PVLightsHeader header{};
-        header.count = static_cast<std::uint32_t>(m_light_list.size());
-
-        m_lights_packed.resize(sizeof(header) + m_light_list.size() * sizeof(Ir77PVLight));
-        std::memcpy(m_lights_packed.data(), &header, sizeof(header));
-        std::memcpy(m_lights_packed.data() + sizeof(header), m_light_list.data(), m_light_list.size() * sizeof(Ir77PVLight));
-    }
-
    private:
-    std::shared_ptr<NSIr77PeregrineV::Ir77Server> m_renderer{};
-
     glm::vec3 m_bounds_min{-1.0f};
 
     glm::vec3 m_bounds_max{1.0f};
@@ -263,10 +234,8 @@ class Ir77Lighting : public Ir77Enlisted, public IIr77Lighting, public std::enab
 
     glm::vec3 m_field_max{0.0f};
 
-    // lights after unit conversion, each with its shadow tile (DefineShadowCasters) -- packed into m_lights_packed by DefineLights
+    // lights after unit conversion, each with its shadow tile (DefineShadowCasters)
     std::vector<Ir77PVLight> m_light_list{};
-
-    std::vector<std::uint8_t> m_lights_packed{};  // Ir77PVLightsHeader + Ir77PVLight[], as set 0 binding 1 expects
 
     // one view-projection per shadow-casting light, index = its atlas tile (Ir77PVLight::shadow) -> ShadowMatrices
     std::vector<glm::mat4> m_shadow_matrices{};

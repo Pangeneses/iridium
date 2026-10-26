@@ -1,6 +1,5 @@
 #pragma once
 
-#include <SDL3/SDL_video.h>
 #include <vulkan/vulkan.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -27,10 +26,19 @@
 
 #include "../interface/IIr77PVDevice.hpp"
 
+#include "../types/Ir77PVTypes.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// =============================================================================================================================================
+// Ir77PVDevice -- one physical device and, once chosen, its logical device.
+//   SetInstance -> SetPhysicalDevice(index) -> QueryDisplaySupport -> CreateDevice { DefineQueueFamilies -> DefineExtensions ->
+//   DefineFeatures -> DefineDevice } -> Get*
+// Requires Vulkan 1.3 (dynamic rendering, synchronization2), multi-draw indirect, gl_DrawID and bindless descriptor indexing. Mesh shading,
+// ray queries and buffer device address are enabled whenever the GPU has them.
+// =============================================================================================================================================
 class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enable_shared_from_this<Ir77PVDevice> {
    public:
     Ir77PVDevice() {
@@ -93,104 +101,21 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices(std::uint32_t const& device_index) {
-        VkInstance instance;
+    // The instance's index-th physical device
+    std::shared_ptr<IIr77Return const> SetPhysicalDevice(std::uint32_t const& index) {
+        VkInstance instance{VK_NULL_HANDLE};
         m_instance->GetInstance(&instance);
 
-        std::uint32_t physical_device_count = 0;
-        vkEnumeratePhysicalDevices(instance, &physical_device_count, nullptr);
+        std::uint32_t count{0};
+        vkEnumeratePhysicalDevices(instance, &count, nullptr);
 
-        if (physical_device_count == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: no Vulkan devices found.");
+        if (count == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: no Vulkan devices found.");
+        if (index >= count) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: device index out of range.");
 
-        std::vector<VkPhysicalDevice> phys_devices(physical_device_count);
-        vkEnumeratePhysicalDevices(instance, &physical_device_count, phys_devices.data());
+        std::vector<VkPhysicalDevice> devices(count);
+        vkEnumeratePhysicalDevices(instance, &count, devices.data());
 
-        if (device_index >= physical_device_count) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: device index out of range.");
-
-        m_phys_device = phys_devices[device_index];
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    /************************************************************************************************************************************************************/
-
-    std::shared_ptr<IIr77Return const> DefineQueueFamilyProps(SDL_Window* window) {
-        VkInstance instance;
-        m_instance->GetInstance(&instance);
-
-        VkSurfaceKHR surface;
-        if (!SDL_Vulkan_CreateSurface(window, instance, nullptr, &surface)) {
-            std::string str{SDL_GetError()};
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: SDL_Vulkan_CreateSurface failed: " + str);
-        }
-
-        std::uint32_t queue_family_count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(m_phys_device, &queue_family_count, nullptr);
-
-        m_queue_families.resize(queue_family_count);
-
-        std::vector<VkQueueFamilyProperties> fp(queue_family_count);
-        vkGetPhysicalDeviceQueueFamilyProperties(m_phys_device, &queue_family_count, fp.data());
-
-        for (std::uint32_t i = 0; i < queue_family_count; ++i) {
-            m_queue_families[i].family_properties = fp[i];
-
-            if (fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) m_queue_families[i].type = IR77_GRAPHICS_BIT | m_queue_families[i].type;
-            if (fp[i].queueFlags & VK_QUEUE_COMPUTE_BIT) m_queue_families[i].type = IR77_COMPUTE_BIT | m_queue_families[i].type;
-            if (fp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) m_queue_families[i].type = IR77_TRANSFER_BIT | m_queue_families[i].type;
-            if (fp[i].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) m_queue_families[i].type = IR77_SPARSE_BIT | m_queue_families[i].type;
-            if (fp[i].queueFlags & VK_QUEUE_PROTECTED_BIT) m_queue_families[i].type = IR77_PROTECTED_BIT | m_queue_families[i].type;
-            if (fp[i].queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) m_queue_families[i].type = IR77_DECODE_BIT | m_queue_families[i].type;
-            if (fp[i].queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) m_queue_families[i].type = IR77_ENCODE_BIT | m_queue_families[i].type;
-
-            VkBool32 present_support = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(m_phys_device, i, surface, &present_support);
-
-            bool const graphics = (m_queue_families[i].type & IR77_GRAPHICS_BIT) == IR77_GRAPHICS_BIT;
-            m_queue_families[i].presentation = (graphics && present_support == VK_TRUE) ? VK_TRUE : VK_FALSE;
-        }
-
-        vkDestroySurfaceKHR(instance, surface, nullptr);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> DefineQueueCreateInfos() {
-        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
-            VkDeviceQueueCreateInfo queue_create_info{};
-            queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            queue_create_info.queueFamilyIndex = static_cast<std::uint32_t>(i);
-            queue_create_info.queueCount = 1;
-            queue_create_info.pQueuePriorities = &m_queue_priority;  // member -- must outlive vkCreateDevice
-            m_queue_families[i].create_info = queue_create_info;
-        }
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    /************************************************************************************************************************************************************/
-
-    // Builds the extension list from what the GPU actually exposes. Required ones fail the call; optional ones are added only when present.
-    std::shared_ptr<IIr77Return const> QueryDeviceExtensionSupport() {
-        std::uint32_t count = 0;
-        vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, nullptr);
-
-        m_available_extensions.resize(count);
-        vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, m_available_extensions.data());
-
-        if (!HasExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: swapchain extension not supported.");
-
-        m_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-
-        // optional -- kept only if DefineDeviceInfo also finds the features it needs
-        if (HasExtension(VK_EXT_MESH_SHADER_EXTENSION_NAME)) m_extensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
-
-        // optional -- ray queries need all three (acceleration structures, the query itself, and the deferred host operations the first
-        // depends on). Requested together or not at all.
-        if (HasExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) && HasExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
-            HasExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
-            for (char const* name : RAY_QUERY_EXTENSIONS) m_extensions.push_back(name);
-        }
+        m_phys_device = devices[index];
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -207,24 +132,12 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         vkGetPhysicalDeviceProperties(m_phys_device, &props);
         name = props.deviceName;
 
-        std::uint32_t count{0};
-        vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, nullptr);
-        m_available_extensions.resize(count);
-        vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, m_available_extensions.data());
-
+        ListExtensions();
         if (!HasExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: " + name + " has no swapchain support.");
 
-        VkInstance instance{VK_NULL_HANDLE};
-        m_instance->GetInstance(&instance);
+        DefineQueueFamilies();
 
-        std::uint32_t family_count{0};
-        vkGetPhysicalDeviceQueueFamilyProperties(m_phys_device, &family_count, nullptr);
-        std::vector<VkQueueFamilyProperties> families(family_count);
-        vkGetPhysicalDeviceQueueFamilyProperties(m_phys_device, &family_count, families.data());
-
-        bool display{false};
-        for (std::uint32_t f = 0; f < family_count && !display; f++)
-            display = (families[f].queueFlags & VK_QUEUE_GRAPHICS_BIT) && SDL_Vulkan_GetPresentationSupport(instance, m_phys_device, f);
+        bool const display = std::any_of(m_queue_families.begin(), m_queue_families.end(), [](Ir77PVQueueFamily const& f) { return f.present; });
 
         if (!display) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: " + name + " cannot present to a window.");
 
@@ -249,12 +162,204 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    /******************************************************************************************************************************************************************************/
+    // The logical device, in four steps. Fails when a requirement is missing; optional extensions the GPU lacks are simply left out.
+    std::shared_ptr<IIr77Return const> CreateDevice() {
+        if (m_phys_device == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: SetPhysicalDevice not called.");
+        if (m_device != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: device already created.");
+
+        std::shared_ptr<IIr77Return const> result{};
+
+        DefineQueueFamilies();
+        if (Failed(DefineExtensions(), result)) return result;
+        if (Failed(DefineFeatures(), result)) return result;
+
+        return DefineDevice();
+    }
+
+    // ---- the device -- valid after CreateDevice ----------------------------------------------------------------------------------------------
+
+    std::shared_ptr<IIr77Return const> GetPhysicalDevice(VkPhysicalDevice* physical_device) {
+        *physical_device = m_phys_device;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetDeviceProperties(VkPhysicalDeviceProperties& properties) {
+        properties = m_phys_device_properties;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // true only when VK_EXT_mesh_shader is enabled with task + mesh stages
+    std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) {
+        enabled = m_mesh_shading;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // true only when VK_KHR_ray_query and VK_KHR_acceleration_structure are enabled with their features (and buffer device address)
+    std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) {
+        enabled = m_ray_query;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // true when buffers can be created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT (the allocator is created to match)
+    std::shared_ptr<IIr77Return const> GetBufferDeviceAddress(bool& enabled) {
+        enabled = m_buffer_device_address;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // acceleration-structure limits (scratch alignment, max geometry / instance counts) -- zeros when ray queries are off
+    std::shared_ptr<IIr77Return const> GetAccelerationStructureProperties(VkPhysicalDeviceAccelerationStructurePropertiesKHR& properties) {
+        properties = m_acceleration_properties;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // descriptor-indexing limits -- Ir77PVLayout sizes the bindless arrays from these
+    std::shared_ptr<IIr77Return const> GetVulkan12Properties(VkPhysicalDeviceVulkan12Properties& properties) {
+        properties = m_vulkan12_properties;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) {
+        *device = m_device;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // ---- queues and pools -- valid after CreateDevice ----------------------------------------------------------------------------------------
+
+    // first graphics family that can present
+    std::shared_ptr<IIr77Return const> GetPresentQueue(VkQueue& queue, std::uint32_t& family) {
+        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
+            if (m_queue_families[i].present) {
+                queue = m_queue_families[i].queue;
+                family = static_cast<std::uint32_t>(i);
+                return Ir77RETURN<Ir77OperationSucceeded>();
+            }
+        }
+
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: no presentation queue.");
+    }
+
+    // transient pool on the present family for one-shot uploads -- created on first use, destroyed with the device
+    std::shared_ptr<IIr77Return const> GetUploadPool(VkCommandPool& pool, VkQueue& queue) {
+        std::uint32_t family{0};
+
+        auto const result = GetPresentQueue(queue, family);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        if (m_upload_pool == VK_NULL_HANDLE) {
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            pool_info.queueFamilyIndex = family;
+
+            if (vkCreateCommandPool(m_device, &pool_info, nullptr, &m_upload_pool) != VK_SUCCESS)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: upload pool creation failed.");
+        }
+
+        pool = m_upload_pool;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // first transfer-only family (the copy engine -- runs beside rendering). A GPU without one gets the present
+    // queue: compare family with GetPresentQueue's to know whether a queue-family ownership transfer is needed.
+    std::shared_ptr<IIr77Return const> GetTransferQueue(VkQueue& queue, std::uint32_t& family) {
+        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
+            VkQueueFlags const flags = m_queue_families[i].properties.queueFlags;
+
+            bool const copy_only = (flags & VK_QUEUE_TRANSFER_BIT) && !(flags & VK_QUEUE_GRAPHICS_BIT) && !(flags & VK_QUEUE_COMPUTE_BIT);
+
+            if (copy_only && m_queue_families[i].queue != VK_NULL_HANDLE) {
+                queue = m_queue_families[i].queue;
+                family = static_cast<std::uint32_t>(i);
+                return Ir77RETURN<Ir77OperationSucceeded>();
+            }
+        }
+
+        return GetPresentQueue(queue, family);
+    }
+
+    // transient pool on the transfer family, for streaming uploads -- its own pool even when it falls back to the present family, so it
+    // never shares a pool with the upload path (pools aren't thread-safe). Created on first use, destroyed with the device.
+    std::shared_ptr<IIr77Return const> GetTransferPool(VkCommandPool& pool, VkQueue& queue) {
+        std::uint32_t family{0};
+
+        auto const result = GetTransferQueue(queue, family);
+        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        if (m_transfer_pool == VK_NULL_HANDLE) {
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            pool_info.queueFamilyIndex = family;
+
+            if (vkCreateCommandPool(m_device, &pool_info, nullptr, &m_transfer_pool) != VK_SUCCESS)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: transfer pool creation failed.");
+        }
+
+        pool = m_transfer_pool;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+   private:
+    // one queue family -- its properties, whether a graphics queue on it can present to an SDL window, and its queue once the device exists
+    struct Ir77PVQueueFamily {
+        VkQueueFamilyProperties properties{};
+        bool present{false};
+        VkQueue queue{VK_NULL_HANDLE};
+    };
+
+    // =========================================================================================================================================
+    // CreateDevice's steps, in order
+    // =========================================================================================================================================
+
+    // Every queue family and whether it can present -- graphics + SDL's presentation support for this GPU, no window needed
+    void DefineQueueFamilies() {
+        VkInstance instance{VK_NULL_HANDLE};
+        m_instance->GetInstance(&instance);
+
+        std::uint32_t count{0};
+        vkGetPhysicalDeviceQueueFamilyProperties(m_phys_device, &count, nullptr);
+
+        std::vector<VkQueueFamilyProperties> families(count);
+        vkGetPhysicalDeviceQueueFamilyProperties(m_phys_device, &count, families.data());
+
+        m_queue_families.assign(count, Ir77PVQueueFamily{});
+
+        for (std::uint32_t f = 0; f < count; f++) {
+            m_queue_families[f].properties = families[f];
+            m_queue_families[f].present = (families[f].queueFlags & VK_QUEUE_GRAPHICS_BIT) && SDL_Vulkan_GetPresentationSupport(instance, m_phys_device, f);
+        }
+    }
+
+    // The extension list from what the GPU exposes. Swapchain is required; mesh shading and the ray-query three are added when present and
+    // kept only if DefineFeatures finds the features they need.
+    std::shared_ptr<IIr77Return const> DefineExtensions() {
+        ListExtensions();
+
+        if (!HasExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: swapchain extension not supported.");
+
+        m_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
+        if (HasExtension(VK_EXT_MESH_SHADER_EXTENSION_NAME)) m_extensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+
+        // ray queries need all three (acceleration structures, the query itself, and the deferred host operations the first depends on)
+        if (std::all_of(RAY_QUERY_EXTENSIONS.begin(), RAY_QUERY_EXTENSIONS.end(), [this](char const* name) { return HasExtension(name); }))
+            for (char const* name : RAY_QUERY_EXTENSIONS) m_extensions.push_back(name);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
 
     // Features go through VkPhysicalDeviceFeatures2 in pNext, so extension feature structs can be chained after it
-    std::shared_ptr<IIr77Return const> DefineDeviceInfo() {
-        if (m_extensions.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: QueryDeviceExtensionSupport not called.");
-
+    std::shared_ptr<IIr77Return const> DefineFeatures() {
         VkPhysicalDeviceProperties properties{};
         vkGetPhysicalDeviceProperties(m_phys_device, &properties);
 
@@ -406,8 +511,16 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_features2.features = m_phys_device_features;
         m_features2.pNext = &m_vulkan11;
 
+        // one queue per family -- the priority is a member, it must outlive vkCreateDevice
         m_create_info.clear();
-        for (std::size_t i = 0; i < m_queue_families.size(); i++) m_create_info.push_back(m_queue_families[i].create_info);
+        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
+            VkDeviceQueueCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            info.queueFamilyIndex = static_cast<std::uint32_t>(i);
+            info.queueCount = 1;
+            info.pQueuePriorities = &m_queue_priority;
+            m_create_info.push_back(info);
+        }
 
         m_device_create_info = VkDeviceCreateInfo{};
         m_device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -421,16 +534,15 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // vkCreateDevice, each family's queue, then the properties the other peers size themselves from
     std::shared_ptr<IIr77Return const> DefineDevice() {
-        if (m_device != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: DefineDevice called twice -- device already exists.");
-
         if (vkCreateDevice(m_phys_device, &m_device_create_info, nullptr, &m_device) != VK_SUCCESS) {
             m_device = VK_NULL_HANDLE;
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: vkCreateDevice failed.");
         }
 
         for (std::size_t i = 0; i < m_queue_families.size(); i++) {
-            vkGetDeviceQueue(m_device, m_queue_families[i].create_info.queueFamilyIndex, 0, &m_queue_families[i].queue);
+            vkGetDeviceQueue(m_device, static_cast<std::uint32_t>(i), 0, &m_queue_families[i].queue);
         }
 
         // properties: vulkan12 -> [acceleration structure] -- the latter's alignments size the BLAS / TLAS builds
@@ -452,151 +564,19 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    /************************************************************************************************************************************************************/
+    // =========================================================================================================================================
+    // helpers
+    // =========================================================================================================================================
 
-    std::shared_ptr<IIr77Return const> GetPhysicalDevice(VkPhysicalDevice* phys_device) {
-        *phys_device = m_phys_device;
+    // what the GPU exposes -- HasExtension reads it
+    void ListExtensions() {
+        std::uint32_t count{0};
+        vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, nullptr);
 
-        return Ir77RETURN<Ir77OperationSucceeded>();
+        m_available_extensions.assign(count, VkExtensionProperties{});
+        vkEnumerateDeviceExtensionProperties(m_phys_device, nullptr, &count, m_available_extensions.data());
     }
 
-    std::shared_ptr<IIr77Return const> GetDeviceProperties(VkPhysicalDeviceProperties& phys_device_props) {
-        phys_device_props = m_phys_device_properties;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // Core features that were enabled (not merely supported)
-    std::shared_ptr<IIr77Return const> GetDeviceFeatures(VkPhysicalDeviceFeatures& phys_device_features) {
-        phys_device_features = m_phys_device_features;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // true only when VK_EXT_mesh_shader is enabled with task + mesh stages
-    std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) {
-        enabled = m_mesh_shading;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // true only when VK_KHR_ray_query and VK_KHR_acceleration_structure are enabled with their features (and buffer device address)
-    std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) {
-        enabled = m_ray_query;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // true when buffers can be created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT (the allocator is created to match)
-    std::shared_ptr<IIr77Return const> GetBufferDeviceAddress(bool& enabled) {
-        enabled = m_buffer_device_address;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // acceleration-structure limits (scratch alignment, max geometry / instance counts) -- zeros when ray queries are off
-    std::shared_ptr<IIr77Return const> GetAccelerationStructureProperties(VkPhysicalDeviceAccelerationStructurePropertiesKHR& properties) {
-        properties = m_acceleration_properties;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // descriptor-indexing limits -- Ir77PVLayout sizes the bindless arrays from these
-    std::shared_ptr<IIr77Return const> GetVulkan12Properties(VkPhysicalDeviceVulkan12Properties& properties) {
-        properties = m_vulkan12_properties;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetDevice(VkDevice* device) {
-        *device = m_device;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetQueueFamilies(std::vector<Ir77PVQueueFamily>& queue_family) {
-        queue_family = m_queue_families;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // first graphics family that can present -- valid after DefineDevice
-    std::shared_ptr<IIr77Return const> GetPresentQueue(VkQueue& queue, std::uint32_t& family) {
-        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
-            if (m_queue_families[i].presentation == VK_TRUE) {
-                queue = m_queue_families[i].queue;
-                family = static_cast<std::uint32_t>(i);
-                return Ir77RETURN<Ir77OperationSucceeded>();
-            }
-        }
-
-        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: no presentation queue.");
-    }
-
-    // transient pool on the present family for one-shot uploads -- created on first use, destroyed with the device
-    std::shared_ptr<IIr77Return const> GetUploadPool(VkCommandPool& pool, VkQueue& queue) {
-        std::uint32_t family{0};
-
-        auto const result = GetPresentQueue(queue, family);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        if (m_upload_pool == VK_NULL_HANDLE) {
-            VkCommandPoolCreateInfo pool_info{};
-            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-            pool_info.queueFamilyIndex = family;
-
-            if (vkCreateCommandPool(m_device, &pool_info, nullptr, &m_upload_pool) != VK_SUCCESS)
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: upload pool creation failed.");
-        }
-
-        pool = m_upload_pool;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // first transfer-only family (the copy engine -- runs beside rendering) -- valid after DefineDevice. A GPU without one gets the present
-    // queue: compare family with GetPresentQueue's to know whether a queue-family ownership transfer is needed.
-    std::shared_ptr<IIr77Return const> GetTransferQueue(VkQueue& queue, std::uint32_t& family) {
-        for (std::size_t i = 0; i < m_queue_families.size(); i++) {
-            std::uint64_t const type = m_queue_families[i].type;
-
-            bool const copy_only = (type & IR77_TRANSFER_BIT) && !(type & IR77_GRAPHICS_BIT) && !(type & IR77_COMPUTE_BIT);
-
-            if (copy_only && m_queue_families[i].queue != VK_NULL_HANDLE) {
-                queue = m_queue_families[i].queue;
-                family = static_cast<std::uint32_t>(i);
-                return Ir77RETURN<Ir77OperationSucceeded>();
-            }
-        }
-
-        return GetPresentQueue(queue, family);
-    }
-
-    // transient pool on the transfer family, for streaming uploads -- its own pool even when it falls back to the present family, so it
-    // never shares a pool with the upload path (pools aren't thread-safe). Created on first use, destroyed with the device.
-    std::shared_ptr<IIr77Return const> GetTransferPool(VkCommandPool& pool, VkQueue& queue) {
-        std::uint32_t family{0};
-
-        auto const result = GetTransferQueue(queue, family);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        if (m_transfer_pool == VK_NULL_HANDLE) {
-            VkCommandPoolCreateInfo pool_info{};
-            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-            pool_info.queueFamilyIndex = family;
-
-            if (vkCreateCommandPool(m_device, &pool_info, nullptr, &m_transfer_pool) != VK_SUCCESS)
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: transfer pool creation failed.");
-        }
-
-        pool = m_transfer_pool;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-   private:
     bool HasExtension(char const* name) const {
         return std::any_of(m_available_extensions.begin(), m_available_extensions.end(),
                            [name](VkExtensionProperties const& e) { return std::strcmp(e.extensionName, name) == 0; });
@@ -607,7 +587,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     }
 
    private:
-    std::shared_ptr<IIr77PVInstance> m_instance;
+    std::shared_ptr<IIr77PVInstance> m_instance{};
 
     VkPhysicalDevice m_phys_device{VK_NULL_HANDLE};
 
@@ -615,9 +595,9 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     VkPhysicalDeviceFeatures m_phys_device_features{};
 
-    std::vector<Ir77PVQueueFamily> m_queue_families;
+    std::vector<Ir77PVQueueFamily> m_queue_families{};
 
-    std::vector<VkDeviceQueueCreateInfo> m_create_info;
+    std::vector<VkDeviceQueueCreateInfo> m_create_info{};  // one per family -- handed to vkCreateDevice
 
     float m_queue_priority{1.0f};
 
@@ -627,7 +607,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
 
     VkCommandPool m_transfer_pool{VK_NULL_HANDLE};  // GetTransferPool -- streaming uploads, on the copy engine when there is one
 
-    std::vector<VkExtensionProperties> m_available_extensions;
+    std::vector<VkExtensionProperties> m_available_extensions{};
 
     // requested extensions -- pointers into this list are handed to vkCreateDevice, so it must outlive DefineDevice
     std::vector<char const*> m_extensions{};

@@ -44,7 +44,7 @@ namespace NSIr77PeregrineV {
 //
 //   startup:   Ir77PVInit wires it (ray-query devices only) -- SetDevice / SetTransfer / SetGeometry / SetDescriptorSet -> CreateAcceleration
 //   load:      BuildScene(scene_id, dynamic, alpha) per vertex-path scene, BuildMeshlets(meshlet_id, alpha) for the mesh path's static stream --
-//              one BLAS per command, built now (blocking); its instances join the TLAS
+//              one BLAS per command, built now (blocking); its instances join the TLAS. SetObjectsVisible / ReleaseObjects on what they made.
 //   surfaces:  CreateSurface (a field) -> SetSurfaceVisible -> ReleaseSurface -- one BLAS rebuilt from its buffers every frame
 //   per frame: SetInstanceTransforms (models[]) -> the first window Paint records calls RecordBuild after its Compute pass:
 //              refit the dynamic BLASes, rebuild the surfaces -> write the next ring entry's instances -> rebuild its TLAS -> barrier
@@ -166,11 +166,10 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
 
         m_create_structure = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(vkGetDeviceProcAddr(device, "vkCreateAccelerationStructureKHR"));
         m_destroy_structure = reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>(vkGetDeviceProcAddr(device, "vkDestroyAccelerationStructureKHR"));
-        m_build_sizes =
-            reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(vkGetDeviceProcAddr(device, "vkGetAccelerationStructureBuildSizesKHR"));
+        m_build_sizes = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(vkGetDeviceProcAddr(device, "vkGetAccelerationStructureBuildSizesKHR"));
         m_cmd_build = reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(vkGetDeviceProcAddr(device, "vkCmdBuildAccelerationStructuresKHR"));
-        m_structure_address = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
-            vkGetDeviceProcAddr(device, "vkGetAccelerationStructureDeviceAddressKHR"));
+        m_structure_address =
+            reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(vkGetDeviceProcAddr(device, "vkGetAccelerationStructureDeviceAddressKHR"));
 
         if (!m_create_structure || !m_destroy_structure || !m_build_sizes || !m_cmd_build || !m_structure_address)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: acceleration-structure commands not found.");
@@ -188,8 +187,9 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
     // One BLAS per command of a vertex-path scene, built now in one blocking submit, and one TLAS instance per (command, instance). dynamic =
     // the vertices move every frame (the posed stream) -> built to allow update and refit by every RecordBuild. alpha = the material row per
     // command for MASK materials, BINDLESS_NO_SLOT for opaque ones; shorter than the commands (or empty) -> the rest are opaque. The TLAS
-    // buffers grow to fit.
-    std::shared_ptr<IIr77Return const> BuildScene(std::uint32_t const& scene_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha) {
+    // buffers grow to fit. objects = the BLASes it made, [first, first + count).
+    std::shared_ptr<IIr77Return const> BuildScene(std::uint32_t const& scene_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha,
+                                                  glm::uvec2& objects) {
         if (!m_geometry) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: SetGeometry not called.");
 
         std::shared_ptr<IIr77Return const> result{};
@@ -197,11 +197,11 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         Ir77PVSceneGeometry scene{};
         if (Failed(m_geometry->GetSceneGeometry(scene_id, scene), result)) return result;
 
-        return DefineScene(scene_id, scene, dynamic, alpha);
+        return DefineScene(scene_id, scene, dynamic, alpha, objects);
     }
 
     // The same for the mesh path's static stream (UploadMeshlets on a ray-query device keeps the scene's index buffer for this). Static.
-    std::shared_ptr<IIr77Return const> BuildMeshlets(std::uint32_t const& meshlet_id, std::vector<std::uint32_t> const& alpha) {
+    std::shared_ptr<IIr77Return const> BuildMeshlets(std::uint32_t const& meshlet_id, std::vector<std::uint32_t> const& alpha, glm::uvec2& objects) {
         if (!m_geometry) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: SetGeometry not called.");
 
         std::shared_ptr<IIr77Return const> result{};
@@ -209,7 +209,26 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         Ir77PVSceneGeometry scene{};
         if (Failed(m_geometry->GetMeshletGeometry(meshlet_id, scene), result)) return result;
 
-        return DefineScene(meshlet_id, scene, false, alpha);
+        return DefineScene(meshlet_id, scene, false, alpha, objects);
+    }
+
+    // A scene's BLASes (what BuildScene / BuildMeshlets made) in the TLAS or not, from the next frame. Dynamic ones keep being refit.
+    std::shared_ptr<IIr77Return const> SetObjectsVisible(glm::uvec2 const& objects, bool const& visible) {
+        if (static_cast<std::size_t>(objects.x) + objects.y > m_bottom.size())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: unknown objects.");
+
+        for (std::uint32_t b = objects.x; b < objects.x + objects.y; b++) m_bottom[b].visible = visible;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // A scene's BLASes out of the TLAS for good; their structures are destroyed now (waits for the device). Before the scene is unloaded.
+    std::shared_ptr<IIr77Return const> ReleaseObjects(glm::uvec2 const& objects) {
+        if (static_cast<std::size_t>(objects.x) + objects.y > m_bottom.size())
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: unknown objects.");
+        if (objects.y == 0) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        return DestroyObjects(objects);
     }
 
     // =========================================================================================================================================
@@ -247,8 +266,8 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         if (Failed(DefineFrameResources(), result)) return result;
         if (Failed(DefineObjects(), result)) return result;
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVAcceleration: surface " + std::to_string(surface) + " -- " + std::to_string(triangle_count) +
-                                                            " triangles, rebuilt every frame.");
+        return Ir77RETURN<Ir77OperationSucceeded>(
+            this, "Ir77PVAcceleration: surface " + std::to_string(surface) + " -- " + std::to_string(triangle_count) + " triangles, rebuilt every frame.");
     }
 
     // In the TLAS or not, from the next frame. Hidden surfaces aren't rebuilt either.
@@ -266,24 +285,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         if (surface >= m_bottom.size() || !m_bottom[surface].alive || !m_bottom[surface].rebuild)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: unknown surface.");
 
-        VkDevice device{VK_NULL_HANDLE};
-        m_device->GetDevice(&device);
-
-        vkDeviceWaitIdle(device);  // a frame in flight may still trace it
-
-        Ir77PVBottomLevel& blas = m_bottom[surface];
-        if (blas.structure != VK_NULL_HANDLE) m_destroy_structure(device, blas.structure, nullptr);
-        m_transfer->Bury({blas.storage});
-
-        blas = Ir77PVBottomLevel{};
-        blas.alive = false;  // the row stays, so every other handle keeps its meaning
-
-        std::erase_if(m_instances, [&](Ir77PVTopInstance const& instance) { return instance.bottom == surface; });
-
-        std::shared_ptr<IIr77Return const> result{};
-        if (Failed(DefineFrameResources(), result)) return result;
-
-        return DefineObjects();
+        return DestroyObjects(glm::uvec2(surface, 1u));
     }
 
     // =========================================================================================================================================
@@ -313,10 +315,10 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         VkDeviceAddress const scratch = AlignUp(GetBufferAddress(m_frame_scratch, 0), m_scratch_alignment);
 
         // 0.
-        DefineBarrier(cmd,
-                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                      VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                      VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+        DefineBarrier(
+            cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+            VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
 
         // 1. -- refits update in place; surfaces build from scratch (their shape is new every frame). Each its own scratch region.
         if (m_frame_count > 0) {
@@ -379,7 +381,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         if (m_instance_data.empty()) return Ir77RETURN<Ir77OperationSucceeded>();  // everything hidden -- no TLAS this frame
 
         auto const written = m_instance_buffer->Update(frame, m_instance_data.data(),
-                                                        static_cast<VkDeviceSize>(m_instance_data.size() * sizeof(VkAccelerationStructureInstanceKHR)));
+                                                       static_cast<VkDeviceSize>(m_instance_data.size() * sizeof(VkAccelerationStructureInstanceKHR)));
         if (written->ID() != GUIDIr77OperationSucceeded) return written;
 
         // 3.
@@ -435,7 +437,9 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
 
     // BuildScene / BuildMeshlets: one BLAS per command of scene, built now in one submit, and its instances
     std::shared_ptr<IIr77Return const> DefineScene(std::uint32_t const& scene_id, Ir77PVSceneGeometry const& scene, bool const& dynamic,
-                                                   std::vector<std::uint32_t> const& alpha) {
+                                                   std::vector<std::uint32_t> const& alpha, glm::uvec2& objects) {
+        objects = glm::uvec2(static_cast<std::uint32_t>(m_bottom.size()), 0u);
+
         if (!m_cmd_build) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: CreateAcceleration not called.");
         if (!m_transfer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: SetTransfer not called.");
 
@@ -484,10 +488,39 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         if (Failed(DefineFrameResources(), result)) return result;
         if (Failed(DefineObjects(), result)) return result;
 
+        objects = glm::uvec2(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(m_bottom.size() - first));
+
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVAcceleration: scene " + std::to_string(scene_id) + " -- " +
                                                             std::to_string(m_bottom.size() - first) + " BLAS" + (dynamic ? " (refit every frame)" : "") +
                                                             (tested > 0 ? ", " + std::to_string(tested) + " alpha-tested" : std::string{}) + ", " +
                                                             std::to_string(m_instances.size()) + " TLAS instances in all.");
+    }
+
+    // BLASes [objects.x, objects.x + objects.y) gone: structures destroyed (the device idle first -- a frame in flight may still trace them),
+    // storage buried, rows left empty so every other handle keeps its meaning, their instances out of the TLAS.
+    std::shared_ptr<IIr77Return const> DestroyObjects(glm::uvec2 const& objects) {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
+
+        vkDeviceWaitIdle(device);
+
+        for (std::uint32_t b = objects.x; b < objects.x + objects.y; b++) {
+            Ir77PVBottomLevel& blas = m_bottom[b];
+            if (!blas.alive) continue;
+
+            if (blas.structure != VK_NULL_HANDLE) m_destroy_structure(device, blas.structure, nullptr);
+            m_transfer->Bury({blas.storage});
+
+            blas = Ir77PVBottomLevel{};
+            blas.alive = false;
+        }
+
+        std::erase_if(m_instances, [&](Ir77PVTopInstance const& instance) { return instance.bottom >= objects.x && instance.bottom < objects.x + objects.y; });
+
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(DefineFrameResources(), result)) return result;
+
+        return DefineObjects();
     }
 
     // One BLAS: its build sizes, its storage and the structure, appended to m_bottom. bottom = its index (handle, custom index, object row).
@@ -510,8 +543,9 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         blas.build_scratch = sizes.buildScratchSize;
         blas.update_scratch = sizes.updateScratchSize;
 
-        if (Failed(DefineStructure(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sizes.accelerationStructureSize, blas.storage, blas.structure, blas.address),
-                   result))
+        if (Failed(
+                DefineStructure(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sizes.accelerationStructureSize, blas.storage, blas.structure, blas.address),
+                result))
             return result;
 
         bottom = static_cast<std::uint32_t>(m_bottom.size());
@@ -618,9 +652,10 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         m_cmd_build(cmd, static_cast<std::uint32_t>(count), builds.data(), range_pointers.data());
 
         // built before any frame's TLAS build reads them
-        DefineBarrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
-                      VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                      VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+        DefineBarrier(
+            cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+            VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
 
         vkEndCommandBuffer(cmd);
 
@@ -692,7 +727,8 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
 
         for (std::uint32_t f = 0; f < MAX_FRAMES_IN_FLIGHT; f++) {
             VkDeviceAddress address{0};
-            if (Failed(DefineStructure(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, sizes.accelerationStructureSize, m_top[f].storage, m_top[f].structure, address),
+            if (Failed(DefineStructure(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, sizes.accelerationStructureSize, m_top[f].storage, m_top[f].structure,
+                                       address),
                        result))
                 return result;
 
@@ -708,8 +744,9 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
 
         m_built_slot = BINDLESS_NO_SLOT;  // nothing built at the new size yet
 
-        if (Failed(m_transfer->CreateDynamicBuffer(VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                                                   static_cast<VkDeviceSize>(capacity) * sizeof(VkAccelerationStructureInstanceKHR), m_instance_buffer),
+        if (Failed(m_transfer->CreateDynamicBuffer(
+                       VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                       static_cast<VkDeviceSize>(capacity) * sizeof(VkAccelerationStructureInstanceKHR), m_instance_buffer),
                    result))
             return result;
 
@@ -729,10 +766,12 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
 
     // A structure of `type` in its own storage buffer; address = its device address (what TLAS instances point at)
     std::shared_ptr<IIr77Return const> DefineStructure(VkAccelerationStructureTypeKHR const& type, VkDeviceSize const& size,
-                                                       std::shared_ptr<IIr77PVBuffer>& storage, VkAccelerationStructureKHR& structure, VkDeviceAddress& address) {
+                                                       std::shared_ptr<IIr77PVBuffer>& storage, VkAccelerationStructureKHR& structure,
+                                                       VkDeviceAddress& address) {
         std::shared_ptr<IIr77Return const> result{};
 
-        if (Failed(m_transfer->CreateStaticBuffer(VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, size, storage),
+        if (Failed(m_transfer->CreateStaticBuffer(VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, size,
+                                                  storage),
                    result))
             return result;
 
@@ -816,8 +855,8 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         build.pGeometries = geometry;
     }
 
-    void DefineBarrier(VkCommandBuffer const& cmd, VkPipelineStageFlags2 const& src_stage, VkAccessFlags2 const& src_access, VkPipelineStageFlags2 const& dst_stage,
-                       VkAccessFlags2 const& dst_access) const {
+    void DefineBarrier(VkCommandBuffer const& cmd, VkPipelineStageFlags2 const& src_stage, VkAccessFlags2 const& src_access,
+                       VkPipelineStageFlags2 const& dst_stage, VkAccessFlags2 const& dst_access) const {
         VkMemoryBarrier2 barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
         barrier.srcStageMask = src_stage;

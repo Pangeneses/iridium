@@ -214,7 +214,7 @@ std::shared_ptr<IIr77Return const> Ir77RETURN(IIr77Enlisted const* sender = g_nu
         }
     }
 
-    if (!message.empty()) Ir77RetLog::Write(message);
+    if (!message.empty()) Ir77RetLog::Write(std::format("{:%T} ", std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now())) + message);
 
     shared->PublicSetMsg(message);
 

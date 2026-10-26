@@ -36,9 +36,6 @@ typedef struct IIr77Field : virtual public IIr77Enlisted {
     // Where the field reports its box (the sun's shadow covers it) and reads the shadow tile count for its shadow draws
     virtual std::shared_ptr<IIr77Return const> SetLighting(std::shared_ptr<IIr77Lighting> const& lighting) = 0;
 
-    // The material the field's draw items carry -- the scene's grey default (the field shades itself)
-    virtual std::shared_ptr<IIr77Return const> SetDefaultMaterial(std::uint32_t const& material) = 0;
-
     // errors = the compiler's messages, lines numbered from the program's first line (empty on success)
     virtual std::shared_ptr<IIr77Return const> CompileField(Ir77FieldSettings const& settings, std::string& errors) = 0;
 

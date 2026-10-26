@@ -200,6 +200,8 @@ class Ir77Pose : public Ir77Enlisted, public IIr77Pose, public std::enable_share
 
         m_asset = std::move(asset.get());
 
+        Ir77RETURN<Ir77OperationSucceeded>(this, "[TIME] glTF parsed: " + path);
+
         std::size_t const scene_index = m_asset.defaultScene.value_or(0);
         if (scene_index >= m_asset.scenes.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: no valid scene.");
 
@@ -219,6 +221,8 @@ class Ir77Pose : public Ir77Enlisted, public IIr77Pose, public std::enable_share
         }
 
         m_meshes->PopulateMeshRanges();
+
+        Ir77RETURN<Ir77OperationSucceeded>(this, "[TIME] meshes built");
 
         // mesh node -> its slot in models[]
         for (Ir77SceneNode& record : m_nodes) {
@@ -272,6 +276,8 @@ class Ir77Pose : public Ir77Enlisted, public IIr77Pose, public std::enable_share
         m_materials->LoadMaterialsFromAsset(m_asset);
         m_textures->LoadTexturesFromAsset(m_asset);
         m_animations->LoadAnimationsFromAsset(m_asset);
+
+        Ir77RETURN<Ir77OperationSucceeded>(this, "[TIME] textures decoded");
 
         m_players.clear();
         m_pose_dirty = false;

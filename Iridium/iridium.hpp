@@ -36,8 +36,6 @@
 #include "../PeregrineV/server/Ir77Server.hpp"
 #include "../Scene/server/Ir77Server.hpp"
 
-#include "../PeregrineV/types/Ir77PVTypes.hpp"
-
 #include "./types/Ir77Config.hpp"
 
 #include "../Scene/types/Ir77Stats.hpp"
@@ -59,7 +57,7 @@ class iridium {
     void SetArgs(Ir77Args const& args) { m_args = args; }
 
     void InitializePipeline(int argc, char* argv[]) {
-        Require(DefineConfig(), "Read iridium.json.");
+        Require(ConfigFromFile(), "Read iridium.json.");
 
         // Iridium's own sink first -- every setup command's reply comes back through it
         m_sinks["iridium"] = [this](std::string json) { DefineReply(json); };
@@ -116,7 +114,7 @@ class iridium {
         m_sinks["scene"] = [this](std::string json) { m_scene->Sink(std::move(json)); };
 
         m_scene->SetRenderer(m_peregrine);
-        
+
         // the project the scene reads and writes (fields.json) -- <projects>/<startup.project>
         std::string const project = (std::filesystem::path{m_config.projects} / m_config.startup_project).lexically_normal().string();
         Require(DispatchOperation("scene", "scene.project", "{\"path\":\"" + Escape(project) + "\"}"), "Scene project.");
@@ -297,7 +295,7 @@ class iridium {
     // iridium.json -> m_config. --config=<path> names the file, otherwise <executable folder>/iridium.json. A missing file keeps the
     // built-in defaults; a malformed one stops startup. Relative paths resolve against the file's folder. --url / --debug-port override.
     // Prints nothing -- CEF subprocesses run this too; m_config_report is printed once, by the browser process.
-    std::shared_ptr<IIr77Return const> DefineConfig() {
+    std::shared_ptr<IIr77Return const> ConfigFromFile() {
         std::error_code error{};
 
         std::filesystem::path const exe_dir = std::filesystem::canonical("/proc/self/exe", error).parent_path();
@@ -483,12 +481,12 @@ class iridium {
 
     float m_vstep_seconds{0.0f};  // previous frame's clock, for the scene's dt
 
-    // config -- iridium.json + the command line, read once by DefineConfig
+    // config -- iridium.json + the command line, read once by ConfigFromFile
     Ir77Args m_args{};
 
     Ir77Config m_config{};
 
-    std::string m_config_report{};  // what DefineConfig found -- printed by the browser process only
+    std::string m_config_report{};  // what ConfigFromFile found -- printed by the browser process only
 
     static constexpr std::int64_t CONFIG_VERSION{1};
 

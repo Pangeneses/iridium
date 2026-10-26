@@ -86,7 +86,9 @@ void main() {
         albedo = mix(albedo, albedo * 0.15, Ir77Line(d, cfg.contour.y));
     }
 
-    vec3 color = albedo * (IR77_FIELD_AMBIENT + (gl_FrontFacing ? Ir77Lighting(fragWorldPos, n) : vec3(0.0)));
+    // ambient on both sides, occluded from the side being looked at; direct light on the lit side only
+    float occlusion = Ir77AmbientOcclusion(fragWorldPos, gl_FrontFacing ? n : -n, gl_FrontFacing ? n : -n);
+    vec3 color = albedo * (IR77_FIELD_AMBIENT * occlusion + (gl_FrontFacing ? Ir77Lighting(fragWorldPos, n) : vec3(0.0)));
     color = color / (1.0 + color);
 
     float params[8] = float[8](cfg.params[0].x, cfg.params[0].y, cfg.params[0].z, cfg.params[0].w, cfg.params[1].x, cfg.params[1].y,

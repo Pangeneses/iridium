@@ -44,11 +44,11 @@ namespace NSIr77PeregrineV {
 // Ir77PVGeometry -- meshes on the device and the draw items that reference them.
 //
 //   startup:   Ir77PVInit wires it -- SetDevice / SetTransfer / SetMaterials -> [Init builds the pipeline cache] -> SetPipelineCache
-//   load:      UploadSingleMesh (one-off / procedural) / UploadScene (vertex path) / UploadMeshlets (mesh path)
+//   load:      UploadScene (vertex path) / UploadMeshlets (mesh path)
 //   frame:     Tick(frame) -> Make*DrawItem -> Paint::SetDraws
 //   runtime:   SetSceneObjectVisible / SetSceneObjectInstances / SetMeshletObjectVisible / SetMeshletRecordVisible
 //   compute:   GetSceneVertexSlot (vertices as a storage buffer); rays: GetSceneGeometry (what Acceleration builds BLASes from)
-//   unload:    remove the draw items from Paint, then UnloadScene / UnloadMeshlets / UnloadSingleMeshBuffer (freed after the frames in flight)
+//   unload:    remove the draw items from Paint, then UnloadScene / UnloadMeshlets (freed after the frames in flight)
 // One device; it never sees Ir77PVInit. Every buffer is made, uploaded, slotted and released through Transfer; materials come from Materials.
 //
 // Every upload takes `wait`. true = blocks until the copy is done (load screens). false = returns at once; the copy runs in submission
@@ -74,7 +74,6 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         m_device->GetDevice(&vk_device);
         if (vk_device != VK_NULL_HANDLE) vkDeviceWaitIdle(vk_device);
 
-        m_single_mesh_buffers.clear();
         m_scenes.clear();
         m_meshlet_scenes.clear();
     }
@@ -178,107 +177,6 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
 
             slot.dirty--;
         }
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // =========================================================================================================================================
-    // single-mesh path -- one Static vertex + index buffer pair per mesh. procedural / debug geometry, one-off loads.
-    // =========================================================================================================================================
-    // One code-built mesh (gizmo, debug shape, procedural geometry) -> its own GPU vertex + index buffers. single_mesh_id names it for
-    // GetSingleMesh / MakeDrawItem / UnloadSingleMesh. wait = true blocks until the copy is done; false lets it run ahead of later frames.
-    std::shared_ptr<IIr77Return const> UploadSingleMesh(Ir77PVSingleMesh const& single_mesh, std::uint32_t& single_mesh_id, bool const& wait = true) {
-        if (single_mesh.vertex_data.empty() || single_mesh.index_data.empty())
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: single mesh has no vertices or no indices.");
-
-        // sizes in bytes of what goes up
-        VkDeviceSize const vertex_bytes = static_cast<VkDeviceSize>(single_mesh.vertex_data.size() * sizeof(Ir77PVVertex));
-        VkDeviceSize const index_bytes = static_cast<VkDeviceSize>(single_mesh.index_data.size() * sizeof(std::uint32_t));
-
-        // the two device-local buffers this mesh will live in
-        Ir77PVSingleMeshBuffer single_mesh_buffer{};
-        single_mesh_buffer.vertex = CreateStaticBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertex_bytes);
-        single_mesh_buffer.index = CreateStaticBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, index_bytes);
-
-        if (!single_mesh_buffer.vertex || !single_mesh_buffer.index)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: single mesh buffer creation failed.");
-
-        // copy both through staging in one submission
-        VkBuffer vertex_target{VK_NULL_HANDLE};
-        VkBuffer index_target{VK_NULL_HANDLE};
-        single_mesh_buffer.vertex->GetBuffer(0, &vertex_target);
-        single_mesh_buffer.index->GetBuffer(0, &index_target);
-
-        auto const uploaded =
-            Upload({{vertex_target, single_mesh.vertex_data.data(), vertex_bytes}, {index_target, single_mesh.index_data.data(), index_bytes}}, wait);
-        if (uploaded->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: single mesh upload failed.");
-
-        // what a draw needs: how many indices, and their width (always 32-bit -- Ir77PVSingleMesh::index_data is uint32_t)
-        single_mesh_buffer.index_count = static_cast<std::uint32_t>(single_mesh.index_data.size());
-        single_mesh_buffer.index_type = VK_INDEX_TYPE_UINT32;
-
-        // its position in the list is its id
-        single_mesh_id = static_cast<std::uint32_t>(m_single_mesh_buffers.size());
-        m_single_mesh_buffers.push_back(single_mesh_buffer);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetSingleMeshBuffer(std::uint32_t const& mesh_id, Ir77PVSingleMeshBuffer& mesh) {
-        if (mesh_id >= m_single_mesh_buffers.size() || !m_single_mesh_buffers[mesh_id].vertex)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown mesh.");
-
-        mesh = m_single_mesh_buffers[mesh_id];
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // Draw item for mesh + material through an engine role on a window. Caller fills model / instances. Needs CreatePipelines first.
-    std::shared_ptr<IIr77Return const> MakeSingleMeshDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& single_mesh_id,
-                                                              std::uint32_t const& material_id, Ir77PVDrawItem& item) {
-        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
-
-        auto const result = FindPipeline(kind, pipeline);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        return MakeSingleMeshDrawItem(window, pipeline, single_mesh_id, material_id, item);
-    }
-
-    // A single mesh (UploadSingleMesh) through any vertex-input pipeline handle (FindPipeline). One draw, one instance; the caller fills
-    // item.model. Task / mesh pipelines take meshlets instead (MakeMeshletDrawItem).
-    std::shared_ptr<IIr77Return const> MakeSingleMeshDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline,
-                                                              std::uint32_t const& single_mesh_id, std::uint32_t const& material_id, Ir77PVDrawItem& item) {
-        Ir77PVSingleMeshBuffer single_mesh_buffer{};
-        Ir77PVMaterialData material{};
-
-        if (GetSingleMeshBuffer(single_mesh_id, single_mesh_buffer)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown single mesh.");
-        if (GetMaterial(material_id, material)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown material.");
-
-        item = Ir77PVDrawItem{};
-
-        auto const pipeline_result = DefineItemPipeline(pipeline, false, false, item);
-        if (pipeline_result->ID() != GUIDIr77OperationSucceeded) return pipeline_result;
-
-        item.material = material.row;
-        item.vertex = single_mesh_buffer.vertex;
-        item.index = single_mesh_buffer.index;
-        item.index_type = single_mesh_buffer.index_type;
-        item.index_count = single_mesh_buffer.index_count;
-        item.instance_count = 1;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // The id stays reserved; GetMesh fails for it afterwards. Remove its draw items from Paint first.
-    std::shared_ptr<IIr77Return const> UnloadSingleMeshBuffer(std::uint32_t const& mesh_id) {
-        if (mesh_id >= m_single_mesh_buffers.size() || !m_single_mesh_buffers[mesh_id].vertex)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown mesh.");
-
-        Ir77PVSingleMeshBuffer& mesh_buffer = m_single_mesh_buffers[mesh_id];
-        Bury({mesh_buffer.vertex, mesh_buffer.index});
-        mesh_buffer = Ir77PVSingleMeshBuffer{};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -746,15 +644,6 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetMeshlets(std::uint32_t const& meshlet_id, Ir77PVMeshletMesh& mesh) {
-        Ir77PVMeshletSlot* const slot = FindMeshlets(meshlet_id);
-        if (!slot) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown meshlet mesh.");
-
-        mesh = slot->mesh;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // First record of a scene command -- record = first_record + instance offset, for SetMeshletRecordVisible.
     std::shared_ptr<IIr77Return const> GetMeshletFirstRecord(std::uint32_t const& meshlet_id, std::uint32_t const& command, std::uint32_t& first_record) {
         Ir77PVMeshletSlot* const slot = FindMeshlets(meshlet_id);
@@ -762,73 +651,6 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown meshlet object.");
 
         first_record = slot->first_record[command];
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // Direct (non-indirect) draw of meshlets [0, meshlet_count) -- single-object meshlet meshes only -- through the mesh role
-    std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
-                                                           Ir77PVDrawItem& item) {
-        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
-
-        auto const result = FindPipeline(Ir77PVPipelineKind::Mesh, pipeline);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        return MakeMeshletDrawItem(window, pipeline, meshlet_id, material_id, item);
-    }
-
-    // The same through any task / mesh pipeline handle
-    std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline, std::uint32_t const& meshlet_id,
-                                                           std::uint32_t const& material_id, Ir77PVDrawItem& item) {
-        Ir77PVMeshletMesh mesh{};
-        Ir77PVMaterialData material{};
-
-        if (GetMeshlets(meshlet_id, mesh)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown meshlet mesh.");
-        if (GetMaterial(material_id, material)->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown material.");
-
-        item = Ir77PVDrawItem{};
-
-        auto const pipeline_result = DefineItemPipeline(pipeline, true, false, item);
-        if (pipeline_result->ID() != GUIDIr77OperationSucceeded) return pipeline_result;
-
-        item.material = material.row;
-        item.meshlet_slots = mesh.slots;
-        item.meshlet_offset = 0;
-        item.meshlet_count = mesh.meshlet_count;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // One indirect draw for records [first_record, first_record + record_count).
-    // indirect_offset and draw_base both start at first_record, so gl_DrawID 0..record_count-1 lines up with the records.
-    std::shared_ptr<IIr77Return const> MakeMeshletIndirectDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
-                                                                   std::uint32_t const& first_record, std::uint32_t const& record_count, Ir77PVDrawItem& item) {
-        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
-
-        auto const result = FindPipeline(Ir77PVPipelineKind::Mesh, pipeline);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        return MakeMeshletIndirectDrawItem(window, pipeline, meshlet_id, material_id, first_record, record_count, item);
-    }
-
-    std::shared_ptr<IIr77Return const> MakeMeshletIndirectDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline,
-                                                                   std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
-                                                                   std::uint32_t const& first_record, std::uint32_t const& record_count, Ir77PVDrawItem& item) {
-        Ir77PVMeshletSlot* const slot = FindMeshlets(meshlet_id);
-        if (!slot) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown meshlet mesh.");
-
-        if (static_cast<std::size_t>(first_record) + record_count > slot->commands.size())
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: record range outside the meshlet mesh.");
-
-        auto const result = MakeMeshletDrawItem(window, pipeline, meshlet_id, material_id, item);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        item.indirect = slot->mesh.indirect;
-        item.indirect_offset = static_cast<VkDeviceSize>(first_record) * sizeof(VkDrawMeshTasksIndirectCommandEXT);
-        item.indirect_count = record_count;
-        item.draw_base = first_record;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -854,10 +676,29 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         if (static_cast<std::size_t>(first_command) + command_count >= slot->first_record.size())
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: command range outside the meshlet scene.");
 
+        Ir77PVMaterialData material{};
+        if (GetMaterial(material_id, material)->ID() != GUIDIr77OperationSucceeded)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown material.");
+
+        // the commands' records -- indirect_offset and draw_base both start at the first, so gl_DrawID 0..n-1 lines up with them
         std::uint32_t const first = slot->first_record[first_command];
         std::uint32_t const end = slot->first_record[first_command + command_count];
 
-        return MakeMeshletIndirectDrawItem(window, pipeline, meshlet_id, material_id, first, end - first, item);
+        item = Ir77PVDrawItem{};
+
+        auto const pipeline_result = DefineItemPipeline(pipeline, true, false, item);
+        if (pipeline_result->ID() != GUIDIr77OperationSucceeded) return pipeline_result;
+
+        item.material = material.row;
+        item.meshlet_slots = slot->mesh.slots;
+        item.meshlet_offset = 0;
+        item.meshlet_count = slot->mesh.meshlet_count;
+        item.indirect = slot->mesh.indirect;
+        item.indirect_offset = static_cast<VkDeviceSize>(first) * sizeof(VkDrawMeshTasksIndirectCommandEXT);
+        item.indirect_count = end - first;
+        item.draw_base = first;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // Hide / show every instance of one scene object on the mesh path. Applied to each frame copy by Tick.
@@ -962,7 +803,7 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
 
         if (desc.IsMesh() != mesh)
             return Ir77RETURN<Ir77NotConfigured>(this, mesh ? "Ir77PVGeometry: a meshlet draw needs a task / mesh pipeline."
-                                                            : "Ir77PVGeometry: a task / mesh pipeline takes a meshlet mesh -- use MakeMeshlet*DrawItem.");
+                                                            : "Ir77PVGeometry: a task / mesh pipeline takes a meshlet scene -- use MakeMeshletSceneDrawItem.");
 
         bool vertex_input{false};
         pipeline->GetVertexInput(vertex_input);
@@ -1040,8 +881,6 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
     std::shared_ptr<IIr77PVPipelineCache> m_pipeline_cache{};
 
     // owned
-    std::vector<Ir77PVSingleMeshBuffer> m_single_mesh_buffers{};  // single-mesh path
-
     std::vector<Ir77PVSceneSlot> m_scenes{};  // scene path (vertex)
 
     std::vector<Ir77PVMeshletSlot> m_meshlet_scenes{};  // meshlet path

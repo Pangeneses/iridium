@@ -45,6 +45,7 @@
 #include "../interface/IIr77PVMaterial.hpp"
 #include "../interface/IIr77PVGeometry.hpp"
 #include "../interface/IIr77PVAcceleration.hpp"
+#include "../interface/IIr77PVWorld.hpp"
 #include "../interface/IIr77PVPaint.hpp"
 #include "../interface/IIr77PVCEF.hpp"
 
@@ -62,6 +63,7 @@
 #include "../runtime/Ir77PVMaterial.hpp"
 #include "../runtime/Ir77PVGeometry.hpp"
 #include "../runtime/Ir77PVAcceleration.hpp"
+#include "../runtime/Ir77PVWorld.hpp"
 #include "../runtime/Ir77PVPaint.hpp"
 #include "../runtime/Ir77PVCEF.hpp"
 
@@ -73,10 +75,11 @@ namespace NSIr77PeregrineV {
 
 // =============================================================================================================================================
 // Ir77PVInit -- the renderer's lifetime controller. Owns the device and everything on it (swapchains, bindless layout + table, frame
-// buffers, shadow atlas, shader registry, pipeline cache) and CEF, Paint, Transfer, Materials, Geometry and (with ray queries) Acceleration,
-// which it creates, wires with
-// their Set* calls as each piece exists, and destroys first. They never see Init -- everything they use is handed to them.
-//   SetWindows -> CreateRenderer -> [content] -> CreateCommandBuffers ... DestroyRenderer (before SDL destroys the windows)
+// buffers, shadow atlas, shader registry, pipeline cache) and CEF, Paint, Transfer, Materials, Geometry, (with ray queries) Acceleration and
+// World, which it creates, wires with their Set* calls as each piece exists, and destroys first. They never see Init -- everything they use is
+// handed to them. Only the server holds Init.
+//   SetWindows -> CreateRenderer (its Define* steps, in order) -> [content] -> CreateCommandBuffers ... DestroyRenderer (before SDL destroys
+//   the windows)
 //   per frame:  Tick(frame) -- Transfer (slots, staging, graveyard), then Geometry (dirty indirect copies)
 //   hot shader: Shader::CompileShader -> ReloadShader (registry + pipeline cache + manifest -- the three things only Init holds together)
 // =============================================================================================================================================
@@ -92,13 +95,13 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    // DestroyRenderer normally ran already; DefineRelease is a no-op the second time
+    // DestroyRenderer normally ran already; ReleaseDevices is a no-op the second time
     ~Ir77PVInit() {
-        DefineIdle();
+        WaitIdle();
 
-        DefinePeerRelease();
+        ReleasePeers();
 
-        DefineRelease();
+        ReleaseDevices();
     }
 
    public:
@@ -143,12 +146,6 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetCurrentDevice(std::uint64_t const& device_id) {
-        m_current_device = device_id;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // -------------------------------------------------------------------------------------------------------------------------------------
     // lifetime
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -173,27 +170,28 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         m_transfer = std::static_pointer_cast<IIr77PVTransfer>(std::make_shared<Ir77PVTransfer>());
         m_materials = std::static_pointer_cast<IIr77PVMaterial>(std::make_shared<Ir77PVMaterial>());
         m_geometry = std::static_pointer_cast<IIr77PVGeometry>(std::make_shared<Ir77PVGeometry>());
+        m_world = std::static_pointer_cast<IIr77PVWorld>(std::make_shared<Ir77PVWorld>());
 
         // instance / device -- instance and enumeration report through the return log; the device fails if they did
-        CreateInstance();
-        EnumeratePhysicalDevices();
-        if (Failed(CreateDisplayDevice(m_display_windows, device_id), result)) return result;
+        DefineInstance();
+        DefinePhysicalDevices();
+        if (Failed(DefineDisplayDevice(m_display_windows, device_id), result)) return result;
 
         std::map<std::uint64_t, std::vector<SDL_Window*>> const windows{{device_id, m_display_windows}};
 
-        if (Failed(CreateSurfaces(windows), result)) return result;
-        if (Failed(CreateAllocator(), result)) return result;
+        if (Failed(DefineSurfaces(windows), result)) return result;
+        if (Failed(DefineAllocator(), result)) return result;
 
         // layouts + passes (Main, Shadow, Offscreen, Post)
-        if (Failed(CreateLayouts(), result)) return result;
-        if (Failed(CreateRenderPasses(), result)) return result;
-        if (Failed(CreateSwapchains(), result)) return result;
+        if (Failed(DefineLayouts(), result)) return result;
+        if (Failed(DefineRenderPasses(), result)) return result;
+        if (Failed(DefineSwapchains(), result)) return result;
 
         // frame resources -- the placeholder texture and shadow map must exist before the descriptor sets register them
-        if (Failed(CreatePlaceholderTexture(), result)) return result;
-        if (Failed(CreateFrameBuffers(), result)) return result;
-        if (Failed(CreateShadowMap(8192), result)) return result;
-        if (Failed(CreateDescriptorSets(), result)) return result;
+        if (Failed(DefinePlaceholderTexture(), result)) return result;
+        if (Failed(DefineFrameBuffers(), result)) return result;
+        if (Failed(DefineShadowMap(8192), result)) return result;
+        if (Failed(DefineDescriptorSets(), result)) return result;
 
         auto const& device = m_devices.at(device_id);
         VmaAllocator const allocator = m_allocators.at(device_id);
@@ -237,7 +235,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         // pipelines need shaders, layouts and the Main pass
         std::vector<Ir77PVPipelineKind> kinds{};
         if (Failed(GetPipelineKinds(kinds), result)) return result;
-        if (Failed(CreatePipelines(kinds), result)) return result;
+        if (Failed(DefinePipelines(kinds), result)) return result;
 
         // Geometry -- buffers through Transfer, rows from Materials, roles and draw item checks from the pipeline cache
         m_geometry->SetDevice(device);
@@ -258,6 +256,18 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
             if (Failed(m_acceleration->CreateAcceleration(), result)) return result;
         }
 
+        // World -- assets and frames, over everything above; Paint is used from the first frame, once CreateCommandBuffers has wired it
+        std::string device_name{};
+        GetDeviceName(device_name);
+
+        m_world->SetTransfer(m_transfer);
+        m_world->SetMaterials(m_materials);
+        m_world->SetGeometry(m_geometry);
+        m_world->SetPipelineCache(m_pipeline_caches.at(device_id));
+        m_world->SetPaint(m_paint);
+        if (m_acceleration) m_world->SetAcceleration(m_acceleration);
+        if (Failed(m_world->CreateWorld(device_name), result)) return result;
+
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVInit: renderer created.");
     }
 
@@ -268,7 +278,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         if (!m_paint) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateRenderer not called.");
 
         auto const cache = m_pipeline_caches.find(m_current_device);
-        if (cache == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreatePipelines not called.");
+        if (cache == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: DefinePipelines not called.");
 
         std::vector<std::shared_ptr<IIr77PVOverlay>> overlays{};
         if (m_cef) m_cef->GetOverlays(overlays);
@@ -295,11 +305,11 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
     // Anything else still holding a peer (Scene, through the server) must have let go first, or they outlive the allocator
     std::shared_ptr<IIr77Return const> DestroyRenderer() {
-        DefineIdle();
+        WaitIdle();
 
-        DefinePeerRelease();
+        ReleasePeers();
 
-        DefineRelease();
+        ReleaseDevices();
 
         m_display_windows.clear();
 
@@ -355,6 +365,14 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> GetWorld(std::shared_ptr<IIr77PVWorld>& world) {
+        if (!m_world) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateRenderer not called.");
+
+        world = m_world;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // The display device has ray queries -- and so an Acceleration
     std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) {
         enabled = false;
@@ -363,6 +381,16 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         if (device == m_devices.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no display device.");
 
         return device->second->GetRayQuery(enabled);
+    }
+
+    // The display device has mesh shading -- assets can take the mesh path
+    std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) {
+        enabled = false;
+
+        auto const device = m_devices.find(m_current_device);
+        if (device == m_devices.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no display device.");
+
+        return device->second->GetMeshShading(enabled);
     }
 
     // The display device's shader registry -- CompileShader, LoadShader / AddShader, queries
@@ -399,7 +427,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         if (shaders == m_shaders.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateRenderer not called.");
 
         auto const cache = m_pipeline_caches.find(m_current_device);
-        if (cache == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreatePipelines not called.");
+        if (cache == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: DefinePipelines not called.");
 
         auto const manifest = m_pipeline_manifests.find(m_current_device);
         if (manifest == m_pipeline_manifests.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no pipeline manifest.");
@@ -424,15 +452,6 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return pipeline_cache->LoadManifest(manifest->second);
     }
 
-    // Every engine role -- CreatePipelines warms the cache with them. A role the manifest leaves out, or points at an unavailable pipeline,
-    // is skipped there (static and cef can't be: the manifest fails to load without them).
-    std::shared_ptr<IIr77Return const> GetPipelineKinds(std::vector<Ir77PVPipelineKind>& kinds) {
-        kinds = {Ir77PVPipelineKind::Static,      Ir77PVPipelineKind::Skinned, Ir77PVPipelineKind::Shadow, Ir77PVPipelineKind::ShadowSkinned,
-                 Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::CEF,     Ir77PVPipelineKind::Mesh,   Ir77PVPipelineKind::SkinnedTransparent};
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // Name of the GPU this renderer runs on -- for stats / logs
     std::shared_ptr<IIr77Return const> GetDeviceName(std::string& name) {
         auto const device = m_devices.find(m_current_device);
@@ -447,9 +466,47 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
+    // pipelines
+    // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // A manifest pipeline's handle -- what draw items carry
+    std::shared_ptr<IIr77Return const> FindPipeline(std::string const& name, Ir77PVPipelineHandle& handle) {
+        auto const found = m_pipeline_caches.find(m_current_device);
+        if (found == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: DefinePipelines not called.");
+
+        return found->second->FindPipeline(name, handle);
+    }
+
+    // An engine role's handle -- follows the manifest's "roles"
+    std::shared_ptr<IIr77Return const> FindPipeline(Ir77PVPipelineKind const& kind, Ir77PVPipelineHandle& handle) {
+        auto const found = m_pipeline_caches.find(m_current_device);
+        if (found == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: DefinePipelines not called.");
+
+        return found->second->FindPipeline(kind, handle);
+    }
+
+    // Before CreateRenderer: overrides <shader root>/pipelines.json. After: reloads now -- a bad file fails and the old manifest stays.
+    std::shared_ptr<IIr77Return const> SetPipelineManifest(std::string const& path) {
+        auto const cache = m_pipeline_caches.find(m_current_device);
+        if (cache != m_pipeline_caches.end()) {
+            auto const result = cache->second->LoadManifest(path);
+            if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        }
+
+        m_pipeline_manifests[m_current_device] = path;  // ReloadShader reloads this one from now on
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+   private:
+    // =========================================================================================================================================
+    // CreateRenderer's steps, in the order it runs them
+    // =========================================================================================================================================
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
     // instance / device / surface -- unchanged order
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> CreateInstance() {
+    std::shared_ptr<IIr77Return const> DefineInstance() {
         auto instance = std::make_shared<Ir77PVInstance>();
 
         m_instance = std::static_pointer_cast<IIr77PVInstance>(instance);
@@ -467,7 +524,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Instance.");
     }
 
-    std::shared_ptr<IIr77Return const> EnumeratePhysicalDevices() {
+    std::shared_ptr<IIr77Return const> DefinePhysicalDevices() {
         for (std::size_t i = 0; i < m_device_count; i++) {
             auto device = std::static_pointer_cast<IIr77PVDevice>(std::make_shared<Ir77PVDevice>());
 
@@ -490,7 +547,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
             device->SetInstance(m_instance);
 
-            device->EnumeratePhysicalDevices(i);
+            device->SetPhysicalDevice(static_cast<std::uint32_t>(i));
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Enumerate Devices.");
@@ -499,8 +556,8 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     // picks and creates the device that drives the display. Candidates need VK_KHR_swapchain and a graphics queue that can present
     // to an SDL window; they're tried discrete > integrated > virtual > other > CPU, and the first whose logical device is created wins.
     // Multi-device allocation comes with in-app setup.
-    std::shared_ptr<IIr77Return const> CreateDisplayDevice(std::vector<SDL_Window*> const& windows, std::uint64_t& device_id) {
-        if (windows.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "CreateDisplayDevice: no window.");
+    std::shared_ptr<IIr77Return const> DefineDisplayDevice(std::vector<SDL_Window*> const& windows, std::uint64_t& device_id) {
+        if (windows.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "DefineDisplayDevice: no window.");
 
         struct Candidate {
             std::uint64_t id{0};
@@ -522,32 +579,35 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         std::string skipped{};
 
         for (Candidate const& c : candidates) {
-            m_current_device = c.id;
-            m_windows[c.id] = windows;  // EnumerateDeviceQueues reads the device's first window
+            auto const& device = m_devices.at(c.id);
 
-            auto result = EnumerateDeviceQueues();
-            if (result->ID() == GUIDIr77OperationSucceeded) result = CreateLogicalDevices();
-
-            if (result->ID() == GUIDIr77OperationSucceeded) {
+            if (device->CreateDevice()->ID() == GUIDIr77OperationSucceeded) {
+                m_current_device = c.id;
                 device_id = c.id;
 
-                if (c.rank == 0)
-                    return Ir77RETURN<Ir77OperationSucceeded>(
-                        this, "CreateDisplayDevice: only a CPU device (" + c.name + ") -- software rendering, check the GPU driver." + skipped);
+                bool mesh_shading{false};
+                bool ray_query{false};
+                device->GetMeshShading(mesh_shading);
+                device->GetRayQuery(ray_query);
 
-                return Ir77RETURN<Ir77OperationSucceeded>(this, "CreateDisplayDevice: " + c.name + skipped);
+                std::string const features = std::string{" (mesh shading "} + (mesh_shading ? "on" : "off") + ", ray queries " + (ray_query ? "on" : "off") + ")";
+
+                if (c.rank == 0)
+                    return Ir77RETURN<Ir77OperationSucceeded>(this, "DefineDisplayDevice: only a CPU device (" + c.name +
+                                                                        ") -- software rendering, check the GPU driver." + features + skipped);
+
+                return Ir77RETURN<Ir77OperationSucceeded>(this, "DefineDisplayDevice: " + c.name + features + skipped);
             }
 
-            m_windows.erase(c.id);
             skipped += " [skipped " + c.name + "]";
         }
 
         m_current_device = 0;
 
-        return Ir77RETURN<Ir77NotConfigured>(this, "CreateDisplayDevice: no device could drive the display." + skipped);
+        return Ir77RETURN<Ir77NotConfigured>(this, "DefineDisplayDevice: no device could drive the display." + skipped);
     }
 
-    std::shared_ptr<IIr77Return const> CreateSurfaces(std::map<std::uint64_t, std::vector<SDL_Window*>> const& windows) {
+    std::shared_ptr<IIr77Return const> DefineSurfaces(std::map<std::uint64_t, std::vector<SDL_Window*>> const& windows) {
         m_windows = windows;
 
         std::vector<SDL_Window*> const& device_windows = m_windows.at(m_current_device);
@@ -572,40 +632,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Surfaces.");
     }
 
-    std::shared_ptr<IIr77Return const> EnumerateDeviceQueues() {
-        auto const& device = m_devices.at(m_current_device);
-
-        auto result = device->DefineQueueFamilyProps(m_windows.at(m_current_device).at(0));
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        result = device->DefineQueueCreateInfos();
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Enumerate Device Queue.");
-    }
-
-    std::shared_ptr<IIr77Return const> CreateLogicalDevices() {
-        auto const& device = m_devices.at(m_current_device);
-
-        auto result = device->QueryDeviceExtensionSupport();
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        result = device->DefineDeviceInfo();
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        result = device->DefineDevice();
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
-
-        bool mesh_shading{false};
-        bool ray_query{false};
-        device->GetMeshShading(mesh_shading);
-        device->GetRayQuery(ray_query);
-
-        return Ir77RETURN<Ir77OperationSucceeded>(this, std::string{"Success: Create Logical Devices (mesh shading "} + (mesh_shading ? "on" : "off") +
-                                                            ", ray queries " + (ray_query ? "on" : "off") + ").");
-    }
-
-    std::shared_ptr<IIr77Return const> CreateAllocator() {
+    std::shared_ptr<IIr77Return const> DefineAllocator() {
         VkInstance instance;
         m_instance->GetInstance(&instance);
 
@@ -639,7 +666,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     // -------------------------------------------------------------------------------------------------------------------------------------
     // bindless layout + table -- one of each per device, shared by every window and every pipeline
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> CreateLayouts() {
+    std::shared_ptr<IIr77Return const> DefineLayouts() {
         auto layout = std::static_pointer_cast<IIr77PVLayout>(std::make_shared<Ir77PVLayout>());
 
         layout->SetDevice(m_devices.at(m_current_device));
@@ -665,7 +692,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     // Creates one render pass of every kind for the current device and stores each in m_render_passes.
     // Main and Post take their color format from window 0's surface (every window on the device must
     // share it). Shadow and Offscreen need no surface.
-    std::shared_ptr<IIr77Return const> CreateRenderPasses() {
+    std::shared_ptr<IIr77Return const> DefineRenderPasses() {
         static std::array<Ir77PVRenderPassKind, 4> const kinds{Ir77PVRenderPassKind::Main, Ir77PVRenderPassKind::Shadow, Ir77PVRenderPassKind::Offscreen,
                                                                Ir77PVRenderPassKind::Post};
 
@@ -696,7 +723,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Render Pass.");
     }
 
-    std::shared_ptr<IIr77Return const> CreateSwapchains() {
+    std::shared_ptr<IIr77Return const> DefineSwapchains() {
         auto& swapchains = m_swapchains.at(m_current_device);
 
         auto const main_pass = m_render_passes.at(m_current_device).find(Ir77PVRenderPassKind::Main);
@@ -718,7 +745,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     // -------------------------------------------------------------------------------------------------------------------------------------
     // placeholder texture -- lets every image binding be written before real textures exist
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> CreatePlaceholderTexture() {
+    std::shared_ptr<IIr77Return const> DefinePlaceholderTexture() {
         // white: albedo / ORM / AO / emissive / env / shadow -- neutral for multiply and "fully lit"
         // flat normal: tangent-space (0, 0, 1) encoded as (128, 128, 255)
         std::map<Ir77PVPlaceholderKind, std::uint32_t> const values{
@@ -749,9 +776,9 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     // -------------------------------------------------------------------------------------------------------------------------------------
     // shadow map -- one depth texture per device, shared by every window: each window's Shadow pass rewrites it before its Main pass samples
     // it, all on one queue. Format from the Shadow render pass, so image and pipelines agree. Compare sampler, white border = lit.
-    // After CreateRenderPasses, before CreateDescriptorSets (its slot goes into every frame table) and Paint::CreateCommandBuffers.
+    // After DefineRenderPasses, before DefineDescriptorSets (its slot goes into every frame table) and Paint::CreateCommandBuffers.
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> CreateShadowMap(std::uint32_t const& size = 2048) {
+    std::shared_ptr<IIr77Return const> DefineShadowMap(std::uint32_t const& size = 2048) {
         std::shared_ptr<IIr77Return const> result{};
 
         auto const& passes = m_render_passes.at(m_current_device);
@@ -783,7 +810,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     // -------------------------------------------------------------------------------------------------------------------------------------
     // frame buffers -- one set of slots per window, Dynamic, one copy per frame in flight
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> CreateFrameBuffers(Ir77PVFrameSizes const& sizes = Ir77PVFrameSizes{}) {
+    std::shared_ptr<IIr77Return const> DefineFrameBuffers(Ir77PVFrameSizes const& sizes = Ir77PVFrameSizes{}) {
         struct SlotSpec {
             Ir77PVBufferSlot slot{Ir77PVBufferSlot::Camera};
             VkBufferUsageFlags usage{0};
@@ -831,13 +858,13 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
     // -------------------------------------------------------------------------------------------------------------------------------------
     // bindless registration -- placeholders (White = texture slot 0), the material table, and per window per frame the frame buffers
-    // plus a frame table listing their slots. Requires CreateLayouts, CreatePlaceholderTexture, CreateFrameBuffers.
+    // plus a frame table listing their slots. Requires DefineLayouts, DefinePlaceholderTexture, DefineFrameBuffers.
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> CreateDescriptorSets() {
+    std::shared_ptr<IIr77Return const> DefineDescriptorSets() {
         auto result = RegisterPlaceholders();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        result = CreateMaterialTable();
+        result = DefineMaterialTable();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         result = RegisterFrameBuffers();
@@ -848,9 +875,9 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     // -------------------------------------------------------------------------------------------------------------------------------------
     // pipelines -- one Ir77PVPipelineCache per device, shared by every window: a pipeline is built the first time its description is asked
     // for, and the driver's compiled code is kept on disk between runs. Asking for the kinds here only warms the cache at startup; kinds
-    // whose shaders or render pass are missing are skipped. Needs CreateLayouts, CreateRenderPasses and the shader registry (CreateRenderer).
+    // whose shaders or render pass are missing are skipped. Needs DefineLayouts, DefineRenderPasses and the shader registry (CreateRenderer).
     // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> CreatePipelines(std::vector<Ir77PVPipelineKind> const& kinds) {
+    std::shared_ptr<IIr77Return const> DefinePipelines(std::vector<Ir77PVPipelineKind> const& kinds) {
         auto const result = DefinePipelineCache();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
@@ -867,124 +894,23 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Pipelines.");
     }
 
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    // lookups
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> GetLayout(std::shared_ptr<IIr77PVLayout>& layout) {
-        auto const found = m_layouts.find(m_current_device);
-        if (found == m_layouts.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateLayouts not called.");
-
-        layout = found->second;
+    // Every engine role -- DefinePipelines warms the cache with them. A role the manifest leaves out, or points at an unavailable pipeline,
+    // is skipped there (static and cef can't be: the manifest fails to load without them).
+    std::shared_ptr<IIr77Return const> GetPipelineKinds(std::vector<Ir77PVPipelineKind>& kinds) {
+        kinds = {Ir77PVPipelineKind::Static,      Ir77PVPipelineKind::Skinned, Ir77PVPipelineKind::Shadow, Ir77PVPipelineKind::ShadowSkinned,
+                 Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::CEF,     Ir77PVPipelineKind::Mesh,   Ir77PVPipelineKind::SkinnedTransparent};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> GetDescriptorSet(std::shared_ptr<IIr77PVDescriptorSet>& table) {
-        auto const found = m_descriptor_sets.find(m_current_device);
-        if (found == m_descriptor_sets.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateLayouts not called.");
+    // =========================================================================================================================================
+    // teardown and helpers
+    // =========================================================================================================================================
 
-        table = found->second;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // Frame slots of one window, one entry per frame in flight -- for its command buffer
-    std::shared_ptr<IIr77Return const> GetFrameSlots(std::size_t const& window, std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT>& slots) {
-        auto const device = m_frame_slots.find(m_current_device);
-        if (device == m_frame_slots.end() || window >= device->second.size())
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateDescriptorSets not called.");
-
-        slots = device->second[window];
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetMaterialTableSlot(std::uint32_t& slot) {
-        auto const found = m_material_table_slots.find(m_current_device);
-        if (found == m_material_table_slots.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateDescriptorSets not called.");
-
-        slot = found->second;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetPlaceholderSlot(Ir77PVPlaceholderKind const& kind, std::uint32_t& slot) {
-        auto const device = m_placeholder_slots.find(m_current_device);
-        if (device == m_placeholder_slots.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateDescriptorSets not called.");
-
-        auto const found = device->second.find(kind);
-        if (found == device->second.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: placeholder kind not registered.");
-
-        slot = found->second;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // A manifest pipeline's handle -- what draw items carry
-    std::shared_ptr<IIr77Return const> FindPipeline(std::string const& name, Ir77PVPipelineHandle& handle) {
-        auto const found = m_pipeline_caches.find(m_current_device);
-        if (found == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreatePipelines not called.");
-
-        return found->second->FindPipeline(name, handle);
-    }
-
-    // An engine role's handle -- follows the manifest's "roles"
-    std::shared_ptr<IIr77Return const> FindPipeline(Ir77PVPipelineKind const& kind, Ir77PVPipelineHandle& handle) {
-        auto const found = m_pipeline_caches.find(m_current_device);
-        if (found == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreatePipelines not called.");
-
-        return found->second->FindPipeline(kind, handle);
-    }
-
-    // The pipeline a handle resolves to under the current manifest -- every window on the device shares it
-    std::shared_ptr<IIr77Return const> GetPipeline(Ir77PVPipelineHandle const& handle, std::shared_ptr<IIr77PVPipeline>& pipeline) {
-        auto const found = m_pipeline_caches.find(m_current_device);
-        if (found == m_pipeline_caches.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreatePipelines not called.");
-
-        return found->second->GetPipeline(handle, pipeline);
-    }
-
-    // Before CreatePipelines: overrides <shader root>/pipelines.json. After: reloads now -- a bad file fails and the old manifest stays.
-    std::shared_ptr<IIr77Return const> SetPipelineManifest(std::string const& path) {
-        auto const cache = m_pipeline_caches.find(m_current_device);
-        if (cache != m_pipeline_caches.end()) {
-            auto const result = cache->second->LoadManifest(path);
-            if (result->ID() != GUIDIr77OperationSucceeded) return result;
-        }
-
-        m_pipeline_manifests[m_current_device] = path;  // ReloadShader reloads this one from now on
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetFrameBuffer(std::size_t const& window, Ir77PVBufferSlot const& slot, std::shared_ptr<IIr77PVBuffer>& buffer) {
-        auto const device = m_buffers_frame.find(m_current_device);
-        if (device == m_buffers_frame.end() || window >= device->second.size())
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no frame buffers for window.");
-
-        buffer = device->second[window].at(slot);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    VkDescriptorImageInfo GetPlaceholderImageInfo(Ir77PVPlaceholderKind const& kind = Ir77PVPlaceholderKind::White) const {
-        VkDescriptorImageInfo info{};
-
-        auto const device = m_placeholders.find(m_current_device);
-        if (device == m_placeholders.end()) return info;
-
-        auto const found = device->second.find(kind);
-        if (found == device->second.end()) return info;
-
-        found->second->GetImageInfo(&info);
-
-        return info;
-    }
-
-   private:
-    // The peers, users first: Paint and Geometry hold buffers Transfer made; Materials uploads through Transfer; CEF last. Each waits for
-    // its device itself, and everything they hold dies before DefineRelease frees the allocator.
-    void DefinePeerRelease() {
+    // The peers, users first: World holds the rest; Paint and Geometry hold buffers Transfer made; Materials uploads through Transfer; CEF
+    // last. Each waits for its device itself, and everything they hold dies before ReleaseDevices frees the allocator.
+    void ReleasePeers() {
+        m_world.reset();
         m_paint.reset();
         m_acceleration.reset();  // its BLASes read Geometry's buffers; its own buffers are Transfer's
         m_geometry.reset();
@@ -994,7 +920,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     }
 
     // Every device idle -- before anything it may still be using is destroyed
-    void DefineIdle() {
+    void WaitIdle() {
         for (auto& [device_id, device] : m_devices) {
             VkDevice vk_device{VK_NULL_HANDLE};
             device->GetDevice(&vk_device);
@@ -1004,8 +930,8 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
     // Everything Init holds, in dependency order. Whatever holds VMA memory dies before its allocator; render passes and shaders before
     // the device; surfaces (in the swapchains) before the instance. Safe to run twice.
-    void DefineRelease() {
-        DefineIdle();
+    void ReleaseDevices() {
+        WaitIdle();
 
         m_compute.clear();
         m_frame_tables.clear();
@@ -1040,7 +966,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         auto const& table = m_descriptor_sets.at(m_current_device);
 
         auto const device = m_placeholders.find(m_current_device);
-        if (device == m_placeholders.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreatePlaceholderTexture not called.");
+        if (device == m_placeholders.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: DefinePlaceholderTexture not called.");
 
         std::map<Ir77PVPlaceholderKind, std::uint32_t> slots{};
 
@@ -1068,7 +994,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     }
 
     // MATERIAL_CAPACITY rows of Ir77PVMaterialRow in one Static buffer -- Ir77PVAsset writes rows into it
-    std::shared_ptr<IIr77Return const> CreateMaterialTable() {
+    std::shared_ptr<IIr77Return const> DefineMaterialTable() {
         auto buffer = std::static_pointer_cast<IIr77PVBuffer>(std::make_shared<Ir77PVBuffer>());
 
         buffer->SetDevice(m_devices.at(m_current_device));
@@ -1103,7 +1029,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
         std::uint32_t const white{m_placeholder_slots.at(m_current_device).at(Ir77PVPlaceholderKind::White)};
 
-        // the shadow map's slot -- registered once, every window and frame reads the same image; white when CreateShadowMap wasn't called
+        // the shadow map's slot -- registered once, every window and frame reads the same image; white when DefineShadowMap wasn't called
         std::uint32_t shadow_map{white};
 
         auto const shadow = m_shadow_maps.find(m_current_device);
@@ -1184,7 +1110,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: shaders not loaded -- CreateRenderer loads them before the pipelines.");
 
         auto const passes = m_render_passes.find(m_current_device);
-        if (passes == m_render_passes.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: CreateRenderPasses not called.");
+        if (passes == m_render_passes.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: DefineRenderPasses not called.");
 
         auto cache = std::static_pointer_cast<IIr77PVPipelineCache>(std::make_shared<Ir77PVPipelineCache>());
 
@@ -1227,6 +1153,8 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     std::shared_ptr<IIr77PVGeometry> m_geometry{};
 
     std::shared_ptr<IIr77PVAcceleration> m_acceleration{};  // ray-query devices only
+
+    std::shared_ptr<IIr77PVWorld> m_world{};  // assets and frames -- over all of the above
 
     std::vector<SDL_Window*> m_display_windows{};  // SetWindows -- what CreateRenderer puts the display device on
 

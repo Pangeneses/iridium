@@ -38,7 +38,7 @@ namespace NSIr77PeregrineV {
 //   Ir77PVInit wires it: SetDevice / SetWindows / SetSwapchains / SetRenderPasses / SetLayout / SetDescriptorSet / SetMaterialTableSlot /
 //   SetPipelineCache / SetShadowMap / SetFrameSlots / SetFrameBuffers / SetFrameTables / SetOverlays / [SetAcceleration] -> CreateCommandBuffers
 //   (after content is loaded)
-//   per frame: SetFrameData / SetDraws / SetFrameDispatches / SetDispatches / SetPassList -> Draw
+//   per frame: SetFrameData / SetDraws / SetFrameDispatches / SetPassList -> Draw
 // The once-a-frame work (SetFrameDispatches, the acceleration build) goes to the first window Draw records -- window 0 unless it's minimized.
 // Owns the command buffers, each window's frame-in-flight index and the resize flag.
 // =============================================================================================================================================
@@ -263,8 +263,6 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
 
         m_frame_data.assign(windows, {});
 
-        m_window_dispatches.assign(windows, {});
-
         m_builder = windows;  // none yet
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Command Buffers.");
@@ -298,17 +296,8 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         return m_command_buffers[window]->SetDraws(pass, draws);
     }
 
-    // Replaces a window's own compute list -- work only that window needs, recorded by its Compute pass every frame. Persists until replaced.
-    std::shared_ptr<IIr77Return const> SetDispatches(std::size_t const& window, std::vector<Ir77PVDispatch> const& dispatches) {
-        if (window >= m_window_dispatches.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
-
-        m_window_dispatches[window] = dispatches;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
     // Replaces the once-a-frame compute list (skinning, the field) -- recorded by whichever window Paint records first each frame, ahead of
-    // that window's own list and the acceleration build. Persists until replaced.
+    // the acceleration build. Persists until replaced.
     std::shared_ptr<IIr77Return const> SetFrameDispatches(std::vector<Ir77PVDispatch> const& dispatches) {
         m_frame_dispatches = dispatches;
 
@@ -356,9 +345,8 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
 
             cmd_buffer->SetCurrentFrame(frames.at(i));
 
-            // the builder gets the frame's dispatches ahead of its own, and the acceleration build; the rest only their own
-            std::vector<Ir77PVDispatch> dispatches = i == builder ? m_frame_dispatches : std::vector<Ir77PVDispatch>{};
-            dispatches.insert(dispatches.end(), m_window_dispatches[i].begin(), m_window_dispatches[i].end());
+            // the builder gets the frame's dispatches and the acceleration build; the rest have no compute
+            std::vector<Ir77PVDispatch> const dispatches = i == builder ? m_frame_dispatches : std::vector<Ir77PVDispatch>{};
 
             cmd_buffer->SetDispatches(dispatches);
             cmd_buffer->SetAcceleration(i == builder ? m_acceleration : std::shared_ptr<IIr77PVAcceleration>{});
@@ -510,8 +498,6 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
     std::vector<std::uint32_t> m_frames{};  // [window] -- frame in flight each command buffer records next
 
     std::vector<Ir77PVDispatch> m_frame_dispatches{};  // once a frame -- the builder records them
-
-    std::vector<std::vector<Ir77PVDispatch>> m_window_dispatches{};  // [window] -- each window's own
 
     std::size_t m_builder{0};  // the window that ran the once-a-frame work last Draw (window count = none yet)
 

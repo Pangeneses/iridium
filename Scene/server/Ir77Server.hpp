@@ -15,7 +15,6 @@
 #include <string_view>
 #include <unordered_map>
 
-
 #include <simdjson.h>
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
@@ -81,7 +80,7 @@ namespace NSIr77Scene {
 //   field.delete    name
 //
 // A handler that returns something leaves it in m_data -- the reply's "data" (an object; {} otherwise).
-// Ops live in a table (op -> handler), filled once by DefineOperations -- one lookup per message however many there are. A new op is one
+// Ops live in a table (op -> handler), filled once by RegisterPipeOperations -- one lookup per message however many there are. A new op is one
 // line in the group it belongs to; a new group is one more Define*Operations.
 // =============================================================================================================================================
 class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77Server> {
@@ -97,7 +96,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (m_empty_parser.parse(std::string_view{"{}"}).get(m_empty_args) != simdjson::SUCCESS)  // what a handler sees when a message has no "args"
             throw std::runtime_error{"Ir77Server: empty args"};
 
-        DefineOperations();
+        RegisterPipeOperations();
     }
 
    public:
@@ -220,7 +219,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         std::size_t operator()(std::string_view const& op) const { return std::hash<std::string_view>{}(op); }
     };
 
-    void DefineOperations() {
+    void RegisterPipeOperations() {
         DefineSceneOperations();
         DefineCameraOperations();
         DefineAnimationOperations();
@@ -272,9 +271,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         m_operations["camera.speed"] = [this](Ir77SceneArgs const& a) { return m_view->SetCameraSpeed(Number(a, "value", 0.0f)); };
         m_operations["camera.mode"] = [this](Ir77SceneArgs const& a) { return m_view->SetCameraMode(Text(a, "value")); };
         m_operations["camera.view"] = [this](Ir77SceneArgs const& a) { return m_view->SetCameraView(Text(a, "value")); };
-        m_operations["camera.select"] = [this](Ir77SceneArgs const& a) {
-            return m_view->SelectCamera(static_cast<std::uint32_t>(Number(a, "index", 0.0f)));
-        };
+        m_operations["camera.select"] = [this](Ir77SceneArgs const& a) { return m_view->SelectCamera(static_cast<std::uint32_t>(Number(a, "index", 0.0f))); };
         m_operations["camera.next"] = [this](Ir77SceneArgs const&) { return m_view->NextCamera(); };
         m_operations["camera.reset"] = [this](Ir77SceneArgs const&) { return m_view->ResetCamera(); };
     }
@@ -574,11 +571,21 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
         for (char const c : text) {
             switch (c) {
-                case '"': out += "\\\""; break;
-                case '\\': out += "\\\\"; break;
-                case '\n': out += "\\n"; break;
-                case '\r': out += "\\r"; break;
-                case '\t': out += "\\t"; break;
+                case '"':
+                    out += "\\\"";
+                    break;
+                case '\\':
+                    out += "\\\\";
+                    break;
+                case '\n':
+                    out += "\\n";
+                    break;
+                case '\r':
+                    out += "\\r";
+                    break;
+                case '\t':
+                    out += "\\t";
+                    break;
                 default:
                     if (static_cast<unsigned char>(c) < 0x20) {
                         char code[8]{};
