@@ -32,14 +32,15 @@ namespace NSIr77PeregrineV {
 // =============================================================================================================================================
 // Ir77PVDescriptorSet -- THE descriptor set. One per device: the bindless table every pipeline reads through Ir77PVLayout.
 //
-//   create:   SetDevice / SetLayout -> CreateDescriptorSet -> DefinePool -> DefineSet
-//   register: RegisterTexture / RegisterBuffer / RegisterStorageImage / RegisterAccelerationStructure -> slot index for push constants or other
-//             buffers
-//   change:   UpdateTexture / UpdateBuffer / UpdateStorageImage / UpdateAccelerationStructure -- same slot, new view, buffer or TLAS
-//   free:     Release -> slot is retired, reused only after MAX_FRAMES_IN_FLIGHT Ticks (frames in flight may still read it)
-//   per frame Tick, then per command buffer Bind
+//   create:   SetDevice / SetLayout -> CreateDescriptorSet { DefinePool -> DefineSet -> DefineSlots }
+//   register: RegisterTexture / RegisterBuffer / RegisterStorageImage / RegisterAccelerationStructure -> a slot, marked with what it holds
+//             (GetSlotKind). Shaders get the number through push constants or other buffers.
+//   update:   UpdateTexture (an overlay's new extent) / UpdateAccelerationStructure (a TLAS regrown) -- same slot, same kind, new descriptor
+//   release:  Release -- free now, handed out by the next Register. Waiting out the frames in flight is the caller's: at runtime everything
+//             goes through Transfer's graveyard (Bury); teardown releases after the device idles.
+//   record:   Bind, once per command buffer per bind point
 //
-// Slot 0 of the texture array is reserved for the placeholder texture, so an unset material index (0) samples something valid.
+// Texture slot 0 is the white placeholder -- registered first by Init, permanent -- so a texture slot nobody set samples white.
 // =============================================================================================================================================
 class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, public std::enable_shared_from_this<Ir77PVDescriptorSet> {
    public:
@@ -53,7 +54,7 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         m_enlisted = std::chrono::system_clock::now();
     }
 
-    // the owner waits for the device to go idle before releasing the set; the pool frees it
+    // the owner waits for the device to go idle before releasing this; destroying the pool frees the set
     ~Ir77PVDescriptorSet() {
         if (!m_device || m_pool == VK_NULL_HANDLE) return;
 
@@ -105,7 +106,7 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // configuration
+    // wiring -- Ir77PVInit
     // -------------------------------------------------------------------------------------------------------------------------------------
    public:
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
@@ -123,6 +124,8 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
     // -------------------------------------------------------------------------------------------------------------------------------------
     // create
     // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // The pool, the one set, and a slot allocator per binding sized from the layout's capacity
     std::shared_ptr<IIr77Return const> CreateDescriptorSet() {
         if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: SetDevice not called.");
         if (!m_layout) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: SetLayout not called.");
@@ -130,149 +133,113 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
 
         m_layout->GetCapacity(m_capacity);
 
-        auto result = DefinePool();
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        if (m_capacity.textures == 0 || m_capacity.buffers == 0 || m_capacity.storage_images == 0)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: layout has no capacity -- CreateLayout first.");
 
-        result = DefineSet();
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        std::shared_ptr<IIr77Return const> result{};
 
-        m_slots[BINDLESS_BINDING_TEXTURES].capacity = m_capacity.textures;
-        m_slots[BINDLESS_BINDING_BUFFERS].capacity = m_capacity.buffers;
-        m_slots[BINDLESS_BINDING_STORAGE_IMAGES].capacity = m_capacity.storage_images;
-        m_slots[BINDLESS_BINDING_ACCELERATION].capacity = m_capacity.acceleration_structures;  // 0 without ray queries -- every register fails
+        if (Failed(DefinePool(), result)) return result;
+        if (Failed(DefineSet(), result)) return result;
+
+        DefineSlots();
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Bindless Descriptor Set.");
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // register -- returns the slot index shaders use
+    // register -- a new slot, written now
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // layout = the layout the image is in whenever a shader samples it (a depth texture: DEPTH_STENCIL_READ_ONLY_OPTIMAL)
-    std::shared_ptr<IIr77Return const> RegisterTexture(VkImageView const& view, VkSampler const& sampler, std::uint32_t& index,
-                                                       VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        auto const result = DefineSlot(BINDLESS_BINDING_TEXTURES, index);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        return UpdateTexture(index, view, sampler, layout);
+    // layout = the layout the image is in whenever a shader samples it (a depth texture: DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+    std::shared_ptr<IIr77Return const> RegisterTexture(VkImageView const& view, VkSampler const& sampler, Ir77PVSlotKind const& kind, std::uint32_t& index,
+                                                       VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(AllocateSlot(BINDLESS_BINDING_TEXTURES, kind, index), result)) return result;
+
+        WriteTexture(index, view, sampler, layout);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     std::shared_ptr<IIr77Return const> RegisterBuffer(VkBuffer const& buffer, VkDeviceSize const& offset, VkDeviceSize const& range,
-                                                      std::uint32_t& index) {
-        auto const result = DefineSlot(BINDLESS_BINDING_BUFFERS, index);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+                                                      Ir77PVSlotKind const& kind, std::uint32_t& index) {
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(AllocateSlot(BINDLESS_BINDING_BUFFERS, kind, index), result)) return result;
 
-        return UpdateBuffer(index, buffer, offset, range);
+        WriteBuffer(index, buffer, offset, range);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> RegisterStorageImage(VkImageView const& view, std::uint32_t& index) {
-        auto const result = DefineSlot(BINDLESS_BINDING_STORAGE_IMAGES, index);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+    // The image must be in VK_IMAGE_LAYOUT_GENERAL whenever a shader uses it
+    std::shared_ptr<IIr77Return const> RegisterStorageImage(VkImageView const& view, Ir77PVSlotKind const& kind, std::uint32_t& index) {
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(AllocateSlot(BINDLESS_BINDING_STORAGE_IMAGES, kind, index), result)) return result;
 
-        return UpdateStorageImage(index, view);
+        WriteStorageImage(index, view);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Binding 3 -- ray-query devices only
+    // Binding 3 -- a TLAS, kind TopLevel. Ray-query devices only: without them the binding has no room and this fails.
     std::shared_ptr<IIr77Return const> RegisterAccelerationStructure(VkAccelerationStructureKHR const& structure, std::uint32_t& index) {
-        auto const result = DefineSlot(BINDLESS_BINDING_ACCELERATION, index);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(AllocateSlot(BINDLESS_BINDING_ACCELERATION, Ir77PVSlotKind::TopLevel, index), result)) return result;
 
-        return UpdateAccelerationStructure(index, structure);
+        WriteAccelerationStructure(index, structure);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // update -- rewrite a slot in place. Safe while frames are in flight as long as none of them reads this slot (UPDATE_UNUSED_WHILE_PENDING);
-    // when they might, register a new slot and Release the old one instead.
+    // update -- rewrite a registered slot in place. Only while no frame in flight reads it (UPDATE_UNUSED_WHILE_PENDING): the overlay and
+    // the TLAS ring update after the device idles. When frames might read it, register a new slot and Bury the old one instead.
     // -------------------------------------------------------------------------------------------------------------------------------------
+
     std::shared_ptr<IIr77Return const> UpdateTexture(std::uint32_t const& index, VkImageView const& view, VkSampler const& sampler,
                                                      VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        if (index >= m_capacity.textures) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: texture slot out of range.");
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(CheckRegistered(BINDLESS_BINDING_TEXTURES, index), result)) return result;
 
-        VkDescriptorImageInfo image_info{};
-        image_info.sampler = sampler;
-        image_info.imageView = view;
-        image_info.imageLayout = layout;
-
-        WriteSlot(BINDLESS_BINDING_TEXTURES, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, index, &image_info, nullptr);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> UpdateBuffer(std::uint32_t const& index, VkBuffer const& buffer, VkDeviceSize const& offset,
-                                                    VkDeviceSize const& range) {
-        if (index >= m_capacity.buffers) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: buffer slot out of range.");
-
-        VkDescriptorBufferInfo buffer_info{};
-        buffer_info.buffer = buffer;
-        buffer_info.offset = offset;
-        buffer_info.range = range;
-
-        WriteSlot(BINDLESS_BINDING_BUFFERS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, index, nullptr, &buffer_info);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> UpdateStorageImage(std::uint32_t const& index, VkImageView const& view) {
-        if (index >= m_capacity.storage_images) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: storage image slot out of range.");
-
-        VkDescriptorImageInfo image_info{};
-        image_info.imageView = view;
-        image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        WriteSlot(BINDLESS_BINDING_STORAGE_IMAGES, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, index, &image_info, nullptr);
+        WriteTexture(index, view, sampler, layout);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     std::shared_ptr<IIr77Return const> UpdateAccelerationStructure(std::uint32_t const& index, VkAccelerationStructureKHR const& structure) {
-        if (index >= m_capacity.acceleration_structures)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: acceleration-structure slot out of range (no ray queries?).");
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(CheckRegistered(BINDLESS_BINDING_ACCELERATION, index), result)) return result;
 
-        VkWriteDescriptorSetAccelerationStructureKHR structure_info{};
-        structure_info.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-        structure_info.accelerationStructureCount = 1;
-        structure_info.pAccelerationStructures = &structure;
-
-        WriteSlot(BINDLESS_BINDING_ACCELERATION, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, index, nullptr, nullptr, &structure_info);
+        WriteAccelerationStructure(index, structure);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // release / per frame
+    // release
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // binding = BINDLESS_BINDING_TEXTURES / _BUFFERS / _STORAGE_IMAGES / _ACCELERATION. The slot is reused only after MAX_FRAMES_IN_FLIGHT Ticks.
+
+    // binding = BINDLESS_BINDING_TEXTURES / _BUFFERS / _STORAGE_IMAGES / _ACCELERATION. Free now -- the next Register may hand it out, so
+    // only a slot no frame in flight can read (Transfer's graveyard, or teardown after the device idles). The placeholder slot is permanent.
     std::shared_ptr<IIr77Return const> Release(std::uint32_t const& binding, std::uint32_t const& index) {
-        if (binding >= BINDLESS_BINDING_COUNT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: unknown binding.");
-        if (index >= m_slots[binding].next) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: slot was never registered.");
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(CheckRegistered(binding, index), result)) return result;
+
         if (binding == BINDLESS_BINDING_TEXTURES && index == BINDLESS_PLACEHOLDER_TEXTURE)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: the placeholder texture slot is permanent.");
 
-        m_retired.push_back(Ir77PVRetiredSlot{binding, index, MAX_FRAMES_IN_FLIGHT});
+        m_slots[binding].kinds[index] = Ir77PVSlotKind::None;
+        m_slots[binding].free.push_back(index);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Once per frame, before recording: returns retired slots no frame in flight can still read to their free lists
-    std::shared_ptr<IIr77Return const> Tick() {
-        std::size_t keep{0};
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // record / query
+    // -------------------------------------------------------------------------------------------------------------------------------------
 
-        for (std::size_t i = 0; i < m_retired.size(); i++) {
-            if (m_retired[i].frames_left > 0) {
-                m_retired[i].frames_left--;
-                m_retired[keep++] = m_retired[i];
-                continue;
-            }
-
-            m_slots[m_retired[i].binding].free.push_back(m_retired[i].index);
-        }
-
-        m_retired.resize(keep);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // Binds the one set at set 0 for a bind point (graphics / compute / ray tracing). Once per command buffer per bind point --
-    // pipeline changes don't disturb it, since every pipeline shares the layout.
+    // The one set at set 0 for a bind point (graphics / compute / ray tracing). Once per command buffer per bind point -- every pipeline
+    // shares the layout, so pipeline switches don't disturb it.
     std::shared_ptr<IIr77Return const> Bind(VkCommandBuffer const& cmd, VkPipelineBindPoint const& bind_point) {
         VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
         m_layout->GetPipelineLayout(&pipeline_layout);
@@ -282,17 +249,17 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    // queries
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    std::shared_ptr<IIr77Return const> GetSet(VkDescriptorSet* set) {
-        *set = m_set;
+    // What a slot holds -- None when it was never registered, has been released, or is out of range
+    std::shared_ptr<IIr77Return const> GetSlotKind(std::uint32_t const& binding, std::uint32_t const& index, Ir77PVSlotKind& kind) const {
+        kind = Ir77PVSlotKind::None;
+
+        if (binding < BINDLESS_BINDING_COUNT && index < m_slots[binding].kinds.size()) kind = m_slots[binding].kinds[index];
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // steps
+    // CreateDescriptorSet's steps
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
     std::shared_ptr<IIr77Return const> DefinePool() {
@@ -338,30 +305,94 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // A free (recycled) slot first, otherwise the next unused one
-    std::shared_ptr<IIr77Return const> DefineSlot(std::uint32_t const& binding, std::uint32_t& index) {
+    // One allocator per binding, every slot None. Binding 3 has no room without ray queries -- registering into it fails.
+    void DefineSlots() {
+        m_slots[BINDLESS_BINDING_TEXTURES].capacity = m_capacity.textures;
+        m_slots[BINDLESS_BINDING_BUFFERS].capacity = m_capacity.buffers;
+        m_slots[BINDLESS_BINDING_STORAGE_IMAGES].capacity = m_capacity.storage_images;
+        m_slots[BINDLESS_BINDING_ACCELERATION].capacity = m_capacity.acceleration_structures;
+
+        for (Ir77PVSlotAllocator& slots : m_slots) slots.kinds.assign(slots.capacity, Ir77PVSlotKind::None);
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // slots
+    // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // A released slot first, otherwise the next never-used one -- marked with its kind
+    std::shared_ptr<IIr77Return const> AllocateSlot(std::uint32_t const& binding, Ir77PVSlotKind const& kind, std::uint32_t& index) {
         if (m_set == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: CreateDescriptorSet not called.");
 
-        auto& slots = m_slots[binding];
+        Ir77PVSlotAllocator& slots = m_slots[binding];
 
         if (!slots.free.empty()) {
             index = slots.free.back();
             slots.free.pop_back();
-            return Ir77RETURN<Ir77OperationSucceeded>();
+        } else {
+            if (slots.next >= slots.capacity)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: bindless binding " + std::to_string(binding) + " is full.");
+
+            index = slots.next++;
         }
 
-        if (slots.next >= slots.capacity)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: bindless binding " + std::to_string(binding) + " is full.");
-
-        index = slots.next++;
+        slots.kinds[index] = kind;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-   private:
-    // next -- VkWriteDescriptorSetAccelerationStructureKHR for binding 3, which carries its structure in pNext instead of image / buffer info
-    void WriteSlot(std::uint32_t const binding, VkDescriptorType const type, std::uint32_t const index, VkDescriptorImageInfo const* image_info,
-                   VkDescriptorBufferInfo const* buffer_info, void const* next = nullptr) {
+    // The slot holds something -- Update and Release only touch registered slots
+    std::shared_ptr<IIr77Return const> CheckRegistered(std::uint32_t const& binding, std::uint32_t const& index) const {
+        if (binding >= BINDLESS_BINDING_COUNT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: unknown binding.");
+
+        if (index >= m_slots[binding].kinds.size() || m_slots[binding].kinds[index] == Ir77PVSlotKind::None)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDescriptorSet: slot " + std::to_string(index) + " of binding " + std::to_string(binding) +
+                                                           " is not registered (never was, or already released).");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // descriptor writes -- the slot is known good by here
+    // -------------------------------------------------------------------------------------------------------------------------------------
+
+    void WriteTexture(std::uint32_t const& index, VkImageView const& view, VkSampler const& sampler, VkImageLayout const& layout) {
+        VkDescriptorImageInfo image_info{};
+        image_info.sampler = sampler;
+        image_info.imageView = view;
+        image_info.imageLayout = layout;
+
+        WriteDescriptor(BINDLESS_BINDING_TEXTURES, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, index, &image_info, nullptr, nullptr);
+    }
+
+    void WriteBuffer(std::uint32_t const& index, VkBuffer const& buffer, VkDeviceSize const& offset, VkDeviceSize const& range) {
+        VkDescriptorBufferInfo buffer_info{};
+        buffer_info.buffer = buffer;
+        buffer_info.offset = offset;
+        buffer_info.range = range;
+
+        WriteDescriptor(BINDLESS_BINDING_BUFFERS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, index, nullptr, &buffer_info, nullptr);
+    }
+
+    void WriteStorageImage(std::uint32_t const& index, VkImageView const& view) {
+        VkDescriptorImageInfo image_info{};
+        image_info.imageView = view;
+        image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        WriteDescriptor(BINDLESS_BINDING_STORAGE_IMAGES, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, index, &image_info, nullptr, nullptr);
+    }
+
+    // a TLAS travels in pNext (VkWriteDescriptorSetAccelerationStructureKHR), not in image / buffer info
+    void WriteAccelerationStructure(std::uint32_t const& index, VkAccelerationStructureKHR const& structure) {
+        VkWriteDescriptorSetAccelerationStructureKHR structure_info{};
+        structure_info.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        structure_info.accelerationStructureCount = 1;
+        structure_info.pAccelerationStructures = &structure;
+
+        WriteDescriptor(BINDLESS_BINDING_ACCELERATION, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, index, nullptr, nullptr, &structure_info);
+    }
+
+    void WriteDescriptor(std::uint32_t const& binding, VkDescriptorType const& type, std::uint32_t const& index, VkDescriptorImageInfo const* image_info,
+                         VkDescriptorBufferInfo const* buffer_info, void const* next) {
         VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
@@ -380,16 +411,12 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
     }
 
    private:
+    // one per binding
     struct Ir77PVSlotAllocator {
         std::uint32_t capacity{0};
         std::uint32_t next{0};                // first never-used slot
-        std::vector<std::uint32_t> free{};    // released slots, past their frames-in-flight wait
-    };
-
-    struct Ir77PVRetiredSlot {
-        std::uint32_t binding{0};
-        std::uint32_t index{0};
-        std::uint32_t frames_left{0};
+        std::vector<std::uint32_t> free{};    // released slots -- handed out first
+        std::vector<Ir77PVSlotKind> kinds{};  // [slot] -- what it holds; None = free
     };
 
     std::shared_ptr<IIr77PVDevice> m_device{};
@@ -398,13 +425,10 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
 
     Ir77PVBindlessCapacity m_capacity{};
 
-    VkDescriptorPool m_pool{VK_NULL_HANDLE};
+    VkDescriptorPool m_pool{VK_NULL_HANDLE};  // owns m_set
 
     VkDescriptorSet m_set{VK_NULL_HANDLE};
 
-    std::array<Ir77PVSlotAllocator, BINDLESS_BINDING_COUNT> m_slots{};
-
-    std::vector<Ir77PVRetiredSlot> m_retired{};
+    std::array<Ir77PVSlotAllocator, BINDLESS_BINDING_COUNT> m_slots{};  // [binding]
 };
-
 }  // namespace NSIr77PeregrineV

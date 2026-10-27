@@ -39,12 +39,15 @@ namespace NSIr77PeregrineV {
 // Ir77PVTransfer -- getting data onto the device and letting it go again. Shared plumbing for Materials and Geometry, plus storage buffers.
 //
 //   startup:   Ir77PVInit wires it -- SetDevice / SetAllocator / SetDescriptorSet
-//   plumbing:  Upload (staging, wait or not) / CreateStaticBuffer / CreateDynamicBuffer / RegisterBuffer -> ... -> ReleaseSlots / Bury
+//   plumbing:  Upload (staging, wait or not) / CreateStaticBuffer / CreateDynamicBuffer / RegisterBuffer (kind) -> ... -> Bury
 //   gpu data:  CreateStorageBuffer (compute writes it, shaders read it by slot) -> UploadStorageBuffer -> DestroyStorageBuffer
-//   frame:     Tick -- bindless slot aging, finished staging buffers, the graveyard
+//   frame:     Tick -- finished staging buffers, the graveyard
 // One device; it never sees Ir77PVInit.
 //
-// Every buffer made here stays in m_buffers until Bury'd and aged out, so nothing is freed while a frame in flight can still read it.
+// The graveyard is the one place anything waits out the frames in flight. Whatever an owner lets go of at runtime -- buffers, textures,
+// bindless slots, material rows (released) -- goes into one grave with Bury; when no frame can still read it the slots go back to the
+// table, the buffers and textures are dropped and released() runs, all in the same Tick. Every buffer made here stays in m_buffers until
+// then.
 // =============================================================================================================================================
 class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::enable_shared_from_this<Ir77PVTransfer> {
    public:
@@ -66,7 +69,8 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
         m_device->GetDevice(&vk_device);
         if (vk_device != VK_NULL_HANDLE) vkDeviceWaitIdle(vk_device);
 
-        // everything below frees its own memory -- the device is idle and the allocator still alive here
+        // everything below frees its own memory -- the device is idle and the allocator still alive here. Graves are dropped, not released:
+        // the table goes with the device, and released() may name an owner that is already gone.
         m_pending.clear();  // uploads still pending -- finished after the wait
         m_storage_buffers.clear();
         m_graveyard.clear();
@@ -138,15 +142,11 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
 
     // =========================================================================================================================================
     // per frame -- Ir77PVInit::Tick calls this once per frame, before Geometry's Tick and before Paint records.
-    //   0. ages the bindless table's released slots
     //   1. drops the staging buffers of uploads whose fence has signalled
-    //   2. ages the graveyard and releases anything no frame in flight can still read
+    //   2. ages the graveyard and releases every grave no frame in flight can still read
     // =========================================================================================================================================
     std::shared_ptr<IIr77Return const> Tick() {
         if (!m_descriptor_set) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: bindless table not set.");
-
-        // 0. released slots become reusable after MAX_FRAMES_IN_FLIGHT Ticks
-        m_descriptor_set->Tick();
 
         // 1. finished uploads -- dropping the staging buffer frees its memory, command buffer and fence
         std::erase_if(m_pending, [](std::shared_ptr<IIr77PVBuffer> const& staging) {
@@ -165,7 +165,7 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
                 continue;
             }
 
-            for (auto const& buffer : m_graveyard[i].buffers) std::erase(m_buffers, buffer);
+            ReleaseGrave(m_graveyard[i]);
         }
         m_graveyard.resize(keep);
 
@@ -211,21 +211,30 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
         return DefineBuffer(usage, size, Ir77PVBufferMode::Dynamic, MAX_FRAMES_IN_FLIGHT, buffer);
     }
 
-    // Held until MAX_FRAMES_IN_FLIGHT + 1 Ticks have passed -- every frame that could have recorded them has finished by then. Null entries
-    // are skipped.
-    std::shared_ptr<IIr77Return const> Bury(std::vector<std::shared_ptr<IIr77PVBuffer>> const& buffers) {
-        Ir77PVGrave grave{};
-        for (auto const& buffer : buffers)
-            if (buffer) grave.buffers.push_back(buffer);
-        grave.frames_left = MAX_FRAMES_IN_FLIGHT + 1;
+    // Everything an owner lets go of in one step -- held until MAX_FRAMES_IN_FLIGHT + 1 Ticks have passed (every frame that could have
+    // recorded it has finished by then), then released together: slots, buffers, textures, released(). Empty entries are skipped.
+    std::shared_ptr<IIr77Return const> Bury(Ir77PVGrave const& grave) {
+        Ir77PVGrave kept{};
 
-        m_graveyard.push_back(std::move(grave));
+        for (auto const& buffer : grave.buffers)
+            if (buffer) kept.buffers.push_back(buffer);
+
+        for (auto const& texture : grave.textures)
+            if (texture) kept.textures.push_back(texture);
+
+        for (Ir77PVSlot const& slot : grave.slots)
+            if (slot.index != BINDLESS_NO_SLOT) kept.slots.push_back(slot);
+
+        kept.released = grave.released;
+        kept.frames_left = MAX_FRAMES_IN_FLIGHT + 1;
+
+        m_graveyard.push_back(std::move(kept));
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // One Static buffer copy -> a bindless buffer slot
-    std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, std::uint32_t& slot) {
+    // One Static buffer copy -> a bindless buffer slot holding kind
+    std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, Ir77PVSlotKind const& kind, std::uint32_t& slot) {
         if (!buffer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: no buffer.");
 
         if (!m_descriptor_set) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: bindless table not set.");
@@ -235,17 +244,7 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
         auto const result = buffer->GetBufferInfo(0, &info);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        return m_descriptor_set->RegisterBuffer(info.buffer, info.offset, info.range, slot);
-    }
-
-    // Slots back to the bindless table -- reusable after MAX_FRAMES_IN_FLIGHT Ticks. Unset slots (BINDLESS_NO_SLOT) are skipped.
-    std::shared_ptr<IIr77Return const> ReleaseSlots(std::uint32_t const& binding, std::vector<std::uint32_t> const& slots) {
-        if (!m_descriptor_set) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: bindless table not set.");
-
-        for (auto const slot : slots)
-            if (slot != BINDLESS_NO_SLOT) m_descriptor_set->Release(binding, slot);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
+        return m_descriptor_set->RegisterBuffer(info.buffer, info.offset, info.range, kind, slot);
     }
 
     // =========================================================================================================================================
@@ -276,7 +275,7 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
         if (Upload({{dst, data ? data : zeros.data(), size}}, true)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: storage buffer upload failed.");
 
-        auto const result = RegisterBuffer(buffer, slot);
+        auto const result = RegisterBuffer(buffer, Ir77PVSlotKind::Storage, slot);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         buffer_id = static_cast<std::uint32_t>(m_storage_buffers.size());
@@ -310,15 +309,14 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
         return Upload({{dst, data, size, offset}}, wait);
     }
 
-    // Releases the slot and frees the buffer once no frame in flight can read it. Remove the draws / dispatches using it first.
+    // The buffer and its slot into one grave -- both freed once no frame in flight can read them. Remove the draws / dispatches using it first.
     std::shared_ptr<IIr77Return const> DestroyStorageBuffer(std::uint32_t const& buffer_id) {
         std::shared_ptr<IIr77PVBuffer> buffer{};
 
         auto const result = GetStorageBuffer(buffer_id, buffer);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        ReleaseSlots(BINDLESS_BINDING_BUFFERS, {m_storage_slots[buffer_id]});
-        Bury({buffer});
+        Bury({.buffers = {buffer}, .slots = {{BINDLESS_BINDING_BUFFERS, m_storage_slots[buffer_id]}}});
 
         m_storage_buffers[buffer_id].reset();
         m_storage_slots[buffer_id] = BINDLESS_NO_SLOT;
@@ -327,6 +325,18 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
     }
 
    private:
+    // An expired grave: its slots back to the table, its buffers out of m_buffers (their last owner -- the memory goes now), its textures
+    // dropped with it, then released()
+    void ReleaseGrave(Ir77PVGrave& grave) {
+        for (Ir77PVSlot const& slot : grave.slots) m_descriptor_set->Release(slot.binding, slot.index);
+
+        for (auto const& buffer : grave.buffers) std::erase(m_buffers, buffer);
+
+        if (grave.released) grave.released();
+
+        grave = Ir77PVGrave{};
+    }
+
     // With ray queries on, storage buffers can also be acceleration-structure build inputs, read by GPU address
     VkBufferUsageFlags RayInputUsage() const {
         bool ray_query{false};

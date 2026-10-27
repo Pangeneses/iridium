@@ -44,10 +44,11 @@ namespace NSIr77PeregrineV {
 //
 //   startup:   Ir77PVInit wires it -- SetDevice / SetAllocator / SetDescriptorSet / SetTransfer / SetMaterialTable / SetPlaceholderSlots
 //   load:      CreateTexture / CreateCanvas -> CreateMaterial / UploadMaterials -> material ids for Geometry's draw items (GetMaterial)
+//   unload:    DestroyMaterials / DestroyTexture -- through Transfer's graveyard
 // One device; it never sees Ir77PVInit.
 //
-// Bindless: textures get texture slots, materials are rows in the device's material table (holding texture slots). Rows are appended,
-// never rewritten -- frames in flight may be reading them.
+// Bindless: textures get texture slots, materials are rows in the device's material table (holding texture slots). A material id is its row.
+// A destroyed row goes back on the free list only when no frame in flight can read it, so a row is never rewritten under a frame.
 // =============================================================================================================================================
 class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::enable_shared_from_this<Ir77PVMaterial> {
    public:
@@ -70,6 +71,7 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
         if (vk_device != VK_NULL_HANDLE) vkDeviceWaitIdle(vk_device);
 
         m_textures.clear();  // frees its own memory -- the device is idle and the allocator still alive here
+        m_canvases.clear();
     }
 
    public:
@@ -143,7 +145,7 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The device's material table (MATERIAL_CAPACITY rows) -- UploadMaterials appends rows into it
+    // The device's material table (MATERIAL_CAPACITY rows) -- UploadMaterials writes rows into it
     std::shared_ptr<IIr77Return const> SetMaterialTable(std::shared_ptr<IIr77PVBuffer> material_table) {
         m_material_table = material_table;
 
@@ -189,12 +191,21 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
 
         std::uint32_t slot{BINDLESS_NO_SLOT};
 
-        auto const result = m_descriptor_set->RegisterTexture(info.imageView, info.sampler, slot);
+        auto const result = m_descriptor_set->RegisterTexture(info.imageView, info.sampler, Ir77PVSlotKind::Texture, slot);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-        texture_id = static_cast<std::uint32_t>(m_textures.size());
-        m_textures.push_back(texture);
-        m_texture_slots.push_back(slot);
+        // a destroyed texture's id first -- ids name nothing on the GPU, so they are reusable at once
+        if (!m_free_textures.empty()) {
+            texture_id = m_free_textures.back();
+            m_free_textures.pop_back();
+
+            m_textures[texture_id] = texture;
+            m_texture_slots[texture_id] = slot;
+        } else {
+            texture_id = static_cast<std::uint32_t>(m_textures.size());
+            m_textures.push_back(texture);
+            m_texture_slots.push_back(slot);
+        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -221,20 +232,35 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
         VkDescriptorImageInfo info{};
         texture->GetImageInfo(&info);  // imageLayout = GENERAL
 
-        if (Failed(m_descriptor_set->RegisterTexture(info.imageView, info.sampler, texture_slot, info.imageLayout), result)) return result;
-        if (Failed(m_descriptor_set->RegisterStorageImage(info.imageView, image_slot), result)) return result;
+        if (Failed(m_descriptor_set->RegisterTexture(info.imageView, info.sampler, Ir77PVSlotKind::Canvas, texture_slot, info.imageLayout), result))
+            return result;
+        if (Failed(m_descriptor_set->RegisterStorageImage(info.imageView, Ir77PVSlotKind::CanvasImage, image_slot), result)) return result;
 
-        m_textures.push_back(texture);
-        m_texture_slots.push_back(texture_slot);
+        m_canvases.push_back(texture);  // kept for the device's lifetime
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // Bindless texture slot of a texture -- what material rows and shaders use
     std::shared_ptr<IIr77Return const> GetTextureSlot(std::uint32_t const& texture_id, std::uint32_t& slot) {
-        if (texture_id >= m_texture_slots.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: unknown texture.");
+        if (texture_id >= m_texture_slots.size() || !m_textures[texture_id]) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: unknown texture.");
 
         slot = m_texture_slots[texture_id];
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The texture and its slot into Transfer's graveyard -- freed once no frame in flight can sample it. The id is free for the next texture
+    // now. Destroy the materials that use it first (or with it).
+    std::shared_ptr<IIr77Return const> DestroyTexture(std::uint32_t const& texture_id) {
+        if (texture_id >= m_textures.size() || !m_textures[texture_id]) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: unknown texture.");
+        if (!m_transfer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: transfer not set.");
+
+        m_transfer->Bury({.textures = {m_textures[texture_id]}, .slots = {{BINDLESS_BINDING_TEXTURES, m_texture_slots[texture_id]}}});
+
+        m_textures[texture_id].reset();
+        m_texture_slots[texture_id] = BINDLESS_NO_SLOT;
+        m_free_textures.push_back(texture_id);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -261,15 +287,19 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
         return UploadMaterials(constants, std::vector<Ir77PVMaterialTextures>(constants.size()), material_ids);
     }
 
-    // One staging copy for every new row. Rows are appended -- existing rows (which frames in flight may be reading) are never rewritten.
+    // One staging copy for every new row. Rows come from the free list first (DestroyMaterials puts them there once no frame in flight can
+    // read them), then the unused end of the table. A material id is its row.
     std::shared_ptr<IIr77Return const> UploadMaterials(std::vector<Ir77PVMaterialConstants> const& constants,
                                                        std::vector<Ir77PVMaterialTextures> const& textures, std::vector<std::uint32_t>& material_ids) {
         if (constants.size() != textures.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: constants / textures count mismatch.");
 
         if (!m_material_table) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: material table not set.");
+        if (!m_transfer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: transfer not set.");
 
-        if (m_materials.size() + constants.size() > MATERIAL_CAPACITY)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: material table full -- raise MATERIAL_CAPACITY.");
+        std::size_t const available = m_free_rows.size() + (MATERIAL_CAPACITY - m_row_used.size());
+        if (constants.size() > available)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: material table full (" + std::to_string(MATERIAL_CAPACITY) +
+                                                           " rows) -- unload something or raise MATERIAL_CAPACITY.");
 
         std::vector<Ir77PVMaterialRow> rows(constants.size());
 
@@ -278,40 +308,74 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
             if (result->ID() != GUIDIr77OperationSucceeded) return result;
         }
 
+        // where each goes -- free rows first, then the end of the table
+        std::vector<std::uint32_t> places(rows.size(), 0);
+
+        for (std::size_t i = 0; i < rows.size(); i++) {
+            if (!m_free_rows.empty()) {
+                places[i] = m_free_rows.back();
+                m_free_rows.pop_back();
+            } else {
+                places[i] = static_cast<std::uint32_t>(m_row_used.size());
+                m_row_used.push_back(0);
+            }
+        }
+
         VkBuffer table{VK_NULL_HANDLE};
         m_material_table->GetBuffer(0, &table);
 
-        Ir77PVUploadEntry entry{};
-        entry.dst = table;
-        entry.data = rows.data();
-        entry.size = static_cast<VkDeviceSize>(rows.size() * sizeof(Ir77PVMaterialRow));
-        entry.dst_offset = static_cast<VkDeviceSize>(m_materials.size() * sizeof(Ir77PVMaterialRow));
-
-        if (!m_transfer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: transfer not set.");
-
-        if (m_transfer->Upload({entry})->ID() != GUIDIr77OperationSucceeded)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: material upload failed.");
-
-        material_ids.clear();
-        material_ids.reserve(rows.size());
+        std::vector<Ir77PVUploadEntry> entries(rows.size());
 
         for (std::size_t i = 0; i < rows.size(); i++) {
-            Ir77PVMaterialData material{};
-            material.row = static_cast<std::uint32_t>(m_materials.size());
-
-            material_ids.push_back(material.row);
-            m_materials.push_back(material);
+            entries[i].dst = table;
+            entries[i].data = &rows[i];
+            entries[i].size = sizeof(Ir77PVMaterialRow);
+            entries[i].dst_offset = static_cast<VkDeviceSize>(places[i]) * sizeof(Ir77PVMaterialRow);
         }
+
+        if (m_transfer->Upload(entries)->ID() != GUIDIr77OperationSucceeded) {
+            for (std::uint32_t const row : places) m_free_rows.push_back(row);  // nothing reads them -- free again at once
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: material upload failed.");
+        }
+
+        for (std::uint32_t const row : places) m_row_used[row] = 1;
+
+        material_ids = places;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Upload Materials.");
     }
 
     std::shared_ptr<IIr77Return const> GetMaterial(std::uint32_t const& material_id, Ir77PVMaterialData& material) {
-        if (material_id >= m_materials.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: unknown material.");
+        if (material_id >= m_row_used.size() || !m_row_used[material_id]) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: unknown material.");
 
-        material = m_materials[material_id];
+        material = Ir77PVMaterialData{};
+        material.row = material_id;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The rows are gone now (GetMaterial fails) and back on the free list once no frame in flight can read them -- through Transfer's
+    // graveyard. Unknown or already destroyed ids are skipped. Remove the draws using them first.
+    std::shared_ptr<IIr77Return const> DestroyMaterials(std::vector<std::uint32_t> const& material_ids) {
+        if (!m_transfer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: transfer not set.");
+
+        std::vector<std::uint32_t> rows{};
+
+        for (std::uint32_t const id : material_ids) {
+            if (id >= m_row_used.size() || !m_row_used[id]) continue;
+
+            m_row_used[id] = 0;
+            rows.push_back(id);
+        }
+
+        if (rows.empty()) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        // Materials may be gone by the time the grave expires (teardown drops graves without running them, but stay safe)
+        std::weak_ptr<Ir77PVMaterial> const self = weak_from_this();
+
+        return m_transfer->Bury({.released = [self, rows]() {
+            if (auto const materials = self.lock()) materials->m_free_rows.insert(materials->m_free_rows.end(), rows.begin(), rows.end());
+        }});
     }
 
    private:
@@ -360,10 +424,16 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
     std::map<Ir77PVPlaceholderKind, std::uint32_t> m_placeholder_slots{};
 
     // owned
-    std::vector<Ir77PVMaterialData> m_materials{};
+    std::vector<std::uint8_t> m_row_used{};  // [row] -- 1 while a material holds it; the table's used end is its size
 
-    std::vector<std::shared_ptr<IIr77PVTexture>> m_textures{};
+    std::vector<std::uint32_t> m_free_rows{};  // destroyed rows no frame in flight can read any more
+
+    std::vector<std::shared_ptr<IIr77PVTexture>> m_textures{};  // [texture_id] -- empty once destroyed
 
     std::vector<std::uint32_t> m_texture_slots{};  // [texture_id] -> bindless texture slot
+
+    std::vector<std::uint32_t> m_free_textures{};  // destroyed texture ids
+
+    std::vector<std::shared_ptr<IIr77PVTexture>> m_canvases{};  // CreateCanvas -- for the device's lifetime
 };
 }  // namespace NSIr77PeregrineV

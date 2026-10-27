@@ -37,9 +37,8 @@ typedef struct IIr77PVTransfer : virtual public IIr77Enlisted {
     // ---- per frame / plumbing --------------------------------------------------------------------------------------------------------------
 
     // per frame -- Ir77PVInit::Tick calls this once per frame, before Geometry's Tick and before Paint records.
-    //   0. ages the bindless table's released slots
     //   1. drops the staging buffers of uploads whose fence has signalled
-    //   2. ages the graveyard and releases anything no frame in flight can still read
+    //   2. ages the graveyard and releases every grave no frame in flight can still read
     virtual std::shared_ptr<IIr77Return const> Tick() = 0;
 
     // One Staging buffer per batch, on the device's upload pool. wait = true blocks until the copy is done; false returns at once -- the
@@ -53,15 +52,12 @@ typedef struct IIr77PVTransfer : virtual public IIr77Enlisted {
     // the graveyard releases from.
     virtual std::shared_ptr<IIr77Return const> CreateDynamicBuffer(VkBufferUsageFlags const& usage, VkDeviceSize const& size, std::shared_ptr<IIr77PVBuffer>& buffer) = 0;
 
-    // Held until MAX_FRAMES_IN_FLIGHT + 1 Ticks have passed -- every frame that could have recorded them has finished by then. Null entries
-    // are skipped.
-    virtual std::shared_ptr<IIr77Return const> Bury(std::vector<std::shared_ptr<IIr77PVBuffer>> const& buffers) = 0;
+    // Everything an owner lets go of in one step -- buffers, textures, bindless slots, released() -- held until MAX_FRAMES_IN_FLIGHT + 1 Ticks
+    // have passed, then released together. The only way anything is freed at runtime. Empty entries are skipped.
+    virtual std::shared_ptr<IIr77Return const> Bury(Ir77PVGrave const& grave) = 0;
 
-    // One Static buffer copy -> a bindless buffer slot
-    virtual std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, std::uint32_t& slot) = 0;
-
-    // Slots back to the bindless table -- reusable after MAX_FRAMES_IN_FLIGHT Ticks. Unset slots (BINDLESS_NO_SLOT) are skipped.
-    virtual std::shared_ptr<IIr77Return const> ReleaseSlots(std::uint32_t const& binding, std::vector<std::uint32_t> const& slots) = 0;
+    // One Static buffer copy -> a bindless buffer slot holding kind
+    virtual std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, Ir77PVSlotKind const& kind, std::uint32_t& slot) = 0;
 
     // ---- storage buffers -- one copy shared by every frame in flight (set 0 binding 1) -------------------------------------------------------
 
@@ -74,7 +70,7 @@ typedef struct IIr77PVTransfer : virtual public IIr77Enlisted {
     // CPU rewrite of [offset, offset + size) -- resets, spawn parameters. The copy runs in submission order ahead of later frames.
     virtual std::shared_ptr<IIr77Return const> UploadStorageBuffer(std::uint32_t const& buffer_id, void const* data, VkDeviceSize const& size, VkDeviceSize const& offset, bool const& wait) = 0;
 
-    // Releases the slot and frees the buffer once no frame in flight can read it. Remove the draws / dispatches using it first.
+    // The buffer and its slot into one grave -- both freed once no frame in flight can read them. Remove the draws / dispatches using it first.
     virtual std::shared_ptr<IIr77Return const> DestroyStorageBuffer(std::uint32_t const& buffer_id) = 0;
 
     virtual ~IIr77PVTransfer() = default;

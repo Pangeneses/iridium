@@ -12,6 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +26,7 @@ namespace NSIr77PeregrineV {
 // =============================================================================================================================================
 struct IIr77PVBuffer;
 struct IIr77PVPipeline;
+struct IIr77PVTexture;
 
 // =============================================================================================================================================
 // limits / capacities
@@ -105,6 +107,47 @@ inline constexpr std::uint32_t BINDLESS_PLACEHOLDER_TEXTURE = 0;
 
 // "no slot" for optional buffer / texture slots
 inline constexpr std::uint32_t BINDLESS_NO_SLOT = UINT32_MAX;
+
+// What a bindless slot holds -- given at Register, kept by the table beside the slot, None once released. Debug builds check the slots
+// a draw item brings (bones, meshlet buffers) against the kind its push-constant field needs before recording it.
+enum class Ir77PVSlotKind : std::uint8_t {
+    None,
+    // binding 1 -- buffers
+    FrameTable,
+    Camera,
+    Lights,
+    Instances,
+    ShadowMatrices,
+    Bones,
+    MaterialTable,
+    Vertices,
+    Meshlets,
+    MeshletVertices,
+    MeshletTriangles,
+    MeshDraws,
+    Storage,  // CreateStorageBuffer -- whatever the caller puts in it
+    // binding 0 -- sampled images
+    Texture,
+    ShadowMap,
+    Canvas,
+    Overlay,
+    // binding 2 -- storage images
+    CanvasImage,
+    // binding 3 -- acceleration structures
+    TopLevel
+};
+
+// For the log -- same order as Ir77PVSlotKind
+inline constexpr std::array<char const*, 20> SLOT_KIND_NAMES{"none",          "frame table",      "camera",         "lights",      "instances",
+                                                             "shadow matrices", "bones",          "material table", "vertices",    "meshlets",
+                                                             "meshlet vertices", "meshlet triangles", "mesh draws",  "storage",     "texture",
+                                                             "shadow map",    "canvas",           "overlay",        "canvas image", "top level"};
+
+// One slot -- which binding, which element
+struct Ir77PVSlot {
+    std::uint32_t binding{0};
+    std::uint32_t index{BINDLESS_NO_SLOT};
+};
 
 // array sizes actually in use on this device
 struct Ir77PVBindlessCapacity {
@@ -620,11 +663,15 @@ struct Ir77PVMeshletSlot {
     std::vector<std::uint32_t> instance_counts{};                // per scene command
 };
 
-// Unloaded buffers -- held until every frame that could still read them has finished. Their bindless slots are released at unload
-// (the table delays slot reuse on its own).
+// What an owner let go of -- held by Transfer's graveyard until every frame that could still read it has finished, then released in one
+// step: the slots back to the bindless table, the buffers and textures dropped, released() run. The only place that waits out the frames
+// in flight. Empty entries (null pointers, BINDLESS_NO_SLOT) are skipped.
 struct Ir77PVGrave {
     std::vector<std::shared_ptr<IIr77PVBuffer>> buffers{};
-    std::uint32_t frames_left{0};
+    std::vector<std::shared_ptr<IIr77PVTexture>> textures{};
+    std::vector<Ir77PVSlot> slots{};
+    std::function<void()> released{};  // anything else that had to wait -- material rows going back to their free list
+    std::uint32_t frames_left{0};      // set by Bury
 };
 
 // =============================================================================================================================================

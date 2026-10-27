@@ -979,7 +979,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
             std::uint32_t slot{BINDLESS_NO_SLOT};
 
-            auto const result = table->RegisterTexture(info.imageView, info.sampler, slot);
+            auto const result = table->RegisterTexture(info.imageView, info.sampler, Ir77PVSlotKind::Texture, slot);
             if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
             slots.emplace(kind, slot);
@@ -1013,7 +1013,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
         std::uint32_t slot{BINDLESS_NO_SLOT};
 
-        result = m_descriptor_sets.at(m_current_device)->RegisterBuffer(info.buffer, info.offset, info.range, slot);
+        result = m_descriptor_sets.at(m_current_device)->RegisterBuffer(info.buffer, info.offset, info.range, Ir77PVSlotKind::MaterialTable, slot);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
         m_material_tables[m_current_device] = buffer;
@@ -1037,7 +1037,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
             VkDescriptorImageInfo info{};
             shadow->second->GetImageInfo(&info);  // imageLayout = DEPTH_STENCIL_READ_ONLY_OPTIMAL
 
-            auto const shadow_result = table->RegisterTexture(info.imageView, info.sampler, shadow_map, info.imageLayout);
+            auto const shadow_result = table->RegisterTexture(info.imageView, info.sampler, Ir77PVSlotKind::ShadowMap, shadow_map, info.imageLayout);
             if (shadow_result->ID() != GUIDIr77OperationSucceeded) return shadow_result;
         }
 
@@ -1061,11 +1061,12 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
             for (std::uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
                 Ir77PVFrameSlots& slots = frame_slots[w][frame];
 
-                slots.values.camera = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Camera), frame);
-                slots.values.lights = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Lights), frame);
-                slots.values.instances = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Instances), frame);
-                slots.values.shadow_matrices = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::ShadowMatrices), frame);
-                slots.values.bones = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Bones), frame);
+                slots.values.camera = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Camera), Ir77PVSlotKind::Camera, frame);
+                slots.values.lights = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Lights), Ir77PVSlotKind::Lights, frame);
+                slots.values.instances = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Instances), Ir77PVSlotKind::Instances, frame);
+                slots.values.shadow_matrices =
+                    RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::ShadowMatrices), Ir77PVSlotKind::ShadowMatrices, frame);
+                slots.values.bones = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Bones), Ir77PVSlotKind::Bones, frame);
                 slots.values.env = white;  // until a real environment exists
                 slots.values.shadow_map = shadow_map;
 
@@ -1076,7 +1077,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
                 result = frame_table->Update(frame, &slots.values, sizeof(Ir77PVFrameTable));
                 if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
-                slots.table = RegisterFrameCopy(table, frame_table, frame);
+                slots.table = RegisterFrameCopy(table, frame_table, Ir77PVSlotKind::FrameTable, frame);
                 if (slots.table == BINDLESS_NO_SLOT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: frame table registration failed.");
             }
 
@@ -1089,14 +1090,14 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // One frame copy of a Dynamic buffer -> its bindless slot; BINDLESS_NO_SLOT on failure
+    // One frame copy of a Dynamic buffer -> its bindless slot, holding kind; BINDLESS_NO_SLOT on failure
     std::uint32_t RegisterFrameCopy(std::shared_ptr<IIr77PVDescriptorSet> const& table, std::shared_ptr<IIr77PVBuffer> const& buffer,
-                                    std::uint32_t const& frame) {
+                                    Ir77PVSlotKind const& kind, std::uint32_t const& frame) {
         VkDescriptorBufferInfo info{};
         if (buffer->GetBufferInfo(frame, &info)->ID() != GUIDIr77OperationSucceeded) return BINDLESS_NO_SLOT;
 
         std::uint32_t slot{BINDLESS_NO_SLOT};
-        if (table->RegisterBuffer(info.buffer, info.offset, info.range, slot)->ID() != GUIDIr77OperationSucceeded) return BINDLESS_NO_SLOT;
+        if (table->RegisterBuffer(info.buffer, info.offset, info.range, kind, slot)->ID() != GUIDIr77OperationSucceeded) return BINDLESS_NO_SLOT;
 
         return slot;
     }

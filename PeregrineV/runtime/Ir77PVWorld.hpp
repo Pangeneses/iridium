@@ -78,6 +78,8 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
         Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};  // static opaque
 
+        std::vector<std::uint32_t> texture_ids{};  // [bundle texture] -> Materials id; IR77PV_NO_TEXTURE where the upload failed
+
         std::vector<std::uint32_t> material_ids{};  // [bundle material] -> Materials id
 
         // static opaque -- vertex path (UploadScene) or mesh path (UploadMeshlets)
@@ -442,7 +444,8 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         if (asset.pipeline == IR77PV_NO_PIPELINE && Failed(m_pipeline_cache->FindPipeline(Ir77PVPipelineKind::Static, asset.pipeline), result)) return result;
 
         // textures -- bundle index -> Materials id; IR77PV_NO_TEXTURE where the upload failed (the placeholder stands in)
-        std::vector<std::uint32_t> texture_ids(bundle.textures.size(), IR77PV_NO_TEXTURE);
+        std::vector<std::uint32_t>& texture_ids = asset.texture_ids;
+        texture_ids.assign(bundle.textures.size(), IR77PV_NO_TEXTURE);
 
         for (std::size_t t = 0; t < bundle.textures.size(); t++) {
             Ir77PVAssetTexture const& texture = bundle.textures[t];
@@ -731,8 +734,8 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         return index < asset.material_ids.size() ? asset.material_ids[index] : m_default_material;
     }
 
-    // Everything an asset put on the device, BLASes first (they read the scenes' buffers), and its ranges. Safe on a half-loaded asset.
-    // Textures and material rows stay -- Materials has no way to free them yet.
+    // Everything an asset put on the device, BLASes first (they read the scenes' buffers), then its materials and textures, and its ranges.
+    // Safe on a half-loaded asset. All of it goes through Transfer's graveyard -- freed once no frame in flight can read it.
     void ReleaseAsset(Ir77PVWorldAsset& asset) {
         if (m_acceleration)
             for (glm::uvec2 const& objects : asset.objects) m_acceleration->ReleaseObjects(objects);
@@ -746,6 +749,11 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
                                            std::pair{asset.skinned_table_buffer, asset.skinned_table}, std::pair{asset.posed_table_buffer, asset.posed_table},
                                            std::pair{asset.jobs_buffer, asset.jobs_slot}})
             if (slot != BINDLESS_NO_SLOT) m_transfer->DestroyStorageBuffer(buffer);
+
+        if (!asset.material_ids.empty()) m_materials->DestroyMaterials(asset.material_ids);
+
+        for (std::uint32_t const texture : asset.texture_ids)
+            if (texture != IR77PV_NO_TEXTURE) m_materials->DestroyTexture(texture);
 
         if (asset.instance_count > 0) m_instance_ranges.erase(asset.instance_base);
         if (asset.bone_count > 0) m_bone_ranges.erase(asset.bone_base);

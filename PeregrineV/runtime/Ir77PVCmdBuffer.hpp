@@ -8,7 +8,9 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -938,6 +940,11 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             // mesh items need the extension loaded and their meshlet slots; raster items need a vertex buffer when the shader reads one
             if (mesh ? (!m_draw_mesh_tasks || item.meshlet_slots[0] == BINDLESS_NO_SLOT) : (vertex_input && !item.vertex)) continue;
 
+#ifndef NDEBUG
+            // the slots the item brings must hold what their push-constant fields read -- otherwise the shader reads garbage
+            if (!CheckItemSlots(mesh, item)) continue;
+#endif
+
             if (pipeline != state.pipeline) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 state.pipeline = pipeline;
@@ -1170,6 +1177,38 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return push;
     }
 
+    // Debug builds: every slot a draw item brings is checked against the kind its push-constant field reads -- bones -> Bones; mesh items'
+    // meshlets / meshlet vertices / meshlet triangles / vertices / draw records. A mismatch (or a released slot: None) skips the draw and is
+    // logged once per slot. The frame's own slots (frame table, instances, material table) are Init's and always right; user[] is the
+    // pipeline's business and isn't checked.
+    bool CheckItemSlots(bool const& mesh, Ir77PVDrawItem const& item) {
+        auto const check = [&](char const* field, std::uint32_t const slot, Ir77PVSlotKind const expected) {
+            if (slot == BINDLESS_NO_SLOT) return true;
+
+            Ir77PVSlotKind kind{Ir77PVSlotKind::None};
+            m_descriptor_set->GetSlotKind(BINDLESS_BINDING_BUFFERS, slot, kind);
+            if (kind == expected) return true;
+
+            if (m_slot_errors.insert(slot).second)
+                Ir77RETURN<Ir77NotConfigured>(this, std::string{"Ir77PVCmdBuffer: draw skipped -- "} + field + " is buffer slot " + std::to_string(slot) +
+                                                        ", which holds " + SLOT_KIND_NAMES[static_cast<std::size_t>(kind)] + ", not " +
+                                                        SLOT_KIND_NAMES[static_cast<std::size_t>(expected)] + ".");
+            return false;
+        };
+
+        bool ok = check("pc.bones", item.bones, Ir77PVSlotKind::Bones);
+
+        if (mesh) {
+            ok = check("pc.user[0] (meshlets)", item.meshlet_slots[0], Ir77PVSlotKind::Meshlets) && ok;
+            ok = check("pc.user[1] (meshlet vertices)", item.meshlet_slots[1], Ir77PVSlotKind::MeshletVertices) && ok;
+            ok = check("pc.user[2] (meshlet triangles)", item.meshlet_slots[2], Ir77PVSlotKind::MeshletTriangles) && ok;
+            ok = check("pc.vertices", item.meshlet_slots[3], Ir77PVSlotKind::Vertices) && ok;
+            ok = check("pc.user[3] (draw records)", item.meshlet_slots[4], Ir77PVSlotKind::MeshDraws) && ok;
+        }
+
+        return ok;
+    }
+
     // One range, every stage -- the whole block each time
     void Push(VkCommandBuffer cmd, Ir77PVPushConstants const& push) const {
         VkPipelineLayout layout{VK_NULL_HANDLE};
@@ -1309,6 +1348,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     std::shared_ptr<IIr77PVLayout> m_layout{};
 
     std::shared_ptr<IIr77PVDescriptorSet> m_descriptor_set{};
+
+    std::set<std::uint32_t> m_slot_errors{};  // CheckItemSlots -- buffer slots already reported, so each is logged once
 
     std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT> m_frame_slots{};
 

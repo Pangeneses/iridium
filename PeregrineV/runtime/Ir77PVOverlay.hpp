@@ -64,7 +64,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
 
         DestroyExtentResources(device);
 
-        // the slot goes back to the table; it is reused only after the frames in flight
+        // the slot goes back to the table -- straight away: the device is idle
         if (m_descriptor_set && m_texture_slot != BINDLESS_NO_SLOT) m_descriptor_set->Release(BINDLESS_BINDING_TEXTURES, m_texture_slot);
 
         // extent-independent -- destroyed only here, never on resize
@@ -466,7 +466,7 @@ class Ir77PVOverlay : public Ir77Enlisted, public IIr77PVOverlay, public std::en
 
     // First call registers the slot; later ones (image grew / Resize) rewrite it in place -- safe, the device is idle on those paths
     std::shared_ptr<IIr77Return const> DefineTextureSlot() {
-        if (m_texture_slot == BINDLESS_NO_SLOT) return m_descriptor_set->RegisterTexture(m_image_view, m_sampler, m_texture_slot);
+        if (m_texture_slot == BINDLESS_NO_SLOT) return m_descriptor_set->RegisterTexture(m_image_view, m_sampler, Ir77PVSlotKind::Overlay, m_texture_slot);
 
         return m_descriptor_set->UpdateTexture(m_texture_slot, m_image_view, m_sampler);
     }

@@ -509,7 +509,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
             if (!blas.alive) continue;
 
             if (blas.structure != VK_NULL_HANDLE) m_destroy_structure(device, blas.structure, nullptr);
-            m_transfer->Bury({blas.storage});
+            m_transfer->Bury({.buffers = {blas.storage}});
 
             blas = Ir77PVBottomLevel{};
             blas.alive = false;
@@ -676,7 +676,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         vkDestroyFence(device, fence, nullptr);
         vkFreeCommandBuffers(device, pool, 1, &cmd);
 
-        m_transfer->Bury({scratch_buffer});
+        m_transfer->Bury({.buffers = {scratch_buffer}});
 
         if (waited != VK_SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: BLAS build submit failed.");
 
@@ -879,12 +879,12 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
 
         for (Ir77PVTopLevel& top : m_top) {
             if (top.structure != VK_NULL_HANDLE && device != VK_NULL_HANDLE && m_destroy_structure) m_destroy_structure(device, top.structure, nullptr);
-            if (m_transfer) m_transfer->Bury({top.storage});
+            if (m_transfer) m_transfer->Bury({.buffers = {top.storage}});
 
             top = Ir77PVTopLevel{};
         }
 
-        if (m_transfer) m_transfer->Bury({m_instance_buffer, m_frame_scratch});
+        if (m_transfer) m_transfer->Bury({.buffers = {m_instance_buffer, m_frame_scratch}});
 
         m_instance_buffer.reset();
         m_frame_scratch.reset();
@@ -908,7 +908,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
             if (!blas.alive) continue;  // released already
 
             if (blas.structure != VK_NULL_HANDLE && m_destroy_structure) m_destroy_structure(device, blas.structure, nullptr);
-            if (m_transfer) m_transfer->Bury({blas.storage});
+            if (m_transfer) m_transfer->Bury({.buffers = {blas.storage}});
         }
 
         m_bottom.clear();
@@ -919,7 +919,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         m_has_objects = false;
         m_objects_slot = BINDLESS_NO_SLOT;
 
-        // the TLAS slots back to the table
+        // the TLAS slots back to the table -- straight away: the device is idle
         for (std::uint32_t& slot : m_top_slots) {
             if (slot != BINDLESS_NO_SLOT && m_descriptor_set) m_descriptor_set->Release(BINDLESS_BINDING_ACCELERATION, slot);
             slot = BINDLESS_NO_SLOT;

@@ -1,37 +1,74 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #define IR77_STAGE_FRAGMENT
-#define IR77_RAY_SHADOWS
 #include "include/bindless.glsl"
 #include "include/field.glsl"
 #line 1
-// Orientation test -- a ramp rising toward +y, a tall bump at (+2, +2), a short bump at (-2, -2).
-// Top view must read like a graph: +x right, +y up.
+// Thomas cyclically symmetric attractor -- every particle integrates from where it was last frame
+
+// the velocity at point (x, y, z)
+vec3 Thomas(float x, float y, float z, float b) {
+    float dx = sin(y) - b * x;
+    float dy = sin(z) - b * y;
+    float dz = sin(x) - b * z;
+
+    return vec3(dx, dy, dz);
+}
 
 Ir77FieldPoint Field(Ir77FieldIn f) {
-    float x = f.coord.x;
-    float y = f.coord.y;
+    // sliders -> real values (0.5 = the middle of each range)
+    float b = 0.10 + (0.30 - 0.10) * f.params[0];     // damping: ~0.208 is the classic lattice; lower = wilder
+    float speed = 0.5 + (8.0 - 0.5) * f.params[1];    // how fast simulated time runs
+    float scale = 0.4 + (1.2 - 0.4) * f.params[2];    // attractor units -> world units
+    float opacity = 0.03 + (0.3 - 0.03) * f.params[3];  // particles add up where they overlap
 
-    // gentle ramp: higher toward +y
-    float ramp = 0.15 * y;
+    Ir77FieldPoint point = f.prev;  // where this particle was last frame
 
-    // tall bump at (+2, +2)
-    float tall_dx = x - 2.0;
-    float tall_dy = y - 2.0;
-    float tall = 1.5 * exp(-(tall_dx * tall_dx + tall_dy * tall_dy) / 0.5);
+    // world -> attractor
+    float x = point.position.x / scale;
+    float y = point.position.y / scale;
+    float z = point.position.z / scale;
 
-    // short bump at (-2, -2)
-    float short_dx = x + 2.0;
-    float short_dy = y + 2.0;
-    float short_bump = 0.5 * exp(-(short_dx * short_dx + short_dy * short_dy) / 0.5);
+    // does this particle need a new start?
+    bool first_frame = f.first;
+    bool broken = isnan(x) || isnan(y) || isnan(z);
+    bool escaped = (x * x + y * y + z * z) > 400.0;  // more than 20 units out
 
-    float height = ramp + tall + short_bump;
+    if (first_frame || broken || escaped) {
+        // a random point in the cube -4..4 on every axis
+        x = Ir77Random(f.id, 1u) * 8.0 - 4.0;
+        y = Ir77Random(f.id, 2u) * 8.0 - 4.0;
+        z = Ir77Random(f.id, 3u) * 8.0 - 4.0;
 
-    Ir77FieldPoint point;
-    point.position = vec3(x, height, -y);    // the convention: coord.y runs to -Z
-    point.size = 0.0;
-    point.color = vec4(0.7, 0.7, 0.7, 1.0);  // grey, for the lighting check
-    point.data = vec4(y, 0.0, 0.0, 0.0);     // colour map by y: blue at -y, red at +y
+        point.size = 0.008;
+    }
+
+    // this frame's time, split into 4 smaller steps
+    float frame_time = min(f.dt, 0.02);
+    float step = frame_time * speed / 4.0;
+
+    vec3 velocity = vec3(0.0, 0.0, 0.0);
+
+    for (int i = 0; i < 4; i++) {
+        velocity = Thomas(x, y, z, b);
+
+        x = x + velocity.x * step;
+        y = y + velocity.y * step;
+        z = z + velocity.z * step;
+    }
+
+    // attractor -> world
+    point.position = vec3(x * scale, y * scale, z * scale);
+
+    // colour = the direction of travel: red along x, green along y, blue along z
+    float length_of_velocity = length(velocity);
+    vec3 direction = vec3(0.0, 0.0, 0.0);
+    if (length_of_velocity > 0.0) direction = abs(velocity) / length_of_velocity;
+
+    vec3 colour = vec3(0.15, 0.15, 0.15) + direction * 0.85;
+
+    point.color = vec4(colour.x, colour.y, colour.z, opacity);
+    point.data = vec4(length_of_velocity, 0.0, 0.0, 0.0);  // data.x = speed, for the colormap shading
 
     return point;
 }

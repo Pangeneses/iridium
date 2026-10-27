@@ -349,7 +349,7 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         if (!vertex) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: scene channel empty.");
 
         if (registered == BINDLESS_NO_SLOT) {
-            auto const result = RegisterBuffer(vertex, registered);
+            auto const result = RegisterBuffer(vertex, Ir77PVSlotKind::Vertices, registered);
             if (result->ID() != GUIDIr77OperationSucceeded) return result;
         }
 
@@ -379,8 +379,8 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         Ir77PVSceneSlot* const scene = FindScene(scene_id);
         if (!scene) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown scene.");
 
-        ReleaseSlots(BINDLESS_BINDING_BUFFERS, {scene->vertex_slot, scene->vertex_skinned_slot});
-        Bury({scene->vertex, scene->index, scene->vertex_skinned, scene->index_skinned, scene->indirect});
+        Bury({.buffers = {scene->vertex, scene->index, scene->vertex_skinned, scene->index_skinned, scene->indirect},
+              .slots = {{BINDLESS_BINDING_BUFFERS, scene->vertex_slot}, {BINDLESS_BINDING_BUFFERS, scene->vertex_skinned_slot}}});
         *scene = Ir77PVSceneSlot{};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -604,11 +604,13 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         // 8. bindless slots -- order matches Ir77PVMeshletMesh::slots / Ir77PVDrawItem::meshlet_slots
         std::array<std::shared_ptr<IIr77PVBuffer>, MESHLET_SLOT_COUNT> const slot_buffers{mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles,
                                                                                           mesh.vertices, mesh.draws};
+        std::array<Ir77PVSlotKind, MESHLET_SLOT_COUNT> const slot_kinds{Ir77PVSlotKind::Meshlets, Ir77PVSlotKind::MeshletVertices,
+                                                                        Ir77PVSlotKind::MeshletTriangles, Ir77PVSlotKind::Vertices, Ir77PVSlotKind::MeshDraws};
 
         for (std::size_t i = 0; i < slot_buffers.size(); i++) {
-            auto const result = RegisterBuffer(slot_buffers[i], mesh.slots[i]);
+            auto const result = RegisterBuffer(slot_buffers[i], slot_kinds[i], mesh.slots[i]);
             if (result->ID() != GUIDIr77OperationSucceeded) {
-                ReleaseSlots(BINDLESS_BINDING_BUFFERS, std::vector<std::uint32_t>(mesh.slots.begin(), mesh.slots.end()));
+                Bury({.slots = MeshletSlots(mesh)});
                 return result;
             }
         }
@@ -733,8 +735,8 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         if (!slot) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: unknown meshlet mesh.");
 
         Ir77PVMeshletMesh const& mesh = slot->mesh;
-        ReleaseSlots(BINDLESS_BINDING_BUFFERS, std::vector<std::uint32_t>(mesh.slots.begin(), mesh.slots.end()));
-        Bury({mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.vertices, mesh.draws, mesh.indirect, slot->ray_index});
+        Bury({.buffers = {mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.vertices, mesh.draws, mesh.indirect, slot->ray_index},
+              .slots = MeshletSlots(mesh)});
         *slot = Ir77PVMeshletSlot{};
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -856,18 +858,22 @@ class Ir77PVGeometry : public Ir77Enlisted, public IIr77PVGeometry, public std::
         return m_transfer->Upload(entries, wait);
     }
 
-    std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, std::uint32_t& slot) {
+    std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, Ir77PVSlotKind const& kind, std::uint32_t& slot) {
         if (!m_transfer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVGeometry: transfer not set.");
 
-        return m_transfer->RegisterBuffer(buffer, slot);
+        return m_transfer->RegisterBuffer(buffer, kind, slot);
     }
 
-    void ReleaseSlots(std::uint32_t const& binding, std::vector<std::uint32_t> const& slots) {
-        if (m_transfer) m_transfer->ReleaseSlots(binding, slots);
+    void Bury(Ir77PVGrave const& grave) {
+        if (m_transfer) m_transfer->Bury(grave);
     }
 
-    void Bury(std::vector<std::shared_ptr<IIr77PVBuffer>> const& buffers) {
-        if (m_transfer) m_transfer->Bury(buffers);
+    // A meshlet mesh's five buffer slots, as the graveyard takes them
+    std::vector<Ir77PVSlot> MeshletSlots(Ir77PVMeshletMesh const& mesh) const {
+        std::vector<Ir77PVSlot> slots{};
+        for (std::uint32_t const slot : mesh.slots) slots.push_back({BINDLESS_BINDING_BUFFERS, slot});
+
+        return slots;
     }
 
    private:

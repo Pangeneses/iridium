@@ -40,7 +40,7 @@ typedef struct IIr77PVMaterial : virtual public IIr77Enlisted {
     // Uploads -- the material rows go up through it
     virtual std::shared_ptr<IIr77Return const> SetTransfer(std::shared_ptr<IIr77PVTransfer> transfer) = 0;
 
-    // The device's material table (MATERIAL_CAPACITY rows) -- UploadMaterials appends rows into it
+    // The device's material table (MATERIAL_CAPACITY rows) -- UploadMaterials writes rows into it
     virtual std::shared_ptr<IIr77Return const> SetMaterialTable(std::shared_ptr<IIr77PVBuffer> material_table) = 0;
 
     // Texture slots of the placeholders -- what a material row gets where no texture is given
@@ -61,6 +61,10 @@ typedef struct IIr77PVMaterial : virtual public IIr77Enlisted {
     // Bindless texture slot of a texture -- what material rows and shaders use
     virtual std::shared_ptr<IIr77Return const> GetTextureSlot(std::uint32_t const& texture_id, std::uint32_t& slot) = 0;
 
+    // The texture and its slot into Transfer's graveyard -- freed once no frame in flight can sample it. The id is free for the next texture
+    // now. Destroy the materials that use it first (or with it).
+    virtual std::shared_ptr<IIr77Return const> DestroyTexture(std::uint32_t const& texture_id) = 0;
+
     // ---- materials -- rows in the device's material table: constants + 5 texture slots ---------------------------------------------------
 
     virtual std::shared_ptr<IIr77Return const> CreateMaterial(Ir77PVMaterialConstants const& constants, std::uint32_t& material_id) = 0;
@@ -71,12 +75,17 @@ typedef struct IIr77PVMaterial : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> UploadMaterials(std::vector<Ir77PVMaterialConstants> const& constants,
                                                                std::vector<std::uint32_t>& material_ids) = 0;
 
-    // One staging copy for every new row. Rows are appended -- existing rows (which frames in flight may be reading) are never rewritten.
+    // One staging copy for every new row. Rows come from the free list first (DestroyMaterials), then the unused end of the table -- a row
+    // is only ever rewritten once no frame in flight can read it.
     virtual std::shared_ptr<IIr77Return const> UploadMaterials(std::vector<Ir77PVMaterialConstants> const& constants,
                                                                std::vector<Ir77PVMaterialTextures> const& textures,
                                                                std::vector<std::uint32_t>& material_ids) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetMaterial(std::uint32_t const& material_id, Ir77PVMaterialData& material) = 0;
+
+    // The rows are gone now (GetMaterial fails) and back on the free list once no frame in flight can read them -- through Transfer's
+    // graveyard. Remove the draws using them first.
+    virtual std::shared_ptr<IIr77Return const> DestroyMaterials(std::vector<std::uint32_t> const& material_ids) = 0;
 
     virtual ~IIr77PVMaterial() = default;
 }* pIIr77PVMaterial;
