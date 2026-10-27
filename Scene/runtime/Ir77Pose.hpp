@@ -61,7 +61,11 @@ namespace NSIr77Scene {
 //
 //   load:      ParseAsset(path) -> components (GetMeshes / GetCameras / ...)
 //   playback:  PlayAnimation / PlayAllAnimations / StopAnimation / StopAllAnimations
+//   placing:   SetRootTransform (the whole file in the world), SetNodeTransform (one node's rest TRS), GetNodeCount / GetNode
 //   per frame: Update(dt) -> WriteInstanceTransforms / WritePackedBones
+//
+// The root transform sits above the file's root nodes, so everything the file draws moves with it -- instances and skinned meshes alike (a
+// joint palette is relative to its mesh node, both under the root). The file's lights and cameras were placed at load and stay there.
 // =============================================================================================================================================
 class Ir77Pose : public Ir77Enlisted, public IIr77Pose, public std::enable_shared_from_this<Ir77Pose> {
    private:
@@ -171,6 +175,7 @@ class Ir77Pose : public Ir77Enlisted, public IIr77Pose, public std::enable_share
         m_rest_scales.clear();
         m_players.clear();
         m_pose_dirty = false;
+        m_root = glm::mat4(1.0f);
 
         if (path.empty()) return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77Scene: empty scene.");
 
@@ -357,6 +362,51 @@ class Ir77Pose : public Ir77Enlisted, public IIr77Pose, public std::enable_share
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // -------------------------------------------------------------------------------------------------------------------------------------
+    // placing
+    // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // Where the whole file sits in the world -- above its root nodes. Takes effect on the next Update.
+    std::shared_ptr<IIr77Return const> SetRootTransform(glm::mat4 const& root) {
+        m_root = root;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // One node's rest TRS (its parent's space) -- where it sits when no clip drives it. A clip that drives the node still overrides the
+    // channels it animates. Takes effect on the next Update.
+    std::shared_ptr<IIr77Return const> SetNodeTransform(std::uint32_t const& node, glm::vec3 const& translation, glm::quat const& rotation, glm::vec3 const& scale) {
+        if (node >= m_nodes.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: no such node.");
+
+        m_rest_translations[node] = translation;
+        m_rest_rotations[node] = glm::normalize(rotation);
+        m_rest_scales[node] = scale;
+
+        m_pose_dirty = true;  // the next Update copies the rest pose into the nodes even with nothing playing
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetNodeCount(std::uint32_t& count) {
+        count = static_cast<std::uint32_t>(m_nodes.size());
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // One node as the file names it, its parent (UINT32_MAX = a root) and its rest TRS
+    std::shared_ptr<IIr77Return const> GetNode(std::uint32_t const& node, std::string& name, std::uint32_t& parent, glm::vec3& translation, glm::quat& rotation,
+                                               glm::vec3& scale) {
+        if (node >= m_nodes.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: no such node.");
+
+        name = std::string{m_asset.nodes[node].name};
+        parent = m_nodes[node].parent;
+        translation = m_rest_translations[node];
+        rotation = m_rest_rotations[node];
+        scale = m_rest_scales[node];
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // Once per frame: advances animation, rebuilds every world matrix, then every joint palette. Afterwards the frame's results are read out
     // (WriteInstanceTransforms, WritePackedBones).
     std::shared_ptr<IIr77Return const> Update(float const& dt) {
@@ -517,14 +567,15 @@ class Ir77Pose : public Ir77Enlisted, public IIr77Pose, public std::enable_share
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Rebuilds every world matrix from the local TRS, parents first. Animation writes TRS before this runs.
+    // Rebuilds every world matrix from the local TRS, parents first -- the root transform above the file's roots. Animation writes TRS before
+    // this runs.
     std::shared_ptr<IIr77Return const> UpdateWorld() {
         for (std::uint32_t const index : m_order) {
             Ir77SceneNode& node = m_nodes[index];
 
             glm::mat4 const local = glm::translate(glm::mat4(1.0f), node.translation) * glm::mat4_cast(node.rotation) * glm::scale(glm::mat4(1.0f), node.scale);
 
-            node.world = node.parent == UINT32_MAX ? local : m_nodes[node.parent].world * local;
+            node.world = node.parent == UINT32_MAX ? m_root * local : m_nodes[node.parent].world * local;
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -656,6 +707,8 @@ class Ir77Pose : public Ir77Enlisted, public IIr77Pose, public std::enable_share
     std::vector<Ir77ScenePlayer> m_players{};  // everything currently playing, in start order
 
     bool m_pose_dirty{false};  // nodes hold an animated pose that a pass with no players must reset
+
+    glm::mat4 m_root{1.0f};  // the whole file's place in the world -- SetRootTransform
 
     std::vector<std::uint32_t> m_bone_bases{};  // WritePackedBones' scratch
 

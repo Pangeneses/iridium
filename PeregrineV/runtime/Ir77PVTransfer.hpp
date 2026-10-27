@@ -233,16 +233,25 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // One Static buffer copy -> a bindless buffer slot holding kind
-    std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, Ir77PVSlotKind const& kind, std::uint32_t& slot) {
+    // One buffer copy (copy: a Dynamic buffer's frame in flight; 0 for Static) -> a bindless buffer slot holding kind. offset / range pick a
+    // piece of it (one scene's range of a geometry pool; offset a multiple of the device's storage-buffer offset alignment); the default is
+    // the whole copy.
+    std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, Ir77PVSlotKind const& kind, std::uint32_t& slot,
+                                                      VkDeviceSize const& offset = 0, VkDeviceSize const& range = VK_WHOLE_SIZE, std::uint32_t const& copy = 0) {
         if (!buffer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: no buffer.");
 
         if (!m_descriptor_set) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: bindless table not set.");
 
         VkDescriptorBufferInfo info{};
 
-        auto const result = buffer->GetBufferInfo(0, &info);
+        auto const result = buffer->GetBufferInfo(copy, &info);
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+        if (offset >= info.range || (range != VK_WHOLE_SIZE && offset + range > info.range))
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: slot range outside the buffer.");
+
+        info.offset += offset;
+        info.range = range == VK_WHOLE_SIZE ? info.range - offset : range;
 
         return m_descriptor_set->RegisterBuffer(info.buffer, info.offset, info.range, kind, slot);
     }

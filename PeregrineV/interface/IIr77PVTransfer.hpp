@@ -56,8 +56,12 @@ typedef struct IIr77PVTransfer : virtual public IIr77Enlisted {
     // have passed, then released together. The only way anything is freed at runtime. Empty entries are skipped.
     virtual std::shared_ptr<IIr77Return const> Bury(Ir77PVGrave const& grave) = 0;
 
-    // One Static buffer copy -> a bindless buffer slot holding kind
-    virtual std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, Ir77PVSlotKind const& kind, std::uint32_t& slot) = 0;
+    // One buffer copy (copy: a Dynamic buffer's frame in flight; 0 for Static) -> a bindless buffer slot holding kind. offset / range pick a
+    // piece of it (one scene's range of a geometry pool; offset a multiple of the device's storage-buffer offset alignment); the default is
+    // the whole copy.
+    virtual std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, Ir77PVSlotKind const& kind, std::uint32_t& slot,
+                                                              VkDeviceSize const& offset = 0, VkDeviceSize const& range = VK_WHOLE_SIZE,
+                                                              std::uint32_t const& copy = 0) = 0;
 
     // ---- storage buffers -- one copy shared by every frame in flight (set 0 binding 1) -------------------------------------------------------
 

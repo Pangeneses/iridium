@@ -77,6 +77,9 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     // built this frame.
     virtual std::shared_ptr<IIr77Return const> SetFrameTables(std::vector<std::shared_ptr<IIr77PVBuffer>> const& frame_tables) = 0;
 
+    // [frame in flight] -- Geometry's command pool slots; every frame table names its frame's (the cull pass reads it)
+    virtual std::shared_ptr<IIr77Return const> SetCommandSlots(std::array<std::uint32_t, MAX_FRAMES_IN_FLIGHT> const& slots) = 0;
+
     // One command buffer per window. After the wiring and the pipeline cache.
     virtual std::shared_ptr<IIr77Return const> CreateCommandBuffers() = 0;
 
@@ -92,6 +95,9 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
 
     // Replaces the once-a-frame compute list (skinning, the field) -- recorded by the first window Draw records. Persists until replaced.
     virtual std::shared_ptr<IIr77Return const> SetFrameDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
+
+    // Replaces the per-view compute list (the cull pass) -- every window, once per view it draws. Persists until replaced.
+    virtual std::shared_ptr<IIr77Return const> SetViewDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
 
     // Replaces a window's pass list. At least one pass must target the swapchain.
     virtual std::shared_ptr<IIr77Return const> SetPassList(std::size_t const& window, std::vector<Ir77PVPassDesc> const& passes) = 0;

@@ -242,6 +242,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         m_geometry->SetTransfer(m_transfer);
         m_geometry->SetMaterials(m_materials);
         m_geometry->SetPipelineCache(m_pipeline_caches.at(device_id));
+        if (Failed(m_geometry->CreateGeometry(), result)) return result;
 
         // Acceleration -- ray-query devices only: BLASes over Geometry's scenes, a TLAS per frame, buffers through Transfer
         bool ray_query{false};
@@ -294,6 +295,10 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         m_paint->SetFrameSlots(m_frame_slots.at(m_current_device));
         m_paint->SetFrameBuffers(m_buffers_frame.at(m_current_device));
         m_paint->SetFrameTables(m_frame_tables.at(m_current_device));
+
+        std::array<std::uint32_t, MAX_FRAMES_IN_FLIGHT> command_slots{};
+        m_geometry->GetCommandSlots(command_slots);
+        m_paint->SetCommandSlots(command_slots);
         m_paint->SetOverlays(overlays);
         if (m_acceleration) m_paint->SetAcceleration(m_acceleration);  // the frame's first recorded window builds the TLAS after its Compute pass
 

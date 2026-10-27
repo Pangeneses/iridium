@@ -55,6 +55,28 @@ static constexpr std::size_t MESHLET_MAX_TRIANGLES = 124;
 // 0 = pure locality, higher = tighter normal cones for backface culling
 static constexpr float MESHLET_CONE_WEIGHT = 0.25f;
 
+// geometry pools -- every scene's vertices and indices live in one device buffer per stream (Ir77PVGeometryPool), each scene in its own range
+// (first fit), the rest free for whatever loads later. Fixed size: an upload that doesn't fit fails and says which pool. Made on first use.
+static constexpr std::uint32_t GEOMETRY_VERTEX_CAPACITY = 2u << 20;            // Ir77PVVertex (48 bytes) -- 96 MB
+static constexpr std::uint32_t GEOMETRY_INDEX_CAPACITY = 8u << 20;             // uint32 -- 32 MB
+static constexpr std::uint32_t GEOMETRY_SKINNED_VERTEX_CAPACITY = 512u << 10;  // Ir77PVVertexSkinned (80 bytes) -- 40 MB
+static constexpr std::uint32_t GEOMETRY_SKINNED_INDEX_CAPACITY = 2u << 20;     // uint32 -- 8 MB
+
+// the draw commands -- host-written, one copy per frame in flight, so objects hide / show / resize per frame without touching the geometry.
+// Beside the indexed ones, device-local, the material row of each (same index) -- what the vertex shaders read through gl_DrawID -- and
+// its object-space bounding sphere, what the cull pass tests.
+
+// GPU culling (cull.comp) -- per view, every opaque / shadow command's instances are tested against the view and the survivors compacted, one
+// instance per command, into one list per bin (a pipeline and its vertex stream); each list draws with one vkCmdDrawIndexedIndirectCount.
+static constexpr std::uint32_t GEOMETRY_CULL_CAPACITY = 64u << 10;  // culled commands per view, every bin together
+static constexpr std::uint32_t GEOMETRY_CULL_BINS = 64;             // bins -- pipelines x streams x (opaque, shadow)
+static constexpr std::uint32_t GEOMETRY_COMMAND_CAPACITY = 64u << 10;       // VkDrawIndexedIndirectCommand (20 bytes) -- 1.25 MB a copy
+static constexpr std::uint32_t GEOMETRY_MESH_COMMAND_CAPACITY = 64u << 10;  // VkDrawMeshTasksIndirectCommandEXT (12 bytes) -- 0.75 MB a copy
+
+// vertex ranges start on a multiple of this -- 16 x 48 and 16 x 80 bytes are both multiples of 256, the largest storage-buffer offset
+// alignment Vulkan allows, so a range can always be its own bindless slot (compute skinning, the mesh path)
+static constexpr std::uint32_t GEOMETRY_VERTEX_ALIGN = 16;
+
 /************************************************************************************************************************************************************************/
 /********************************************************************** SYSTEM ID'S
  * ********************************************************************************/
@@ -132,7 +154,11 @@ enum class Ir77PVSlotKind : std::uint8_t {
     MeshletVertices,
     MeshletTriangles,
     MeshDraws,
-    Storage,  // CreateStorageBuffer -- whatever the caller puts in it
+    CommandMaterials,  // Geometry's -- the material row of every command in the command pool (or of a culled list), same index
+    CommandBounds,     // Geometry's -- the object-space bounding sphere of every command in the command pool, same index
+    DrawCommands,      // Geometry's -- a frame's copy of the command pool, or the cull pass's compacted lists
+    DrawCounts,        // Geometry's -- how many commands each culled list holds this frame
+    Storage,           // CreateStorageBuffer -- whatever the caller puts in it
     // binding 0 -- sampled images
     Texture,
     ShadowMap,
@@ -145,9 +171,10 @@ enum class Ir77PVSlotKind : std::uint8_t {
 };
 
 // For the log -- same order as Ir77PVSlotKind
-inline constexpr std::array<char const*, 20> SLOT_KIND_NAMES{"none",          "frame table",      "camera",         "lights",      "instances",
+inline constexpr std::array<char const*, 24> SLOT_KIND_NAMES{"none",          "frame table",      "camera",         "lights",      "instances",
                                                              "shadow matrices", "bones",          "material table", "vertices",    "meshlets",
-                                                             "meshlet vertices", "meshlet triangles", "mesh draws",  "storage",     "texture",
+                                                             "meshlet vertices", "meshlet triangles", "mesh draws",  "command materials",
+                                                             "command bounds", "draw commands",   "draw counts",    "storage",     "texture",
                                                              "shadow map",    "canvas",           "overlay",        "canvas image", "top level"};
 
 // One slot -- which binding, which element
@@ -196,9 +223,10 @@ struct Ir77PVFrameTable {
     std::uint32_t shadow_map{BINDLESS_PLACEHOLDER_TEXTURE};  // texture slot: shadow map
     std::uint32_t tlas{BINDLESS_NO_SLOT};                    // acceleration-structure slot (binding 3): the TLAS built this frame; NO_SLOT = none
     std::uint32_t ray_objects{BINDLESS_NO_SLOT};             // buffer slot: Ir77PVRayObject[] -- what a ray hit is (custom index = row); NO_SLOT = none
+    std::uint32_t commands{BINDLESS_NO_SLOT};                // buffer slot: this frame's copy of Geometry's command pool -- what the cull pass reads
 };
 
-static_assert(sizeof(Ir77PVFrameTable) == 36, "Ir77PVFrameTable must match Ir77FrameTable in bindless.glsl");
+static_assert(sizeof(Ir77PVFrameTable) == 40, "Ir77PVFrameTable must match Ir77FrameTable in bindless.glsl");
 
 static_assert(sizeof(Ir77PVFrameTable) <= VIEW_STRIDE, "a view's frame table must fit its stride");
 
@@ -600,6 +628,7 @@ struct Ir77PVSceneUpload {
     std::vector<Ir77PVVertexSkinned> vertices_skinned{};
     std::vector<std::uint32_t> indices_skinned{};
     std::vector<VkDrawIndexedIndirectCommand> indirect_commands{};
+    std::vector<std::uint32_t> command_materials{};   // vertex path: material row per indirect command (empty = row 0 for all)
     std::vector<std::uint32_t> triangle_materials{};  // mesh path: material row per triangle of `indices` (indices.size() / 3)
 };
 
@@ -609,8 +638,7 @@ struct Ir77PVSingleMesh {
 };
 
 // Uploaded mesh: device-local vertex + index buffers (single-mesh path, used by the testbed and any
-// one-off load). Scene loading uses UploadScene instead -- one shared buffer per channel, not
-// one buffer pair per mesh.
+// one-off load). Scene loading uses UploadScene instead -- ranges of the geometry pools, not one buffer pair per mesh.
 struct Ir77PVSingleMeshBuffer {
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
@@ -638,21 +666,36 @@ struct Ir77PVMeshletMesh {
     std::uint32_t meshlet_count{0};
 };
 
-// vertex path scene -- one buffer per channel for every stacked object
+// The geometry pools -- see GEOMETRY_*_CAPACITY. Vertices .. SkinnedIndices are device-local (uploaded once); Commands / MeshCommands are the
+// draw commands, host-written per frame in flight.
+enum class Ir77PVGeometryPool : std::uint8_t { Vertices, Indices, SkinnedVertices, SkinnedIndices, Commands, MeshCommands };
+
+static constexpr std::size_t GEOMETRY_POOL_COUNT = 6;
+
+// A scene's piece of one pool -- elements [first, first + count). count 0 = it has nothing there.
+struct Ir77PVGeometryRange {
+    std::uint32_t first{0};
+    std::uint32_t count{0};
+};
+
+// vertex path scene -- its stacked objects in its ranges of the geometry pools; vertex / index (or the skinned pair) and indirect are the pool
+// buffers. commands are rebased into the pools (firstIndex past the index range's start, vertexOffset past the vertex range's) and live in
+// its range of the command pool.
 struct Ir77PVSceneSlot {
+    std::array<Ir77PVGeometryRange, GEOMETRY_POOL_COUNT> ranges{};  // [Ir77PVGeometryPool]
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
     std::shared_ptr<IIr77PVBuffer> vertex_skinned{};
     std::shared_ptr<IIr77PVBuffer> index_skinned{};
-    std::shared_ptr<IIr77PVBuffer> indirect{};             // Dynamic -- rewritten by Tick when dirty
+    std::shared_ptr<IIr77PVBuffer> indirect{};             // the command pool -- its range rewritten by Tick when dirty
     std::vector<VkDrawIndexedIndirectCommand> commands{};  // live values -- instanceCount 0 = hidden
     std::vector<std::uint32_t> instance_counts{};          // what a visible command draws
     std::vector<std::uint8_t> visible{};
     std::uint32_t dirty{0};  // frame copies still to rewrite
     bool alive{false};
-    std::uint32_t vertex_slot{BINDLESS_NO_SLOT};          // GetSceneVertexSlot -- the vertex buffer as a storage buffer
+    std::uint32_t vertex_slot{BINDLESS_NO_SLOT};          // GetSceneVertexSlot -- its vertex range as a storage buffer (indices local to it)
     std::uint32_t vertex_skinned_slot{BINDLESS_NO_SLOT};  // the same for the skinned channel
-    std::uint32_t vertex_count{0};                        // vertices in `vertex` -- the BLAS builds' upper bound
+    std::uint32_t vertex_count{0};                        // where its vertex range ends in `vertex` -- the BLAS builds' upper bound
 };
 
 // What Acceleration reads out of a vertex-path scene (Ir77PVGeometry::GetSceneGeometry) -- the buffers it builds from and the commands
@@ -673,11 +716,12 @@ struct Ir77PVMeshletSlot {
     std::vector<std::uint32_t> first_record{};                  // per scene command, plus one end entry
     std::uint32_t dirty{0};
     bool alive{false};
-    // ray queries -- what Acceleration builds the static stream's BLASes from (GetMeshletGeometry). ray_index is the scene's index buffer,
-    // kept only on ray-query devices; the vertices are mesh.vertices.
+    std::array<Ir77PVGeometryRange, GEOMETRY_POOL_COUNT> ranges{};  // its vertices (mesh.vertices is the pool, its slot just the range); ray indices
+    // ray queries -- what Acceleration builds the static stream's BLASes from (GetMeshletGeometry). ray_index is the index pool, the scene's
+    // indices kept in it only on ray-query devices; the vertices are mesh.vertices.
     std::shared_ptr<IIr77PVBuffer> ray_index{};
-    std::uint32_t vertex_count{0};
-    std::vector<VkDrawIndexedIndirectCommand> scene_commands{};  // the upload's indirect commands -- one BLAS each
+    std::uint32_t vertex_count{0};                               // where its vertex range ends in the pool
+    std::vector<VkDrawIndexedIndirectCommand> scene_commands{};  // the upload's indirect commands, rebased into the pools -- one BLAS each
     std::vector<std::uint32_t> instance_counts{};                // per scene command
 };
 
@@ -729,10 +773,29 @@ struct Ir77PVDrawItem {
     // indirect -- VkDrawIndexedIndirectCommand, or VkDrawMeshTasksIndirectCommandEXT for Mesh
     std::shared_ptr<IIr77PVBuffer> indirect{};
     VkDeviceSize indirect_offset{0};
-    std::uint32_t indirect_count{0};
+    std::uint32_t indirect_count{0};  // with count: the most it draws
+
+    // GPU-written draw count (a culled list) -- the draw reads how many commands from here, up to indirect_count. Empty = indirect_count.
+    std::shared_ptr<IIr77PVBuffer> count{};
+    VkDeviceSize count_offset{0};
 
     std::array<float, 16> model{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};  // -> pc.model
     std::uint32_t light_index{0};                                                                                                 // shadow pass -> pc.user[0]
+};
+
+// A cull bin's commands -- [first_command, first_command + command_count) of one vertex-path scene. test: frustum-cull them against the view
+// (false: every instance not hidden passes -- shadow casters, animated geometry whose bind-pose bounds don't hold).
+struct Ir77PVCullRun {
+    std::uint32_t scene{0};
+    std::uint32_t first_command{0};
+    std::uint32_t command_count{0};
+    bool test{true};
+};
+
+// One bin -- one culled list per view, drawn by one pipeline from one vertex stream. first_view_only: listed in view 0 only (the shadow pass).
+struct Ir77PVCullBin {
+    std::vector<Ir77PVCullRun> runs{};
+    bool first_view_only{false};
 };
 
 // One compute dispatch -- the Compute pass records the list in order, each followed by a barrier, so a dispatch sees the ones before it and
@@ -827,11 +890,13 @@ struct Ir77PVFrameAsset {
     std::vector<glm::mat4> bones{};       // bone_count joint matrices
 };
 
-// One window in a frame -- its cameras, and draws the assets don't make (a field), appended after theirs in every view.
-// cameras: one per view, 1 .. MAX_VIEWS. One fills the window; 2 to 4 tile it 2 x 2, left to right then top to bottom -- every cell keeps the
-// window's aspect, so each camera is built as if it had the whole window.
+// One window in a frame -- its views, and draws the assets don't make (a field), appended after theirs in every view.
+// cameras: one per view, 1 .. MAX_VIEWS. areas: where each view draws -- x, y, width, height as fractions of the window, one per camera,
+// anywhere (overlapping is fine, later views draw over earlier ones); outside every area is the clear color. Each camera's aspect should be
+// its area's. Empty areas -> one camera fills the window, 2 to 4 tile it 2 x 2 (left to right, then top to bottom).
 struct Ir77PVFrameWindow {
     std::vector<Ir77PVCamera> cameras{};
+    std::vector<glm::vec4> areas{};
     std::vector<Ir77PVDrawItem> opaque{};
     std::vector<Ir77PVDrawItem> shadow{};
     std::vector<Ir77PVDrawItem> transparent{};

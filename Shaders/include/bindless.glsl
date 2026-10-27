@@ -72,6 +72,7 @@ struct Ir77FrameTable {
     uint shadow_map;       // texture slot
     uint tlas;             // acceleration-structure slot (binding 3, include/raytrace.glsl): the TLAS built this frame; 0xFFFFFFFF = none
     uint ray_objects;      // buffer slot: Ir77RayObject[] (include/raytrace.glsl) -- row = a hit's custom index; 0xFFFFFFFF = none
+    uint commands;         // buffer slot: this frame's copy of Geometry's command pool (VkDrawIndexedIndirectCommand[]) -- what cull.comp reads
 };
 IR77_BUFFER(ir77_frame_tables, Ir77FrameTable);
 #define IR77_FRAME ir77_frame_tables[pc.frame].data[0]

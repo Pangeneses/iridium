@@ -1,0 +1,119 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+
+#include "include/bindless.glsl"
+
+// =============================================================================================================================================
+// cull.comp -- GPU culling, once per view in every window's Compute pass. One thread per job -- one command of a cull bin. Each of the
+// command's instances is tested against the view (its object-space sphere through its model matrix); a survivor becomes one command of its
+// own (instanceCount 1, firstInstance = its slot) in the bin's list for this view, its material row beside it at the same place, and the
+// bin's count goes up by one. Each list is drawn with one vkCmdDrawIndexedIndirectCount -- the vertex shaders read the material row through
+// pc.user[5] + gl_DrawID, as they do for any indexed draw.
+//
+//   pc.mode    = 0: zero this view's counts (a dispatch of its own, first), 1: cull
+//   pc.user[0] = jobs              uvec4 per job: x = command (in the command pool), y = bin | flags << 24 (1 = test, 2 = view 0 only),
+//                                  z = the bin's first place in a view's lists, w = how many places the bin has
+//   pc.user[1] = job count
+//   pc.user[2] = command bounds    vec4 per command: object-space sphere centre xyz, radius w (< 0 = never culled)
+//   pc.user[3] = command materials uint per command
+//   pc.user[4] = culled commands   per view: CULL_CAPACITY places, every bin's list in its own run
+//   pc.user[5] = culled materials  the same places
+//   pc.user[6] = counts            per view: CULL_BINS
+//   pc.user[7] = view
+//   IR77_FRAME.commands = this frame's command pool (instanceCount 0 = hidden); IR77_CAMERA = the view's camera; IR77_MODEL = the instances
+// =============================================================================================================================================
+
+layout(local_size_x = 64) in;
+
+// must match GEOMETRY_CULL_CAPACITY / GEOMETRY_CULL_BINS in Ir77PVTypes.hpp
+const uint CULL_CAPACITY = 65536u;
+const uint CULL_BINS = 64u;
+
+const uint FLAG_TEST = 1u;
+const uint FLAG_FIRST_VIEW_ONLY = 2u;
+
+struct DrawCommand {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+};
+
+IR77_BUFFER(ir77_cull_jobs, uvec4);
+IR77_BUFFER(ir77_cull_source, DrawCommand);
+IR77_BUFFER(ir77_cull_bounds, vec4);
+IR77_BUFFER(ir77_cull_rows, uint);
+IR77_BUFFER_RW(ir77_cull_commands, DrawCommand);
+IR77_BUFFER_RW(ir77_cull_materials, uint);
+IR77_BUFFER_RW(ir77_cull_counts, uint);
+
+// Gribb / Hartmann: the clip-space planes out of view_proj's rows. Depth runs 0 .. w either way round (reversed-Z included), so near / far
+// are z >= 0 and z <= w.
+bool Visible(vec3 center, float radius, mat4 view_proj) {
+    vec4 r0 = vec4(view_proj[0][0], view_proj[1][0], view_proj[2][0], view_proj[3][0]);
+    vec4 r1 = vec4(view_proj[0][1], view_proj[1][1], view_proj[2][1], view_proj[3][1]);
+    vec4 r2 = vec4(view_proj[0][2], view_proj[1][2], view_proj[2][2], view_proj[3][2]);
+    vec4 r3 = vec4(view_proj[0][3], view_proj[1][3], view_proj[2][3], view_proj[3][3]);
+
+    vec4 planes[6] = vec4[6](r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2);
+
+    for (int i = 0; i < 6; i++) {
+        vec4 plane = planes[i] / length(planes[i].xyz);
+        if (dot(plane.xyz, center) + plane.w < -radius) return false;
+    }
+
+    return true;
+}
+
+void main() {
+    uint view = pc.user[7];
+    uint index = gl_GlobalInvocationID.x;
+
+    if (pc.mode == 0u) {
+        if (index < CULL_BINS) ir77_cull_counts[pc.user[6]].data[view * CULL_BINS + index] = 0u;
+        return;
+    }
+
+    if (index >= pc.user[1]) return;
+
+    uvec4 job = ir77_cull_jobs[pc.user[0]].data[index];
+
+    uint bin = job.y & 0xFFFFFFu;
+    uint flags = job.y >> 24;
+
+    if ((flags & FLAG_FIRST_VIEW_ONLY) != 0u && view != 0u) return;
+
+    DrawCommand command = ir77_cull_source[IR77_FRAME.commands].data[job.x];
+    if (command.instance_count == 0u || command.index_count == 0u) return;
+
+    vec4 sphere = ir77_cull_bounds[pc.user[2]].data[job.x];
+    uint row = ir77_cull_rows[pc.user[3]].data[job.x];
+
+    bool test = (flags & FLAG_TEST) != 0u && sphere.w >= 0.0;
+    mat4 view_proj = IR77_CAMERA.view_proj;
+
+    for (uint k = 0u; k < command.instance_count; k++) {
+        uint slot = command.first_instance + k;
+
+        if (test) {
+            mat4 model = IR77_MODEL(slot);
+            vec3 center = (model * vec4(sphere.xyz, 1.0)).xyz;
+            float scale = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
+
+            if (!Visible(center, sphere.w * scale, view_proj)) continue;
+        }
+
+        uint place = atomicAdd(ir77_cull_counts[pc.user[6]].data[view * CULL_BINS + bin], 1u);
+        if (place >= job.w) continue;  // the bin is full -- the draw's max count stops at job.w too
+
+        uint at = view * CULL_CAPACITY + job.z + place;
+
+        DrawCommand culled = command;
+        culled.instance_count = 1u;
+        culled.first_instance = slot;
+
+        ir77_cull_commands[pc.user[4]].data[at] = culled;
+        ir77_cull_materials[pc.user[5]].data[at] = row;
+    }
+}

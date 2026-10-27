@@ -75,6 +75,10 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     // The dispatch list, replaced whole; recorded in order by the Compute pass, a barrier after each. Empty = no compute work.
     virtual std::shared_ptr<IIr77Return const> SetDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
 
+    // Recorded by the Compute pass once per view the pass list draws, after the dispatch list and the acceleration build -- each with that
+    // view's frame table (pc.frame) and pc.user[7] = the view. The cull pass. Empty = none.
+    virtual std::shared_ptr<IIr77Return const> SetViewDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
+
     // ---- acceleration structures -------------------------------------------------------------------------------------------------------------
     // Built right after the Compute pass (BLAS refits, TLAS). Paint sets it each frame on the first window it records. Unset = no builds.
     virtual std::shared_ptr<IIr77Return const> SetAcceleration(std::shared_ptr<IIr77PVAcceleration> acceleration) = 0;

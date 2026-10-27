@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -8,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <SDL3/SDL_video.h>
@@ -65,6 +67,7 @@ namespace NSIr77PeregrineV {
 //   renderer.command_buffers
 //   renderer.destroy
 //   device.info               -> data { gpu, ray_query, mesh_shading }
+//   geometry.pools            -> data { pools: [{ name, used, capacity }] } -- elements (vertices / indices / commands) per geometry pool
 //   pipelines.manifest        { path } -- reloads the pipeline manifest from path (a bad file fails, the old one stays)
 // =============================================================================================================================================
 class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77Server> {
@@ -465,6 +468,35 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
             data = "{\"gpu\":\"" + Escape(gpu) + "\",\"ray_query\":" + (ray_query ? "true" : "false") +
                    ",\"mesh_shading\":" + (mesh_shading ? "true" : "false") + "}";
+
+            return result;
+        };
+
+        m_operations["geometry.pools"] = [this](Ir77PVArgs const&, std::string& data) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+
+            std::shared_ptr<IIr77PVGeometry> geometry{};
+            if (Failed(m_init->GetGeometry(geometry), result)) return result;
+
+            std::array<std::pair<Ir77PVGeometryPool, char const*>, GEOMETRY_POOL_COUNT> const pools{
+                {{Ir77PVGeometryPool::Vertices, "vertices"},
+                 {Ir77PVGeometryPool::Indices, "indices"},
+                 {Ir77PVGeometryPool::SkinnedVertices, "skinned_vertices"},
+                 {Ir77PVGeometryPool::SkinnedIndices, "skinned_indices"},
+                 {Ir77PVGeometryPool::Commands, "commands"},
+                 {Ir77PVGeometryPool::MeshCommands, "mesh_commands"}}};
+
+            std::string entries{};
+            for (auto const& [pool, name] : pools) {
+                std::uint32_t used{0};
+                std::uint32_t capacity{0};
+                geometry->GetPoolUsage(pool, used, capacity);
+
+                if (!entries.empty()) entries += ",";
+                entries += "{\"name\":\"" + std::string{name} + "\",\"used\":" + std::to_string(used) + ",\"capacity\":" + std::to_string(capacity) + "}";
+            }
+
+            data = "{\"pools\":[" + entries + "]}";
 
             return result;
         };

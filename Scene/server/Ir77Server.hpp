@@ -15,6 +15,10 @@
 #include <string_view>
 #include <unordered_map>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 #include <simdjson.h>
 
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
@@ -38,8 +42,8 @@ namespace NSIr77Scene {
 
 // =============================================================================================================================================
 // Ir77Server -- the scene module's switchboard. Owns Ir77Animate (the work) -- created here, held through IIr77Animate, handed to no one.
-// Animate owns Pose, View, Lighting and Field; this server holds the three the ops reach (Pose, View, Field) through their interfaces. The
-// module's one door:
+// Animate owns the entities (a Pose each), View, Lighting and Field; this server holds View and Field through their interfaces and reaches an
+// entity's Pose through Animate (GetPose) per op. The module's one door:
 //
 //   pipe:        Sink(json) in, the post function out (SetPost). Every command arrives here as JSON and every reply leaves the same way.
 //   direct link: only what can't travel as JSON -- the renderer's server (SetRenderer) and the per-frame calls (Update / CreateFrame / stats).
@@ -49,7 +53,8 @@ namespace NSIr77Scene {
 // Reply out:   {"id":7, "from":"scene", "to":"ui", "op":"camera.move", "ok":true, "error":""}   (only when the message names a "from")
 //
 // ops:
-//   scene.create    path, use_mesh (false)        -- loads a glTF ("" = empty scene); a file that won't load leaves an empty scene
+//   scene.create    path, use_mesh (false), lights, cameras -- loads a glTF as entity 0 ("" = empty scene; a file that won't load leaves an
+//                                                    empty scene); lights / cameras: import the file's (default SCENE_IMPORT_LIGHTS / _CAMERAS)
 //   scene.pipeline  name                          -- what the static runs draw with: a manifest pipeline; "" -> the "static" role
 //   scene.view_size windows, width, height        -- the windows CreateFrame fills and their size (the cameras' aspect)
 //   camera.move     right / up / forward in -1..1 -- held keys, applied every frame until set back to 0
@@ -61,10 +66,28 @@ namespace NSIr77Scene {
 //   camera.select   index                         -- == camera count -> the controlled camera
 //   camera.next                                   -- next file camera, then the controlled camera
 //   camera.reset                                  -- orbit framed on the scene
-//   camera.layout   value "single" | "quad"       -- one view, or top / front / side / live in a 2 x 2 grid
-//   animation.play  name, loop (true), speed (1)
-//   animation.stop  name
-//   animation.stop_all
+//   camera.layout   views [{x, y, w, h}] 1 .. 4   -- where each view draws, fractions of the window; view 0 the main camera, 1 / 2 / 3 start
+//                                                    ortho top / front / side
+//   camera.focus    view                          -- which view the camera.* ops above drive (the one under the mouse)
+//   entity.import   path, use_mesh (false), lights -- one more file in the scene at the origin; lights: its lights become world lights
+//                                                    (default SCENE_IMPORT_LIGHTS) -- data { entity }
+//   entity.remove   entity
+//   entity.transform entity, t [x,y,z], r [x,y,z,w], s [x,y,z] -- the whole entity in the world; a part left out keeps what it was
+//   entity.list                                   -- data { entities: [{entity, path, t, r, s}] }
+//   node.list       entity (0)                    -- data { nodes: [{node, name, parent (-1 = root), t, r, s}] } -- rest TRS, parent's space
+//   node.transform  entity (0), node, t, r, s     -- one node's rest TRS; a clip that drives it still wins on what it animates
+//   light.add       type "directional" | "point" | "spot" (point), color [r,g,b] (1), intensity (683), range (0 = none), inner (0),
+//                   outer (pi/4), t, r  -- a world light; intensity in glTF units (lux / candela; 683 = 1 engine unit), cones in radians,
+//                   it shines down its local -Z -- data { light }
+//   light.set       light, then any of light.add's -- what's left out keeps its value
+//   light.remove    light
+//   light.list                                    -- data { lights: [{light, type, color, intensity, range, inner, outer, t, r, entity (-1 = placed
+//                                                    by the UI)}] }
+//   animation.play  entity (0), name, loop (true), speed (1)
+//   animation.stop  entity (0), name
+//   animation.stop_all entity (0)
+//
+// Entity 0 is the scene file (scene.create starts the ids over).
 //   field.compile   source, topology "surface" | "particles", dims [x, y, z], x / y / z [min, max], value [min, max],
 //                   shading "lit" | "colormap" | "contours", colormap "viridis" | "turbo" | "grey", contour {spacing, width}, params [8],
 //                   canvas (size), pen {target "canvas" | "points", trace "time" | "sweep", speed, sweep, decay, wrap "fade" | "clear", steps,
@@ -89,8 +112,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     Ir77Server() {
         m_animate = std::static_pointer_cast<IIr77Animate>(std::make_shared<Ir77Animate>());
 
-        // Animate's peers exist from its construction -- the ops go straight to them
-        m_animate->GetPose(m_pose);
+        // Animate's peers exist from its construction -- the ops go straight to them; an entity's Pose comes per op (GetPose)
         m_animate->GetView(m_view);
         m_animate->GetField(m_field);
 
@@ -223,6 +245,8 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     void RegisterPipeOperations() {
         DefineSceneOperations();
         DefineCameraOperations();
+        DefineEntityOperations();
+        DefineLightOperations();
         DefineAnimationOperations();
         DefineFieldOperations();
         DefineFieldStoreOperations();
@@ -231,7 +255,8 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     // setup -- iridium sends these at startup; the UI can send scene.create to open another file
     void DefineSceneOperations() {
         m_operations["scene.create"] = [this](Ir77SceneArgs const& a) {
-            return m_animate->CreateScene(std::string{Text(a, "path")}, Flag(a, "use_mesh", false));
+            return m_animate->CreateScene(std::string{Text(a, "path")}, Flag(a, "use_mesh", false), Flag(a, "lights", SCENE_IMPORT_LIGHTS),
+                                          Flag(a, "cameras", SCENE_IMPORT_CAMERAS));
         };
 
         m_operations["scene.pipeline"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
@@ -275,15 +300,272 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         m_operations["camera.select"] = [this](Ir77SceneArgs const& a) { return m_view->SelectCamera(static_cast<std::uint32_t>(Number(a, "index", 0.0f))); };
         m_operations["camera.next"] = [this](Ir77SceneArgs const&) { return m_view->NextCamera(); };
         m_operations["camera.reset"] = [this](Ir77SceneArgs const&) { return m_view->ResetCamera(); };
-        m_operations["camera.layout"] = [this](Ir77SceneArgs const& a) { return m_view->SetViewLayout(Text(a, "value")); };
+        m_operations["camera.layout"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            simdjson::dom::array views{};
+            if (a["views"].get(views) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: camera.layout needs views.");
+
+            std::vector<glm::vec4> areas{};
+
+            for (auto const element : views) {
+                simdjson::dom::object view{};
+                if (element.get(view) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: camera.layout views are {x, y, w, h}.");
+
+                areas.push_back(glm::vec4(Number(view, "x", 0.0f), Number(view, "y", 0.0f), Number(view, "w", 0.0f), Number(view, "h", 0.0f)));
+            }
+
+            return m_view->SetViewLayout(areas);
+        };
+        m_operations["camera.focus"] = [this](Ir77SceneArgs const& a) { return m_view->FocusView(static_cast<std::uint32_t>(Number(a, "view", 0.0f))); };
     }
+
+    // Entities -- files in the world, each placed as a whole -- and the nodes inside one
+    void DefineEntityOperations() {
+        m_operations["entity.import"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+
+            std::uint32_t entity{0};
+            if (Failed(m_animate->ImportEntity(std::string{Text(a, "path")}, Flag(a, "use_mesh", false), Flag(a, "lights", SCENE_IMPORT_LIGHTS), entity),
+                       result))
+                return result;
+
+            m_data = "{\"entity\":" + std::to_string(entity) + "}";
+
+            return result;
+        };
+
+        m_operations["entity.remove"] = [this](Ir77SceneArgs const& a) { return m_animate->RemoveEntity(Entity(a)); };
+
+        m_operations["entity.transform"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::vector<std::uint32_t> ids{};
+            std::vector<std::string> paths{};
+            std::vector<glm::vec3> translations{};
+            std::vector<glm::quat> rotations{};
+            std::vector<glm::vec3> scales{};
+            m_animate->GetEntities(ids, paths, translations, rotations, scales);
+
+            std::uint32_t const entity = Entity(a);
+
+            auto const found = std::find(ids.begin(), ids.end(), entity);
+            if (found == ids.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: no entity " + std::to_string(entity) + ".");
+
+            std::size_t const at = static_cast<std::size_t>(found - ids.begin());
+
+            glm::vec3 translation = translations[at];
+            glm::quat rotation = rotations[at];
+            glm::vec3 scale = scales[at];
+            Placement(a, translation, rotation, scale);
+
+            return m_animate->SetEntityTransform(entity, translation, rotation, scale);
+        };
+
+        m_operations["entity.list"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
+            std::vector<std::uint32_t> ids{};
+            std::vector<std::string> paths{};
+            std::vector<glm::vec3> translations{};
+            std::vector<glm::quat> rotations{};
+            std::vector<glm::vec3> scales{};
+            m_animate->GetEntities(ids, paths, translations, rotations, scales);
+
+            std::string entities{};
+            for (std::size_t i = 0; i < ids.size(); i++) {
+                if (!entities.empty()) entities += ",";
+                entities += "{\"entity\":" + std::to_string(ids[i]) + ",\"path\":\"" + Escape(paths[i]) + "\"," +
+                            PlacementJson(translations[i], rotations[i], scales[i]) + "}";
+            }
+
+            m_data = "{\"entities\":[" + entities + "]}";
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        m_operations["node.list"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+            std::shared_ptr<IIr77Pose> pose{};
+            if (Failed(m_animate->GetPose(Entity(a), pose), result)) return result;
+
+            std::uint32_t count{0};
+            pose->GetNodeCount(count);
+
+            std::string nodes{};
+            for (std::uint32_t n = 0; n < count; n++) {
+                std::string name{};
+                std::uint32_t parent{UINT32_MAX};
+                glm::vec3 translation{0.0f};
+                glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+                glm::vec3 scale{1.0f};
+                pose->GetNode(n, name, parent, translation, rotation, scale);
+
+                if (!nodes.empty()) nodes += ",";
+                nodes += "{\"node\":" + std::to_string(n) + ",\"name\":\"" + Escape(name) + "\",\"parent\":" +
+                         (parent == UINT32_MAX ? std::string{"-1"} : std::to_string(parent)) + "," + PlacementJson(translation, rotation, scale) + "}";
+            }
+
+            m_data = "{\"nodes\":[" + nodes + "]}";
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        m_operations["node.transform"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+            std::shared_ptr<IIr77Pose> pose{};
+            if (Failed(m_animate->GetPose(Entity(a), pose), result)) return result;
+
+            double node_number{-1.0};
+            if (a["node"].get(node_number) != simdjson::SUCCESS || node_number < 0.0)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: node.transform needs node.");
+
+            std::uint32_t const node = static_cast<std::uint32_t>(node_number);
+
+            std::string name{};
+            std::uint32_t parent{UINT32_MAX};
+            glm::vec3 translation{0.0f};
+            glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+            glm::vec3 scale{1.0f};
+            if (Failed(pose->GetNode(node, name, parent, translation, rotation, scale), result)) return result;
+
+            Placement(a, translation, rotation, scale);
+
+            return pose->SetNodeTransform(node, translation, rotation, scale);
+        };
+    }
+
+    // World lights -- the scene graph's, placed by the UI or imported with a file
+    void DefineLightOperations() {
+        m_operations["light.add"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+
+            Ir77PVLight light{};
+            light.type = LIGHT_POINT;
+            light.color = glm::vec3(1.0f);
+            light.intensity = 683.0f;
+            light.outerConeAngle = glm::quarter_pi<float>();
+
+            glm::vec3 translation{0.0f};
+            glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+            glm::vec3 scale{1.0f};
+
+            if (Failed(LightFields(a, light), result)) return result;
+            Placement(a, translation, rotation, scale);
+
+            std::uint32_t id{0};
+            if (Failed(m_animate->AddLight(light, translation, rotation, id), result)) return result;
+
+            m_data = "{\"light\":" + std::to_string(id) + "}";
+
+            return result;
+        };
+
+        m_operations["light.set"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+
+            double number{-1.0};
+            if (a["light"].get(number) != simdjson::SUCCESS || number < 0.0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: light.set needs light.");
+
+            std::uint32_t const id = static_cast<std::uint32_t>(number);
+
+            Ir77PVLight light{};
+            glm::vec3 translation{0.0f};
+            glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+            glm::vec3 scale{1.0f};
+            std::uint32_t entity{UINT32_MAX};
+            if (Failed(m_animate->GetLight(id, light, translation, rotation, entity), result)) return result;
+
+            if (Failed(LightFields(a, light), result)) return result;
+            Placement(a, translation, rotation, scale);
+
+            return m_animate->SetLight(id, light, translation, rotation);
+        };
+
+        m_operations["light.remove"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            double number{-1.0};
+            if (a["light"].get(number) != simdjson::SUCCESS || number < 0.0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: light.remove needs light.");
+
+            return m_animate->RemoveLight(static_cast<std::uint32_t>(number));
+        };
+
+        m_operations["light.list"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
+            std::vector<std::uint32_t> ids{};
+            m_animate->GetLightIds(ids);
+
+            auto const number = [](float const value) {
+                char text[32]{};
+                std::snprintf(text, sizeof(text), "%.6g", static_cast<double>(value));
+                return std::string{text};
+            };
+
+            std::string lights{};
+            for (std::uint32_t const id : ids) {
+                Ir77PVLight light{};
+                glm::vec3 translation{0.0f};
+                glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+                std::uint32_t entity{UINT32_MAX};
+                if (m_animate->GetLight(id, light, translation, rotation, entity)->ID() != GUIDIr77OperationSucceeded) continue;
+
+                if (!lights.empty()) lights += ",";
+                lights += "{\"light\":" + std::to_string(id) + ",\"type\":\"" + LightTypeName(light.type) + "\",\"color\":[" + number(light.color.r) + "," +
+                          number(light.color.g) + "," + number(light.color.b) + "],\"intensity\":" + number(light.intensity) +
+                          ",\"range\":" + number(light.range) + ",\"inner\":" + number(light.innerConeAngle) + ",\"outer\":" + number(light.outerConeAngle) +
+                          "," + PlacementJson(translation, rotation, glm::vec3(1.0f)) + ",\"entity\":" +
+                          (entity == UINT32_MAX ? std::string{"-1"} : std::to_string(entity)) + "}";
+            }
+
+            m_data = "{\"lights\":[" + lights + "]}";
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+    }
+
+    // type / color / intensity / range / inner / outer over what the light had -- what's left out keeps its value
+    std::shared_ptr<IIr77Return const> LightFields(Ir77SceneArgs const& args, Ir77PVLight& light) {
+        std::string_view const type = Text(args, "type");
+
+        if (type == "directional")
+            light.type = LIGHT_DIRECTIONAL;
+        else if (type == "point")
+            light.type = LIGHT_POINT;
+        else if (type == "spot")
+            light.type = LIGHT_SPOT;
+        else if (!type.empty()) {
+            m_error = "light type must be directional, point or spot";
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
+        }
+
+        float color[3]{light.color.r, light.color.g, light.color.b};
+        Numbers(args, "color", color, 3);
+        light.color = glm::vec3(color[0], color[1], color[2]);
+
+        light.intensity = std::max(Number(args, "intensity", light.intensity), 0.0f);
+        light.range = std::max(Number(args, "range", light.range), 0.0f);
+        light.innerConeAngle = std::max(Number(args, "inner", light.innerConeAngle), 0.0f);
+        light.outerConeAngle = std::max(Number(args, "outer", light.outerConeAngle), light.innerConeAngle);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::string LightTypeName(int const type) const { return type == LIGHT_DIRECTIONAL ? "directional" : type == LIGHT_SPOT ? "spot" : "point"; }
 
     void DefineAnimationOperations() {
         m_operations["animation.play"] = [this](Ir77SceneArgs const& a) {
-            return m_pose->PlayAnimation(std::string{Text(a, "name")}, Flag(a, "loop", true), Number(a, "speed", 1.0f));
+            std::shared_ptr<IIr77Return const> result{};
+            std::shared_ptr<IIr77Pose> pose{};
+            if (Failed(m_animate->GetPose(Entity(a), pose), result)) return result;
+
+            return pose->PlayAnimation(std::string{Text(a, "name")}, Flag(a, "loop", true), Number(a, "speed", 1.0f));
         };
-        m_operations["animation.stop"] = [this](Ir77SceneArgs const& a) { return m_pose->StopAnimation(std::string{Text(a, "name")}); };
-        m_operations["animation.stop_all"] = [this](Ir77SceneArgs const&) { return m_pose->StopAllAnimations(); };
+        m_operations["animation.stop"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+            std::shared_ptr<IIr77Pose> pose{};
+            if (Failed(m_animate->GetPose(Entity(a), pose), result)) return result;
+
+            return pose->StopAnimation(std::string{Text(a, "name")});
+        };
+        m_operations["animation.stop_all"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+            std::shared_ptr<IIr77Pose> pose{};
+            if (Failed(m_animate->GetPose(Entity(a), pose), result)) return result;
+
+            return pose->StopAllAnimations();
+        };
     }
 
     void DefineFieldOperations() {
@@ -536,6 +818,40 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     }
 
     // args readers -- a missing or mistyped key gives the fallback
+    // "entity" -- 0 (the scene file) when left out
+    std::uint32_t Entity(Ir77SceneArgs const& args) const { return static_cast<std::uint32_t>(std::max(Number(args, "entity", 0.0f), 0.0f)); }
+
+    // t / r / s over what the thing had -- a part left out keeps its value
+    void Placement(Ir77SceneArgs const& args, glm::vec3& translation, glm::quat& rotation, glm::vec3& scale) const {
+        float t[3]{translation.x, translation.y, translation.z};
+        float r[4]{rotation.x, rotation.y, rotation.z, rotation.w};
+        float s[3]{scale.x, scale.y, scale.z};
+
+        Numbers(args, "t", t, 3);
+        Numbers(args, "r", r, 4);
+        Numbers(args, "s", s, 3);
+
+        glm::quat const turned{r[3], r[0], r[1], r[2]};  // glTF order in the message: x, y, z, w
+
+        translation = glm::vec3(t[0], t[1], t[2]);
+        if (glm::dot(turned, turned) > 1e-12f) rotation = turned;  // an all-zero r has no direction -- keeps what it was
+        scale = glm::vec3(s[0], s[1], s[2]);
+    }
+
+    // {"t":[...],"r":[...],"s":[...]} -- r as x, y, z, w
+    std::string PlacementJson(glm::vec3 const& translation, glm::quat const& rotation, glm::vec3 const& scale) const {
+        auto const number = [](float const value) {
+            char text[32]{};
+            std::snprintf(text, sizeof(text), "%.6g", static_cast<double>(value));
+            return std::string{text};
+        };
+
+        return "\"t\":[" + number(translation.x) + "," + number(translation.y) + "," + number(translation.z) + "],\"r\":[" + number(rotation.x) + "," +
+               number(rotation.y) + "," + number(rotation.z) + "," + number(rotation.w) + "],\"s\":[" + number(scale.x) + "," + number(scale.y) + "," +
+               number(scale.z) + "]";
+    }
+
+
     float Number(Ir77SceneArgs const& args, char const* key, float const fallback) const {
         double value{0.0};
         return args[key].get(value) == simdjson::SUCCESS ? static_cast<float>(value) : fallback;
@@ -605,13 +921,18 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
    private:
     std::shared_ptr<IIr77Animate> m_animate{};  // the module's work -- only this server holds it
 
-    std::shared_ptr<IIr77Pose> m_pose{};  // Animate's -- animation.* ops
-
     std::shared_ptr<IIr77View> m_view{};  // Animate's -- camera.* ops
 
     std::shared_ptr<IIr77Field> m_field{};  // Animate's -- field.* ops
 
     std::shared_ptr<NSIr77PeregrineV::Ir77Server> m_renderer{};  // PeregrineV's server -- scene.pipeline looks names up through it
+
+    // Ir77PVLight::type -- as Ir77Light writes them from the glTF
+    static constexpr int LIGHT_DIRECTIONAL{0};
+
+    static constexpr int LIGHT_POINT{1};
+
+    static constexpr int LIGHT_SPOT{2};
 
     std::function<void(std::string)> m_post{};
 

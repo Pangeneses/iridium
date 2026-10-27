@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -48,6 +49,19 @@ typedef struct IIr77Pose : virtual public IIr77Enlisted {
 
     // Everything back to the rest pose, nothing playing
     virtual std::shared_ptr<IIr77Return const> StopAllAnimations() = 0;
+
+    // Where the whole file sits in the world -- above its root nodes, so everything it draws moves with it. Next Update.
+    virtual std::shared_ptr<IIr77Return const> SetRootTransform(glm::mat4 const& root) = 0;
+
+    // One node's rest TRS (its parent's space). A clip that drives the node still overrides the channels it animates. Next Update.
+    virtual std::shared_ptr<IIr77Return const> SetNodeTransform(std::uint32_t const& node, glm::vec3 const& translation, glm::quat const& rotation,
+                                                                glm::vec3 const& scale) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetNodeCount(std::uint32_t& count) = 0;
+
+    // One node as the file names it, its parent (UINT32_MAX = a root) and its rest TRS
+    virtual std::shared_ptr<IIr77Return const> GetNode(std::uint32_t const& node, std::string& name, std::uint32_t& parent, glm::vec3& translation,
+                                                       glm::quat& rotation, glm::vec3& scale) = 0;
 
     // Once per frame: advances animation, rebuilds every world matrix, then every joint palette. Afterwards the frame's results are read out
     // (WriteInstanceTransforms, WritePackedBones).

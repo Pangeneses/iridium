@@ -2,9 +2,11 @@
 
 #include <vulkan/vulkan.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -23,7 +25,8 @@ namespace NSIr77PeregrineV {
 // Meshes on the device -- scene (vertex path) and meshlets (mesh path) -- and the draw items that reference them. Every buffer
 // is made and released through Transfer; materials come from Material. Every upload takes `wait` -- true blocks, false runs ahead of
 // later frames.
-//   Ir77PVInit wires it: SetDevice / SetTransfer / SetMaterials -> [pipeline cache] -> SetPipelineCache. Ir77PVInit::Tick calls Tick(frame).
+//   Ir77PVInit wires it: SetDevice / SetTransfer / SetMaterials -> [pipeline cache] -> SetPipelineCache -> CreateGeometry. Ir77PVInit::Tick
+//   calls Tick(frame). GPU culling: SetCullBins -> GetCullDispatches (every window, once per view) -> MakeCulledDrawItem.
 typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     IIr77PVGeometry() = default;
 
@@ -40,6 +43,12 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     // The device's pipeline cache -- engine roles and the draw item checks. After CreatePipelines.
     virtual std::shared_ptr<IIr77Return const> SetPipelineCache(std::shared_ptr<IIr77PVPipelineCache> pipeline_cache) = 0;
 
+    // Every pool, the command tables (material rows, bounding spheres), the cull lists and their slots -- after the wiring
+    virtual std::shared_ptr<IIr77Return const> CreateGeometry() = 0;
+
+    // The command pool's slot per frame in flight -- the frame table's commands field (what the cull pass reads)
+    virtual std::shared_ptr<IIr77Return const> GetCommandSlots(std::array<std::uint32_t, MAX_FRAMES_IN_FLIGHT>& slots) = 0;
+
     // per frame -- Ir77PVInit::Tick calls this once per frame, after Transfer's Tick and before Paint records, with the frame-in-flight
     // index Paint is about to record. Writes this frame's copy of every dirty indirect buffer (visibility / instance changes) -- one frame
     // copy per Tick until every copy matches.
@@ -51,8 +60,11 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     //   firstIndex / indexCount   -> its slice of indices (indices stay local, 0-based)
     //   vertexOffset              -> where its vertices start
     //   instanceCount / firstInstance -> how many copies, and their slots in models[] (set 0 binding 2)
-    // One draw item covers every command (MakeIndirectDrawItem); the vertex shader finds each command's material in a per-draw table (gl_DrawID).
-    // The indirect buffer is Dynamic, so objects can be hidden / shown / resized per frame without re-uploading geometry.
+    // One stream per upload (static or skinned). It lands in ranges of the geometry pools, the commands rebased onto them and kept in its range
+    // of the command pool, their material rows (command_materials) at the same places in the command material table -- every scene draws from
+    // the same buffers; a pool too full for it fails the upload. One draw item covers every command (MakeIndirectDrawItem) and carries the
+    // table: the vertex shader reads table[pc.user[5] + gl_DrawID]. The command pool is host-written per frame, so objects can be hidden /
+    // shown / resized per frame without re-uploading geometry.
     virtual std::shared_ptr<IIr77Return const> UploadScene(Ir77PVSceneUpload const& data, std::uint32_t& scene_id, bool const& wait = true) = 0;
 
     // Draw item for commands [first_command, first_command + command_count) of a scene through an engine role
@@ -74,14 +86,14 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> SetSceneObjectInstances(std::uint32_t const& scene_id, std::uint32_t const& command,
                                                                        std::uint32_t const& count) = 0;
 
-    // A scene's vertex buffer (skinned = the skinned channel) as a bindless storage buffer -- compute reads / writes the vertices in place.
-    // Registered on the first call, the same slot after; UnloadScene releases it.
+    // A scene's vertices (skinned = the skinned channel) as a bindless storage buffer over just its pool range -- vertex 0 is its first, so
+    // compute reads / writes them in place with scene-local indices. Registered on the first call, the same slot after; UnloadScene releases it.
     virtual std::shared_ptr<IIr77Return const> GetSceneVertexSlot(std::uint32_t const& scene_id, bool const& skinned, std::uint32_t& slot) = 0;
 
-    // What Acceleration builds from: the scene's vertex / index buffers, its vertex count and its commands
+    // What Acceleration builds from: the pools, where the scene's vertex range ends and its commands, rebased into the pools
     virtual std::shared_ptr<IIr77Return const> GetSceneGeometry(std::uint32_t const& scene_id, Ir77PVSceneGeometry& geometry) = 0;
 
-    // Frees the scene's buffers once no frame in flight can read them. Remove its draw items from Paint first.
+    // Its vertex slots and pool ranges (geometry and commands) -- released once no frame in flight can read them. Remove its draw items from Paint first.
     virtual std::shared_ptr<IIr77Return const> UnloadScene(std::uint32_t const& scene_id) = 0;
 
     // ---- meshlet path -- Mesh pipeline kind only (VK_EXT_mesh_shader) ----------------------------------------------------------------------
@@ -120,8 +132,27 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     // extra instances and starting them hidden.
     virtual std::shared_ptr<IIr77Return const> SetMeshletRecordVisible(std::uint32_t const& meshlet_id, std::uint32_t const& record, bool const& visible) = 0;
 
-    // Releases the meshlet buffer slots and frees the buffers once no frame in flight can read them. Remove its draw items from Paint first.
+    // Its meshlet buffers, their slots and its pool ranges -- released once no frame in flight can read them. Remove its draw items from Paint
+    // first.
     virtual std::shared_ptr<IIr77Return const> UnloadMeshlets(std::uint32_t const& meshlet_id) = 0;
+
+    // ---- geometry pools ---------------------------------------------------------------------------------------------------------------------
+
+    // How much of a pool is in use and how much it holds, in elements (vertices, indices or commands)
+    virtual std::shared_ptr<IIr77Return const> GetPoolUsage(Ir77PVGeometryPool const& pool, std::uint32_t& used, std::uint32_t& capacity) = 0;
+
+    // ---- GPU culling (cull.comp) ------------------------------------------------------------------------------------------------------------
+
+    // The bins the cull pass fills -- runs of vertex-path commands, one bin per pipeline and stream. Whenever they change; the old job list is
+    // released after the frames in flight. Every bin's instances together must fit GEOMETRY_CULL_CAPACITY; at most GEOMETRY_CULL_BINS bins.
+    virtual std::shared_ptr<IIr77Return const> SetCullBins(std::vector<Ir77PVCullBin> const& bins) = 0;
+
+    // Zero the view's counts, then cull -- every window records these once per view. Fails without a "cull.compute" pipeline.
+    virtual std::shared_ptr<IIr77Return const> GetCullDispatches(std::vector<Ir77PVDispatch>& dispatches) = 0;
+
+    // One bin's culled list for one view through pipeline -- vkCmdDrawIndexedIndirectCount from the pool buffers (skinned = the skinned pair)
+    virtual std::shared_ptr<IIr77Return const> MakeCulledDrawItem(Ir77PVPipelineHandle const& pipeline, std::uint32_t const& bin, std::uint32_t const& view,
+                                                                  bool const& skinned, Ir77PVDrawItem& item) = 0;
 
     // ---- procedural -- no vertex buffer ---------------------------------------------------------------------------------------------------------
 

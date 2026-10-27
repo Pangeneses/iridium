@@ -36,10 +36,11 @@ namespace NSIr77PeregrineV {
 // =============================================================================================================================================
 // Ir77PVPaint -- records and presents every window of one device: one Ir77PVCmdBuffer per window.
 //   Ir77PVInit wires it: SetDevice / SetWindows / SetSwapchains / SetRenderPasses / SetLayout / SetDescriptorSet / SetMaterialTableSlot /
-//   SetPipelineCache / SetShadowMap / SetFrameSlots / SetFrameBuffers / SetFrameTables / SetOverlays / [SetAcceleration] -> CreateCommandBuffers
-//   (after content is loaded)
-//   per frame: SetFrameData / SetDraws / SetFrameDispatches / SetPassList -> Draw
+//   SetPipelineCache / SetShadowMap / SetFrameSlots / SetFrameBuffers / SetFrameTables / SetCommandSlots / SetOverlays / [SetAcceleration] ->
+//   CreateCommandBuffers (after content is loaded)
+//   per frame: SetFrameData / SetDraws / SetFrameDispatches / SetViewDispatches / SetPassList -> Draw
 // The once-a-frame work (SetFrameDispatches, the acceleration build) goes to the first window Draw records -- window 0 unless it's minimized.
+// The view dispatches (the cull pass) go to every window, once per view.
 // Owns the command buffers, each window's frame-in-flight index and the resize flag.
 // =============================================================================================================================================
 class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable_shared_from_this<Ir77PVPaint> {
@@ -186,6 +187,13 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // [frame in flight] -- Geometry's command pool slot for each frame copy; every frame table names its frame's (what the cull pass reads)
+    std::shared_ptr<IIr77Return const> SetCommandSlots(std::array<std::uint32_t, MAX_FRAMES_IN_FLIGHT> const& slots) {
+        m_command_slots = slots;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // -------------------------------------------------------------------------------------------------------------------------------------
     // setup -- after the wiring and the pipeline cache. Overlays are optional (wired if there is one per window).
     // Every command buffer shares the device's bindless layout + table; each gets its window's frame slots.
@@ -305,6 +313,14 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Replaces the per-view compute list (the cull pass) -- every window records it once per view it draws, after the once-a-frame work.
+    // Persists until replaced.
+    std::shared_ptr<IIr77Return const> SetViewDispatches(std::vector<Ir77PVDispatch> const& dispatches) {
+        m_view_dispatches = dispatches;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // Replaces a window's pass list -- what its command buffer records each frame, in order. At least one pass must target the swapchain.
     std::shared_ptr<IIr77Return const> SetPassList(std::size_t const& window, std::vector<Ir77PVPassDesc> const& passes) {
         if (window >= m_command_buffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
@@ -350,6 +366,7 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
             std::vector<Ir77PVDispatch> const dispatches = i == builder ? m_frame_dispatches : std::vector<Ir77PVDispatch>{};
 
             cmd_buffer->SetDispatches(dispatches);
+            cmd_buffer->SetViewDispatches(m_view_dispatches);
             cmd_buffer->SetAcceleration(i == builder ? m_acceleration : std::shared_ptr<IIr77PVAcceleration>{});
 
             if (cmd_buffer->WaitForFence()->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: fence wait failed.");
@@ -421,7 +438,8 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         VkDeviceSize offset{0};
     };
 
-    // This window's frame tables for this frame, one per view, with the latest TLAS slot -- everything else as registered
+    // This window's frame tables for this frame, one per view, with the latest TLAS slot and this frame's command pool -- everything else as
+    // registered
     void DefineFrameTable(std::size_t const& window, std::uint32_t const& frame) {
         if (window >= m_frame_tables.size() || window >= m_frame_slots.size() || !m_frame_tables[window]) return;
 
@@ -430,6 +448,7 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
 
         values.tlas = BINDLESS_NO_SLOT;
         values.ray_objects = BINDLESS_NO_SLOT;
+        values.commands = m_command_slots[frame];
 
         if (m_acceleration) {
             m_acceleration->GetTopLevelSlot(values.tlas);
@@ -504,6 +523,10 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
     std::vector<std::uint32_t> m_frames{};  // [window] -- frame in flight each command buffer records next
 
     std::vector<Ir77PVDispatch> m_frame_dispatches{};  // once a frame -- the builder records them
+
+    std::vector<Ir77PVDispatch> m_view_dispatches{};  // every window, once per view -- the cull pass
+
+    std::array<std::uint32_t, MAX_FRAMES_IN_FLIGHT> m_command_slots{BINDLESS_NO_SLOT, BINDLESS_NO_SLOT, BINDLESS_NO_SLOT};  // Geometry's command pool
 
     std::size_t m_builder{0};  // the window that ran the once-a-frame work last Draw (window count = none yet)
 

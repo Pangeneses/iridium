@@ -5,6 +5,7 @@
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -37,17 +38,37 @@ using namespace NSIr77PeregrineV;
 namespace NSIr77Scene {
 
 // =============================================================================================================================================
-// Ir77View -- the cameras: the file's, then the controlled orbit / fly / ortho camera the UI drives (index == camera count). Owned by
-// Ir77Animate; the UI reaches it through the scene server's camera.* ops.
+// Ir77View -- the cameras, one per view. Every view is a full camera of its own: the file's cameras, or its own controlled orbit / fly /
+// ortho camera (index == camera count). Owned by Ir77Animate; the UI reaches it through the scene server's camera.* ops.
 //
-//   scene:     SetCameras (the file's) -> SetBounds (frames the controlled camera)
-//   UI:        SetCameraMove / Look / Zoom / Speed / Mode / View, SelectCamera / NextCamera / ResetCamera, SetViewLayout -- next frame
+//   scene:     SetCameras (the file's) -> SetBounds (frames every view's controlled camera)
+//   UI:        SetViewLayout, FocusView -- then SetCameraMove / Look / Zoom / Speed / Mode / View, SelectCamera / NextCamera / ResetCamera
+//              drive the focused view only -- next frame
 //   per frame: Update(dt) -> WriteCameras(aspect) per window
 //
-// Layout: "single" -- one view, the live camera. "quad" -- four, in PeregrineV's 2 x 2 order (left to right, then top to bottom): top,
-// front and side, orthographic and framed on the scene's bounds, then the live camera.
+// Layout: the UI says where each view draws -- 1 .. MAX_VIEWS areas, x, y, width, height as fractions of the window, anywhere (the part the
+// UI doesn't cover, side by side, picture in picture). Until it does, view 0 fills the window. Each view's camera is built for its area's
+// aspect. View 0 is the main camera; views 1 / 2 / 3 start orthographic looking down top / front / side. Reset puts a view back where it
+// started. A layout with fewer views than the focused one focuses view 0.
 // =============================================================================================================================================
 class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_shared_from_this<Ir77View> {
+   private:
+    // one view's camera -- which camera it shows, and its controlled camera: orbit (target, distance) or fly (position); yaw / pitch aim both
+    struct Ir77ViewCamera {
+        std::uint32_t index{0};  // file camera; == camera count -> the controlled camera
+        bool fly{false};
+        bool ortho{false};  // the controlled orbit camera draws orthographic
+        glm::vec3 target{0.0f};
+        glm::vec3 position{0.0f};
+        float distance{1.0f};
+        float yaw{0.0f};
+        float pitch{0.0f};
+        float speed{1.0f};         // units per second at full key
+        glm::vec3 move{0.0f};      // held keys: right, up, forward in -1..1
+        glm::mat4 view{1.0f};      // last frame's view, whichever camera drew it -- where a takeover starts from
+        float fov{60.0f};          // vertical, degrees -- taken from whichever camera drew last, so a takeover keeps the lens
+    };
+
    public:
     Ir77View() {
         try {
@@ -101,121 +122,111 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
     }
 
    public:
-    // The file's cameras -- index count is the controlled camera. Starts on the file's first camera when it has one.
+    // The file's cameras -- index count is the controlled camera. View 0 starts on the file's first camera when it has one; the others on
+    // their controlled cameras.
     std::shared_ptr<IIr77Return const> SetCameras(std::shared_ptr<IIr77Camera> const& cameras) {
         m_cameras = cameras;
 
         m_camera_count = 0;
         if (m_cameras) m_cameras->GetCameraCount(m_camera_count);
 
-        m_camera_index = 0;
+        for (std::size_t v = 0; v < m_views.size(); v++) m_views[v].index = v == 0 ? 0 : m_camera_count;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The scene's bounds -- what the controlled camera frames and its planes hug. Re-frames the controlled camera on them.
+    // The scene's bounds -- what the controlled cameras frame and their planes hug. Puts every view's controlled camera back where it starts.
     std::shared_ptr<IIr77Return const> SetBounds(glm::vec3 const& low, glm::vec3 const& high) {
         m_bounds_min = low;
         m_bounds_max = high;
 
-        ResetCameraControl();
+        for (std::uint32_t v = 0; v < MAX_VIEWS; v++) ResetView(v);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // Held keys from the UI, once per frame
     std::shared_ptr<IIr77Return const> Update(float const& dt) {
-        UpdateCameraControl(dt);
+        for (Ir77ViewCamera& camera : m_views) UpdateCameraControl(camera, dt);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The camera a window draws with: the file camera (rebuilt with this aspect) or the controlled camera (orbit / fly). Remembers its view
-    // and lens, so the next switch to orbit / fly starts from it. camera.time is the caller's.
-    std::shared_ptr<IIr77Return const> WriteCamera(float const& aspect, Ir77PVCamera& camera) {
-        float const radius = std::max(glm::length(m_bounds_max - m_bounds_min) * 0.5f, 0.01f);
+    // One camera per view in the layout, and where each draws. aspect is the window's; each camera gets its area's. camera.time is the
+    // caller's.
+    std::shared_ptr<IIr77Return const> WriteCameras(float const& aspect, std::vector<Ir77PVCamera>& cameras, std::vector<glm::vec4>& areas) {
+        areas = m_areas;
+        cameras.assign(m_areas.size(), Ir77PVCamera{});
 
-        camera = Ir77PVCamera{};
-        bool built = false;
-
-        if (m_camera_index < m_camera_count && m_cameras) {
-            float const fallback_far = std::max(100.0f, radius * 20.0f);  // file camera without zfar
-            built = m_cameras->BuildCamera(m_camera_index, aspect, fallback_far, camera)->ID() == GUIDIr77OperationSucceeded;
-        }
-
-        if (!built) camera = MakeControlledCamera(aspect);
-
-        // reversed-Z -- PeregrineV's main pass clears depth to 0 and keeps the greater (Ir77PVCmdBuffer)
-        DefineReversedDepth(camera);
-
-        m_camera_view = camera.view;  // where the next switch to orbit / fly starts from
-
-        // the lens too -- an orthographic projection has none, it keeps the last one
-        if (built || !m_camera_ortho) m_camera_fov = glm::degrees(2.0f * std::atan(1.0f / std::abs(camera.proj[1][1])));
+        for (std::size_t v = 0; v < cameras.size(); v++) WriteViewCamera(m_views[v], aspect * m_areas[v].z / m_areas[v].w, cameras[v]);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // One camera per view, in the layout's order -- the live one is WriteCamera's. Each cell of the quad keeps the window's aspect.
-    std::shared_ptr<IIr77Return const> WriteCameras(float const& aspect, std::vector<Ir77PVCamera>& cameras) {
-        cameras.clear();
+    // Where each view draws, 1 .. MAX_VIEWS of them -- x, y, width, height as fractions of the window, each inside it
+    std::shared_ptr<IIr77Return const> SetViewLayout(std::vector<glm::vec4> const& areas) {
+        if (areas.empty() || areas.size() > MAX_VIEWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: a view layout has 1 to 4 views.");
 
-        Ir77PVCamera live{};
-        WriteCamera(aspect, live);
+        for (glm::vec4 const& area : areas)
+            if (area.x < 0.0f || area.y < 0.0f || area.z <= 0.0f || area.w <= 0.0f || area.x + area.z > AREA_SLACK || area.y + area.w > AREA_SLACK)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: every view area must have a size and lie inside the window (fractions 0 .. 1).");
 
-        if (m_quad) {
-            cameras.push_back(MakeFixedCamera(glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), aspect));  // top: down -Y, -Z up the screen
-            cameras.push_back(MakeFixedCamera(glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, 1.0f, 0.0f), aspect));   // front: down -Z
-            cameras.push_back(MakeFixedCamera(glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), aspect));   // side: down -X
-        }
+        m_areas = areas;
 
-        cameras.push_back(live);
+        if (m_active >= m_areas.size()) FocusView(0);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // "single" | "quad" -- see the layout note at the top of the class
-    std::shared_ptr<IIr77Return const> SetViewLayout(std::string_view const& layout) {
-        if (layout != "single" && layout != "quad") return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: view layout must be single or quad.");
+    // The view the camera controls drive -- the one under the mouse. Its old view stops moving.
+    std::shared_ptr<IIr77Return const> FocusView(std::uint32_t const& view) {
+        if (view >= m_areas.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: no such view in this layout.");
 
-        m_quad = layout == "quad";
+        m_views[m_active].move = glm::vec3(0.0f);
+        m_active = view;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // For the frame stats -- the active camera, and whether it is the controlled one
+    // For the frame stats -- the focused view's camera, and whether it is the controlled one
     std::shared_ptr<IIr77Return const> GetCameraState(std::uint32_t& index, bool& controlled) {
-        index = m_camera_index;
-        controlled = m_camera_index >= m_camera_count;
+        index = m_views[m_active].index;
+        controlled = index >= m_camera_count;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
-    // cameras -- the file's, then the controlled one (index == camera count). The UI drives these; they take effect on the next frame.
+    // the focused view's camera -- the file's, then the controlled one (index == camera count). The UI drives these; next frame.
     // -------------------------------------------------------------------------------------------------------------------------------------
 
     // Held keys: right / up / forward in -1..1, applied every Update until set back to 0
     std::shared_ptr<IIr77Return const> SetCameraMove(glm::vec3 const& move) {
-        DefineCameraTakeover();
-        m_camera_move = glm::clamp(move, glm::vec3(-1.0f), glm::vec3(1.0f));
+        Ir77ViewCamera& camera = m_views[m_active];
+
+        DefineCameraTakeover(camera);
+        camera.move = glm::clamp(move, glm::vec3(-1.0f), glm::vec3(1.0f));
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // Mouse drag in pixels -- turns the fly camera / swings the orbit camera
     std::shared_ptr<IIr77Return const> SetCameraLook(float const& dx, float const& dy) {
-        DefineCameraTakeover();
-        m_camera_yaw -= dx * CAMERA_LOOK_RADIANS_PER_PIXEL;
-        m_camera_pitch = glm::clamp(m_camera_pitch - dy * CAMERA_LOOK_RADIANS_PER_PIXEL, -CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
+        Ir77ViewCamera& camera = m_views[m_active];
+
+        DefineCameraTakeover(camera);
+        camera.yaw -= dx * CAMERA_LOOK_RADIANS_PER_PIXEL;
+        camera.pitch = glm::clamp(camera.pitch - dy * CAMERA_LOOK_RADIANS_PER_PIXEL, -CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Wheel steps -- orbit distance, 10% per step
+    // Wheel steps -- orbit distance (the ortho box with it), 10% per step
     std::shared_ptr<IIr77Return const> SetCameraZoom(float const& delta) {
-        DefineCameraTakeover();
-        m_camera_distance = std::max(m_camera_distance * std::pow(1.1f, -delta), 0.01f);
+        Ir77ViewCamera& camera = m_views[m_active];
+
+        DefineCameraTakeover(camera);
+        camera.distance = std::max(camera.distance * std::pow(1.1f, -delta), 0.01f);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -224,7 +235,7 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
     std::shared_ptr<IIr77Return const> SetCameraSpeed(float const& factor) {
         if (factor <= 0.0f) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: camera speed factor must be above 0.");
 
-        m_camera_speed *= factor;
+        m_views[m_active].speed *= factor;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -232,13 +243,15 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
     // "orbit" | "fly" -- start from the current view, so switching never jumps; "ortho" -- orbit with an orthographic lens (no perspective,
     // zoom scales the view); "file" -- the file's first camera
     std::shared_ptr<IIr77Return const> SetCameraMode(std::string_view const& mode) {
+        Ir77ViewCamera& camera = m_views[m_active];
+
         if (mode == "orbit" || mode == "fly" || mode == "ortho") {
-            DefineCameraFromView(mode == "fly");
-            m_camera_ortho = mode == "ortho";
-            m_camera_index = m_camera_count;
+            DefineCameraFromView(camera, mode == "fly");
+            camera.ortho = mode == "ortho";
+            camera.index = m_camera_count;
         } else if (mode == "file") {
             if (m_camera_count == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: the file has no cameras.");
-            m_camera_index = 0;
+            camera.index = 0;
         } else {
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: camera mode must be orbit, fly, ortho or file.");
         }
@@ -248,21 +261,11 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
 
     // "top" (down -Y) | "front" (down -Z) | "side" (down -X) -- turns the orbit camera around its target; ortho looks straight down for top
     std::shared_ptr<IIr77Return const> SetCameraView(std::string_view const& view) {
-        DefineCameraTakeover();
-        m_camera_fly = false;
+        Ir77ViewCamera& camera = m_views[m_active];
 
-        if (view == "top") {
-            m_camera_yaw = glm::pi<float>();
-            m_camera_pitch = m_camera_ortho ? -glm::half_pi<float>() : -CAMERA_PITCH_LIMIT;
-        } else if (view == "front") {
-            m_camera_yaw = glm::pi<float>();
-            m_camera_pitch = 0.0f;
-        } else if (view == "side") {
-            m_camera_yaw = -glm::half_pi<float>();
-            m_camera_pitch = 0.0f;
-        } else {
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: camera view must be top, front or side.");
-        }
+        DefineCameraTakeover(camera);
+
+        if (!AimCamera(camera, view)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: camera view must be top, front or side.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -271,86 +274,147 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
     std::shared_ptr<IIr77Return const> SelectCamera(std::uint32_t const& index) {
         if (index > m_camera_count) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: no such camera.");
 
-        m_camera_index = index;
+        m_views[m_active].index = index;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // The next file camera, then the controlled camera, then around again (F2)
     std::shared_ptr<IIr77Return const> NextCamera() {
-        m_camera_index = (m_camera_index + 1) % (m_camera_count + 1);
+        Ir77ViewCamera& camera = m_views[m_active];
+
+        camera.index = (camera.index + 1) % (m_camera_count + 1);
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Orbit, framed on the scene
+    // The controlled camera, back where this view starts
     std::shared_ptr<IIr77Return const> ResetCamera() {
-        ResetCameraControl();
-        m_camera_index = m_camera_count;
+        ResetView(m_active);
+        m_views[m_active].index = m_camera_count;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
-    // Driving the camera while a file camera is up takes it over -- the controlled camera starts from the current view
-    void DefineCameraTakeover() {
-        if (m_camera_index >= m_camera_count) return;
+    // The camera a view draws with: the file camera (rebuilt with this aspect) or its controlled camera. Remembers its view and lens, so the
+    // next switch to orbit / fly starts from it.
+    void WriteViewCamera(Ir77ViewCamera& view, float const aspect, Ir77PVCamera& camera) const {
+        float const radius = std::max(glm::length(m_bounds_max - m_bounds_min) * 0.5f, 0.01f);
 
-        DefineCameraFromView(m_camera_fly);
-        m_camera_index = m_camera_count;
+        camera = Ir77PVCamera{};
+        bool built = false;
+
+        if (view.index < m_camera_count && m_cameras) {
+            float const fallback_far = std::max(100.0f, radius * 20.0f);  // file camera without zfar
+            built = m_cameras->BuildCamera(view.index, aspect, fallback_far, camera)->ID() == GUIDIr77OperationSucceeded;
+        }
+
+        if (!built) camera = MakeControlledCamera(view, aspect);
+
+        // reversed-Z -- PeregrineV's main pass clears depth to 0 and keeps the greater (Ir77PVCmdBuffer)
+        DefineReversedDepth(camera);
+
+        view.view = camera.view;
+
+        // the lens too -- an orthographic projection has none, it keeps the last one
+        if (built || !view.ortho) view.fov = glm::degrees(2.0f * std::atan(1.0f / std::abs(camera.proj[1][1])));
+    }
+
+    // Where a view's controlled camera starts: orbit on the scene; views 1 / 2 / 3 orthographic down top / front / side
+    void ResetView(std::uint32_t const view) {
+        Ir77ViewCamera& camera = m_views[view];
+
+        ResetCameraControl(camera);
+
+        camera.ortho = view != 0;
+
+        if (view == 1) AimCamera(camera, "top");
+        if (view == 2) AimCamera(camera, "front");
+        if (view == 3) AimCamera(camera, "side");
+    }
+
+    // Turns an orbit camera to look down an axis; false for an unknown name
+    bool AimCamera(Ir77ViewCamera& camera, std::string_view const& view) const {
+        if (view == "top") {
+            camera.yaw = glm::pi<float>();
+            camera.pitch = camera.ortho ? -glm::half_pi<float>() : -CAMERA_PITCH_LIMIT;
+        } else if (view == "front") {
+            camera.yaw = glm::pi<float>();
+            camera.pitch = 0.0f;
+        } else if (view == "side") {
+            camera.yaw = -glm::half_pi<float>();
+            camera.pitch = 0.0f;
+        } else {
+            return false;
+        }
+
+        camera.fly = false;
+
+        return true;
+    }
+
+    // Driving a view while a file camera is up takes it over -- its controlled camera starts from the current view
+    void DefineCameraTakeover(Ir77ViewCamera& camera) const {
+        if (camera.index >= m_camera_count) return;
+
+        DefineCameraFromView(camera, camera.fly);
+        camera.index = m_camera_count;
     }
 
     // Orbit on the scene: target its centre, back off to frame its bounds, a little above
-    void ResetCameraControl() {
+    void ResetCameraControl(Ir77ViewCamera& camera) const {
         float const radius = std::max(glm::length(m_bounds_max - m_bounds_min) * 0.5f, 0.01f);
 
-        m_camera_fly = false;
-        m_camera_target = (m_bounds_min + m_bounds_max) * 0.5f;
-        m_camera_distance = radius * 2.5f;
-        m_camera_yaw = glm::pi<float>();  // looking down -Z, from the +Z side
-        m_camera_pitch = -0.35f;
-        m_camera_speed = radius * 0.5f;  // units per second at full key
-        m_camera_move = glm::vec3(0.0f);
+        camera.fly = false;
+        camera.target = (m_bounds_min + m_bounds_max) * 0.5f;
+        camera.distance = radius * 2.5f;
+        camera.yaw = glm::pi<float>();  // looking down -Z, from the +Z side
+        camera.pitch = -0.35f;
+        camera.speed = radius * 0.5f;  // units per second at full key
+        camera.move = glm::vec3(0.0f);
     }
 
-    // Takes over from whatever was on screen last frame -- file camera, orbit or fly
-    void DefineCameraFromView(bool const fly) {
-        glm::mat4 const world = glm::inverse(m_camera_view);
+    // Takes over from whatever the view showed last frame -- file camera, orbit or fly
+    void DefineCameraFromView(Ir77ViewCamera& camera, bool const fly) const {
+        glm::mat4 const world = glm::inverse(camera.view);
         glm::vec3 const eye = glm::vec3(world[3]);
         glm::vec3 const forward = glm::normalize(-glm::vec3(world[2]));  // the view looks down its -Z
 
-        m_camera_fly = fly;
-        m_camera_yaw = std::atan2(forward.x, forward.z);
-        m_camera_pitch = glm::clamp(std::asin(glm::clamp(forward.y, -1.0f, 1.0f)), -CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
+        camera.fly = fly;
+        camera.yaw = std::atan2(forward.x, forward.z);
+        camera.pitch = glm::clamp(std::asin(glm::clamp(forward.y, -1.0f, 1.0f)), -CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
 
         if (fly) {
-            m_camera_position = eye;
+            camera.position = eye;
         } else {
-            m_camera_distance = std::max(glm::length(m_camera_target - eye), 0.01f);
-            m_camera_target = eye + forward * m_camera_distance;  // keep the view; orbit around the point straight ahead
+            camera.distance = std::max(glm::length(camera.target - eye), 0.01f);
+            camera.target = eye + forward * camera.distance;  // keep the view; orbit around the point straight ahead
         }
     }
 
     // Held keys, every Update. Fly: walk along the view. Orbit: forward dollies in / out, right / up pan the target.
-    void UpdateCameraControl(float const dt) {
-        if (m_camera_move == glm::vec3(0.0f) || dt <= 0.0f) return;
+    void UpdateCameraControl(Ir77ViewCamera& camera, float const dt) const {
+        if (camera.move == glm::vec3(0.0f) || dt <= 0.0f) return;
 
-        glm::vec3 const forward = CameraForward();
-        glm::vec3 const right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+        glm::vec3 const forward = CameraForward(camera);
+        // straight down / up has no horizon -- screen up is the heading (yaw), as MakeControlledCamera draws it
+        glm::vec3 const heading = glm::vec3(std::sin(camera.yaw), 0.0f, std::cos(camera.yaw));
+        glm::vec3 const right = glm::normalize(glm::cross(forward, std::abs(forward.y) > 0.99f ? heading : glm::vec3(0.0f, 1.0f, 0.0f)));
         glm::vec3 const up = glm::cross(right, forward);
 
-        float const step = m_camera_speed * dt;
+        float const step = camera.speed * dt;
 
-        if (m_camera_fly) {
-            m_camera_position += (right * m_camera_move.x + up * m_camera_move.y + forward * m_camera_move.z) * step;
+        if (camera.fly) {
+            camera.position += (right * camera.move.x + up * camera.move.y + forward * camera.move.z) * step;
         } else {
-            m_camera_target += (right * m_camera_move.x + up * m_camera_move.y) * step;
-            m_camera_distance = std::max(m_camera_distance * std::exp(-m_camera_move.z * dt), 0.01f);
+            camera.target += (right * camera.move.x + up * camera.move.y) * step;
+            camera.distance = std::max(camera.distance * std::exp(-camera.move.z * dt), 0.01f);
         }
     }
 
-    glm::vec3 CameraForward() const {
-        return glm::vec3(std::cos(m_camera_pitch) * std::sin(m_camera_yaw), std::sin(m_camera_pitch), std::cos(m_camera_pitch) * std::cos(m_camera_yaw));
+    glm::vec3 CameraForward(Ir77ViewCamera const& camera) const {
+        return glm::vec3(std::cos(camera.pitch) * std::sin(camera.yaw), std::sin(camera.pitch), std::cos(camera.pitch) * std::cos(camera.yaw));
     }
 
     // Standard Vulkan depth (near 0, far 1) -> reversed (near 1, far 0): z' = w - z, for perspective and orthographic alike. Float depth is
@@ -365,23 +429,23 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
         camera.view_proj = camera.proj * camera.view;
     }
 
-    // The controlled camera's matrices. Planes hug the scene: whole bounds in front of far, near as large as depth precision allows.
-    Ir77PVCamera MakeControlledCamera(float const aspect) const {
+    // A view's controlled camera matrices. Planes hug the scene: whole bounds in front of far, near as large as depth precision allows.
+    Ir77PVCamera MakeControlledCamera(Ir77ViewCamera const& view, float const aspect) const {
         glm::vec3 const center = (m_bounds_min + m_bounds_max) * 0.5f;
         float const radius = std::max(glm::length(m_bounds_max - m_bounds_min) * 0.5f, 0.01f);
 
-        glm::vec3 const forward = CameraForward();
-        glm::vec3 const eye = m_camera_fly ? m_camera_position : m_camera_target - forward * m_camera_distance;
+        glm::vec3 const forward = CameraForward(view);
+        glm::vec3 const eye = view.fly ? view.position : view.target - forward * view.distance;
 
         float const zfar = glm::length(eye - center) + radius * 2.0f;
         float const znear = std::max(zfar * 0.0001f, 0.001f);
 
         // perspective -- Vulkan clip space is Y-down, so the projection is flipped
-        if (!m_camera_ortho || m_camera_fly) {
+        if (!view.ortho || view.fly) {
             Ir77PVCamera camera{};
             camera.eye = glm::vec4(eye, 1.0f);
             camera.view = glm::lookAtRH(eye, eye + forward, glm::vec3(0.0f, 1.0f, 0.0f));
-            camera.proj = glm::perspectiveRH_ZO(glm::radians(m_camera_fov), aspect, znear, zfar);
+            camera.proj = glm::perspectiveRH_ZO(glm::radians(view.fov), aspect, znear, zfar);
             camera.proj[1][1] *= -1.0f;
             camera.view_proj = camera.proj * camera.view;
 
@@ -390,8 +454,8 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
 
         // orthographic -- the box the perspective lens would see at the target's distance, so switching keeps the framing. Straight down,
         // screen up is the horizontal heading (yaw).
-        float const half_height = m_camera_distance * std::tan(glm::radians(m_camera_fov) * 0.5f);
-        glm::vec3 const up = std::abs(forward.y) > 0.99f ? glm::vec3(std::sin(m_camera_yaw), 0.0f, std::cos(m_camera_yaw)) : glm::vec3(0.0f, 1.0f, 0.0f);
+        float const half_height = view.distance * std::tan(glm::radians(view.fov) * 0.5f);
+        glm::vec3 const up = std::abs(forward.y) > 0.99f ? glm::vec3(std::sin(view.yaw), 0.0f, std::cos(view.yaw)) : glm::vec3(0.0f, 1.0f, 0.0f);
 
         Ir77PVCamera camera{};
         camera.eye = glm::vec4(eye, 1.0f);
@@ -403,27 +467,6 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
         return camera;
     }
 
-    // A quad view's fixed camera: orthographic down forward, the whole scene in the box, screen up along up -- the controls don't move it
-    Ir77PVCamera MakeFixedCamera(glm::vec3 const& forward, glm::vec3 const& up, float const aspect) const {
-        glm::vec3 const center = (m_bounds_min + m_bounds_max) * 0.5f;
-        float const radius = std::max(glm::length(m_bounds_max - m_bounds_min) * 0.5f, 0.01f);
-
-        glm::vec3 const eye = center - forward * radius * 2.0f;
-
-        // the bounds' sphere fits the shorter side
-        float const half_height = aspect >= 1.0f ? radius : radius / aspect;
-
-        Ir77PVCamera camera{};
-        camera.eye = glm::vec4(eye, 1.0f);
-        camera.view = glm::lookAtRH(eye, center, up);
-        camera.proj = glm::orthoRH_ZO(-half_height * aspect, half_height * aspect, -half_height, half_height, radius * 0.5f, radius * 3.5f);
-        camera.proj[1][1] *= -1.0f;
-
-        DefineReversedDepth(camera);
-
-        return camera;
-    }
-
    private:
     std::shared_ptr<IIr77Camera> m_cameras{};  // the file's -- Ir77Pose's component
 
@@ -431,38 +474,18 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
 
     glm::vec3 m_bounds_max{1.0f};
 
-    // cameras -- index m_camera_count is the controlled camera; "next" / F2 cycles
-    std::uint32_t m_camera_count{0};
+    std::uint32_t m_camera_count{0};  // the file's cameras -- a view's index == this is its controlled camera
 
-    std::uint32_t m_camera_index{0};
+    std::array<Ir77ViewCamera, MAX_VIEWS> m_views{};  // [view] -- view 0 is the main camera
 
-    // controlled camera -- orbit (target, distance) or fly (position); yaw / pitch aim both
-    bool m_camera_fly{false};
+    std::vector<glm::vec4> m_areas{glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)};  // [view] -- the layout: where each draws, fractions of the window
 
-    glm::vec3 m_camera_target{0.0f};
+    std::uint32_t m_active{0};  // the view the camera controls drive
 
-    glm::vec3 m_camera_position{0.0f};
-
-    float m_camera_distance{1.0f};
-
-    float m_camera_yaw{0.0f};
-
-    float m_camera_pitch{0.0f};
-
-    float m_camera_speed{1.0f};  // units per second at full key
-
-    glm::vec3 m_camera_move{0.0f};  // held keys: right, up, forward in -1..1
-
-    glm::mat4 m_camera_view{1.0f};  // last frame's view, whichever camera drew it
-
-    float m_camera_fov{60.0f};  // vertical, degrees -- taken from whichever camera drew last, so a takeover keeps the lens
+    static constexpr float AREA_SLACK{1.0001f};  // an area may end this far past the window's edge (float arithmetic) -- PeregrineV clamps it
 
     static constexpr float CAMERA_LOOK_RADIANS_PER_PIXEL{0.004f};
 
     static constexpr float CAMERA_PITCH_LIMIT{1.5f};  // just short of straight up / down
-
-    bool m_camera_ortho{false};  // the controlled orbit camera draws orthographic
-
-    bool m_quad{false};  // view layout -- four views instead of one
 };
 }  // namespace NSIr77Scene

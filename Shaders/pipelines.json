@@ -160,6 +160,9 @@
     },
     "skin.compute": {
       "compute": "skin.comp"
+    },
+    "cull.compute": {
+      "compute": "cull.comp"
     }
   }
 }

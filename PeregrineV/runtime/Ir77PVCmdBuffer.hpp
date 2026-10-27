@@ -41,7 +41,8 @@ namespace NSIr77PeregrineV {
 //
 //   configure: SetDevice / SetSwapchain / SetRenderPass / SetShadowTarget / SetLayout / SetDescriptorSet / SetFrameSlots / SetMaterialTable
 //              / SetPipelineCache / SetOverlay / SetClearColor / [SetPassList]
-//   per frame: SetDraws (per draw list) / SetDispatches (the compute list) -- any time, recorded by the next RecordCommandBuffer
+//   per frame: SetDraws (per view, per draw list) / SetDispatches (the compute list) / SetViewDispatches (once per view: the cull pass) -- any
+//              time, recorded by the next RecordCommandBuffer
 //
 // Bindless: the one descriptor set is bound once per bind point per command buffer; every draw / dispatch gets Ir77PVPushConstants.
 //   create:    CreateCommandBuffer -> DefineExtensionFunctions -> DispatchOperationPool -> DispatchOperationBuffers -> DefineSyncObjects
@@ -251,8 +252,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
             if (pass.view >= MAX_VIEWS) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: pass names a view past MAX_VIEWS.");
 
+            // a little slack on the far edges -- fractions that add up to 1 in the UI's arithmetic needn't in float
             glm::vec4 const& area = pass.area;
-            if (area.x < 0.0f || area.y < 0.0f || area.z <= 0.0f || area.w <= 0.0f || area.x + area.z > 1.0f || area.y + area.w > 1.0f)
+            if (area.x < 0.0f || area.y < 0.0f || area.z <= 0.0f || area.w <= 0.0f || area.x + area.z > AREA_SLACK || area.y + area.w > AREA_SLACK)
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVCmdBuffer: pass area must lie inside its target.");
         }
 
@@ -272,6 +274,14 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // The compute list, replaced whole -- recorded in order by every Compute pass. Empty = no compute work.
     std::shared_ptr<IIr77Return const> SetDispatches(std::vector<Ir77PVDispatch> const& dispatches) {
         m_dispatches = dispatches;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Recorded by the Compute pass once per view the pass list draws, after the dispatch list and the acceleration build -- each with that
+    // view's frame table (pc.frame) and pc.user[7] = the view. The cull pass, every window: its lists are this window's views'. Empty = none.
+    std::shared_ptr<IIr77Return const> SetViewDispatches(std::vector<Ir77PVDispatch> const& dispatches) {
+        m_view_dispatches = dispatches;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -464,6 +474,8 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
 
             if (result->ID() == GUIDIr77OperationSucceeded && pass.type == Ir77PVPassType::Compute && m_acceleration)
                 result = m_acceleration->RecordBuild(cmd);
+
+            if (result->ID() == GUIDIr77OperationSucceeded && pass.type == Ir77PVPassType::Compute) result = RecordViewCompute(cmd);
 
             if (result->ID() != GUIDIr77OperationSucceeded) {
                 vkEndCommandBuffer(cmd);
@@ -885,6 +897,67 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // The view dispatches (the cull pass), once per view the pass list draws -- after the frame's dispatches and the acceleration build, so
+    // they see this frame's posed vertices. Each gets the view's frame table and pc.user[7] = the view, and a barrier after it.
+    std::shared_ptr<IIr77Return const> RecordViewCompute(VkCommandBuffer cmd) {
+        if (m_view_dispatches.empty()) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        std::uint32_t views{0};
+        for (Ir77PVPassDesc const& pass : m_passes)
+            if (pass.type == Ir77PVPassType::Raster) views = std::max(views, pass.view + 1);
+
+        m_descriptor_set->Bind(cmd, VK_PIPELINE_BIND_POINT_COMPUTE);
+
+        // the lists are shared by the frames in flight: the previous frame's draws must be done reading them before they're rewritten
+        VkMemoryBarrier2 previous{};
+        previous.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        previous.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        previous.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.memoryBarrierCount = 1;
+        dependency.pMemoryBarriers = &previous;
+
+        vkCmdPipelineBarrier2(cmd, &dependency);
+
+        VkPipeline bound{VK_NULL_HANDLE};
+
+        for (std::uint32_t view = 0; view < views; view++) {
+            for (auto const& dispatch : m_view_dispatches) {
+                std::shared_ptr<IIr77PVPipelineCPT> resolved{};
+                if (m_pipeline_cache->GetComputePipeline(dispatch.pipeline, resolved)->ID() != GUIDIr77OperationSucceeded) continue;
+
+                VkPipeline pipeline{VK_NULL_HANDLE};
+                resolved->GetPipeline(&pipeline);
+
+                if (pipeline == VK_NULL_HANDLE) continue;
+
+                if (pipeline != bound) {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+                    bound = pipeline;
+                }
+
+                Ir77PVPushConstants push{dispatch.push};
+                Ir77PVPushConstants const base{BasePush(view)};
+
+                push.frame = base.frame;
+                push.instances = base.instances;
+                push.bones = base.bones;
+                push.materials = base.materials;
+                push.user[VIEW_DISPATCH_USER] = view;
+
+                Push(cmd, push);
+
+                vkCmdDispatch(cmd, dispatch.groups[0], dispatch.groups[1], dispatch.groups[2]);
+
+                RecordComputeBarrier(cmd);
+            }
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // compute writes -> the next dispatch and every draw stage that can read them
     void RecordComputeBarrier(VkCommandBuffer cmd) const {
         VkPipelineStageFlags2 dst_stages{VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT |
@@ -1083,7 +1156,19 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
             }
         }
 
-        if (item.indirect) {
+        if (item.indirect && item.count) {
+            // a culled list -- as many commands as the cull pass wrote, at most indirect_count
+            VkBuffer indirect{VK_NULL_HANDLE};
+            VkBuffer count{VK_NULL_HANDLE};
+            item.indirect->GetBuffer(m_current_frame, &indirect);
+            item.count->GetBuffer(m_current_frame, &count);
+
+            if (indexed)
+                vkCmdDrawIndexedIndirectCount(cmd, indirect, item.indirect_offset, count, item.count_offset, item.indirect_count,
+                                              sizeof(VkDrawIndexedIndirectCommand));
+            else
+                vkCmdDrawIndirectCount(cmd, indirect, item.indirect_offset, count, item.count_offset, item.indirect_count, sizeof(VkDrawIndirectCommand));
+        } else if (item.indirect) {
             VkBuffer indirect{VK_NULL_HANDLE};
             item.indirect->GetBuffer(m_current_frame, &indirect);
 
@@ -1410,8 +1495,14 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // one draw list per Ir77PVPass: Shadow, Opaque, Transparent
     static constexpr std::size_t PASS_COUNT = 3;
 
+    // a pass area may end this far past its target's edge (float arithmetic); PassArea clamps it back
+    static constexpr float AREA_SLACK = 1.0001f;
+
     // pc.user[4..7] -- item.user; user[0..3] are the engine's per-kind data
     static constexpr std::size_t USER_FIRST = 4;
+
+    // pc.user[7] of a view dispatch -- the view it runs for
+    static constexpr std::size_t VIEW_DISPATCH_USER = 7;
 
     std::shared_ptr<IIr77PVDevice> m_device{};
 
@@ -1453,6 +1544,9 @@ class Ir77PVCmdBuffer : public Ir77Enlisted, public IIr77PVCmdBuffer, public std
     // compute
     // the compute list -- SetDispatches
     std::vector<Ir77PVDispatch> m_dispatches{};
+
+    // once per view, after the compute list -- SetViewDispatches (the cull pass)
+    std::vector<Ir77PVDispatch> m_view_dispatches{};
 
     // acceleration structures -- SetAcceleration (the frame's first recorded window); built after the Compute pass
     std::shared_ptr<IIr77PVAcceleration> m_acceleration{};

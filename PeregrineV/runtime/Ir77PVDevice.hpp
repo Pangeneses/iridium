@@ -397,7 +397,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         if (!supported.features.multiDrawIndirect) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: multiDrawIndirect not supported.");
         if (!supported.features.drawIndirectFirstInstance) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: drawIndirectFirstInstance not supported.");
 
-        // gl_DrawID -- the vertex shaders find each indirect command's material through it (per-draw material tables)
+        // gl_DrawID -- the vertex shaders find each indirect command's material through it (Geometry's command material table)
         if (!v11_supported.shaderDrawParameters) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: shaderDrawParameters not supported.");
 
         // bindless -- one descriptor set of large, partially bound, update-after-bind arrays (Ir77PVLayout)
@@ -408,6 +408,9 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
                               v12_supported.descriptorBindingStorageImageUpdateAfterBind;
 
         if (!bindless) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: descriptor indexing (bindless) not supported.");
+
+        // vkCmdDrawIndexedIndirectCount -- a culled list draws as many commands as the cull pass wrote (Ir77PVDrawItem::count)
+        if (!v12_supported.drawIndirectCount) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVDevice: drawIndirectCount not supported.");
 
         // dynamic rendering (no VkRenderPass / framebuffers) + vkCmdPipelineBarrier2
         if (!v13_supported.dynamicRendering || !v13_supported.synchronization2 || !v13_supported.maintenance4 || !v13_supported.shaderDemoteToHelperInvocation)
@@ -478,6 +481,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
         m_vulkan12.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
         m_vulkan12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         m_vulkan12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+        m_vulkan12.drawIndirectCount = VK_TRUE;  // required above
         m_vulkan12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
         m_vulkan12.bufferDeviceAddress = m_buffer_device_address ? VK_TRUE : VK_FALSE;
         m_vulkan12.pNext = &m_vulkan13;
