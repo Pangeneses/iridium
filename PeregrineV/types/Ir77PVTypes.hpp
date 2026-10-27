@@ -35,6 +35,13 @@ static constexpr std::uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
 static constexpr std::size_t MAX_WINDOWS = 8;
 
+// cameras one window draws at once -- each in its own area of the window (Ir77PVPassDesc::view / area), each with its own frame table
+static constexpr std::uint32_t MAX_VIEWS = 4;
+
+// bytes between views in the camera buffer and in the frame table buffer -- the largest minStorageBufferOffsetAlignment Vulkan allows, so
+// every view's range is a legal descriptor offset on any device
+static constexpr VkDeviceSize VIEW_STRIDE = 256;
+
 // rows in the material table (one Static buffer per device)
 static constexpr std::uint32_t MATERIAL_CAPACITY = 256;
 
@@ -193,11 +200,17 @@ struct Ir77PVFrameTable {
 
 static_assert(sizeof(Ir77PVFrameTable) == 36, "Ir77PVFrameTable must match Ir77FrameTable in bindless.glsl");
 
-// Per window per frame: the table's own slot plus a CPU copy of what it holds (Ir77PVCmdBuffer builds push constants from it)
+static_assert(sizeof(Ir77PVFrameTable) <= VIEW_STRIDE, "a view's frame table must fit its stride");
+
+// Per window per frame: one frame table per view (its slot is pc.frame for that view's passes), the camera slot each one lists, and a CPU
+// copy of everything else they hold -- the same for every view (Ir77PVCmdBuffer builds push constants from it). values.camera is view 0's.
 struct Ir77PVFrameSlots {
-    std::uint32_t table{BINDLESS_NO_SLOT};
+    std::array<std::uint32_t, MAX_VIEWS> tables{BINDLESS_NO_SLOT, BINDLESS_NO_SLOT, BINDLESS_NO_SLOT, BINDLESS_NO_SLOT};
+    std::array<std::uint32_t, MAX_VIEWS> cameras{BINDLESS_NO_SLOT, BINDLESS_NO_SLOT, BINDLESS_NO_SLOT, BINDLESS_NO_SLOT};
     Ir77PVFrameTable values{};
 };
+
+static_assert(MAX_VIEWS == 4, "Ir77PVFrameSlots spells out one entry per view");
 
 // =============================================================================================================================================
 // passes
@@ -226,7 +239,8 @@ enum class Ir77PVRenderPassKind : std::uint8_t { Main, Shadow, Offscreen, Post }
 enum class Ir77PVPassType : std::uint8_t { Compute, Raster };
 
 // What a Raster pass renders into
-// Swapchain -- the acquired swapchain image + the swapchain's depth image; ends ready to present. Exactly one pass per list targets it.
+// Swapchain -- the acquired swapchain image + the swapchain's depth image. Any number of passes may target it, each on its own area: the
+//             first clears the whole image, the rest load what is there, the last ends ready to present.
 // Shadow    -- the shadow target (SetShadowTarget), depth only; ends ready to be sampled. Skipped while it has no draws or no target.
 enum class Ir77PVPassTarget : std::uint8_t { Swapchain, Shadow };
 
@@ -236,6 +250,8 @@ struct Ir77PVPassDesc {
     Ir77PVRenderPassKind formats{Ir77PVRenderPassKind::Main};  // the attachment formats the pass's pipelines were built for
     std::vector<Ir77PVPass> lists{};                           // draw lists, recorded in this order
     bool overlay{false};                                       // CEF composite after the lists
+    std::uint32_t view{0};                                     // whose draw lists it records and whose frame table (camera) they see
+    glm::vec4 area{0.0f, 0.0f, 1.0f, 1.0f};                    // where on the target -- x, y, width, height as fractions of its extent
 };
 
 // =============================================================================================================================================
@@ -407,7 +423,7 @@ enum class Ir77PVTextureKind : std::uint8_t { Color, Data, Cube, Depth, Storage 
 enum class Ir77PVPlaceholderKind : std::uint8_t { White, Normal };
 
 struct Ir77PVFrameSizes {
-    VkDeviceSize camera{256};                       // view, proj, view_proj, eye position
+    VkDeviceSize camera{VIEW_STRIDE * MAX_VIEWS};   // one Ir77PVCamera per view, VIEW_STRIDE apart
     VkDeviceSize lights{16 + 64 * 64};              // 16-byte header + 64 lights x 64 bytes
     VkDeviceSize instances{8192 * 64};              // 8192 instances x mat4
     VkDeviceSize shadow_matrices{4 * 64};           // 4 cascades / lights x mat4
@@ -481,6 +497,8 @@ struct Ir77PVCamera {
     // x seconds since start, y seconds since last frame, z frame number -- the caller's clock
     glm::vec4 time{0.0f};
 };
+
+static_assert(sizeof(Ir77PVCamera) <= VIEW_STRIDE, "a view's camera must fit its stride");
 
 struct Ir77PVLight {
     glm::vec3 position{};
@@ -809,9 +827,11 @@ struct Ir77PVFrameAsset {
     std::vector<glm::mat4> bones{};       // bone_count joint matrices
 };
 
-// One window in a frame -- its camera, and draws the assets don't make (a field), appended after theirs
+// One window in a frame -- its cameras, and draws the assets don't make (a field), appended after theirs in every view.
+// cameras: one per view, 1 .. MAX_VIEWS. One fills the window; 2 to 4 tile it 2 x 2, left to right then top to bottom -- every cell keeps the
+// window's aspect, so each camera is built as if it had the whole window.
 struct Ir77PVFrameWindow {
-    Ir77PVCamera camera{};
+    std::vector<Ir77PVCamera> cameras{};
     std::vector<Ir77PVDrawItem> opaque{};
     std::vector<Ir77PVDrawItem> shadow{};
     std::vector<Ir77PVDrawItem> transparent{};

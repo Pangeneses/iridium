@@ -289,11 +289,12 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Replaces one pass's draw list for a window. Persists until replaced.
-    std::shared_ptr<IIr77Return const> SetDraws(std::size_t const& window, Ir77PVPass const& pass, std::vector<Ir77PVDrawItem> const& draws) {
+    // Replaces one view's draw list for a pass in a window. Persists until replaced.
+    std::shared_ptr<IIr77Return const> SetDraws(std::size_t const& window, std::uint32_t const& view, Ir77PVPass const& pass,
+                                                std::vector<Ir77PVDrawItem> const& draws) {
         if (window >= m_command_buffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
 
-        return m_command_buffers[window]->SetDraws(pass, draws);
+        return m_command_buffers[window]->SetDraws(view, pass, draws);
     }
 
     // Replaces the once-a-frame compute list (skinning, the field) -- recorded by whichever window Paint records first each frame, ahead of
@@ -304,7 +305,7 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Replaces a window's pass list -- what its command buffer records each frame, in order. Exactly one pass must target the swapchain.
+    // Replaces a window's pass list -- what its command buffer records each frame, in order. At least one pass must target the swapchain.
     std::shared_ptr<IIr77Return const> SetPassList(std::size_t const& window, std::vector<Ir77PVPassDesc> const& passes) {
         if (window >= m_command_buffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
 
@@ -420,11 +421,12 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         VkDeviceSize offset{0};
     };
 
-    // This window's frame table for this frame, with the latest TLAS slot -- everything else as registered
+    // This window's frame tables for this frame, one per view, with the latest TLAS slot -- everything else as registered
     void DefineFrameTable(std::size_t const& window, std::uint32_t const& frame) {
         if (window >= m_frame_tables.size() || window >= m_frame_slots.size() || !m_frame_tables[window]) return;
 
-        Ir77PVFrameTable values = m_frame_slots[window][frame].values;
+        Ir77PVFrameSlots const& slots = m_frame_slots[window][frame];
+        Ir77PVFrameTable values = slots.values;
 
         values.tlas = BINDLESS_NO_SLOT;
         values.ray_objects = BINDLESS_NO_SLOT;
@@ -434,7 +436,11 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
             m_acceleration->GetObjectSlot(values.ray_objects);
         }
 
-        m_frame_tables[window]->Update(frame, &values, sizeof(Ir77PVFrameTable));
+        for (std::uint32_t view = 0; view < MAX_VIEWS; view++) {
+            values.camera = slots.cameras[view];
+
+            m_frame_tables[window]->Update(frame, &values, sizeof(Ir77PVFrameTable), view * VIEW_STRIDE);
+        }
     }
 
     void ApplyFrameData(std::size_t const& window, std::uint32_t const& frame) {

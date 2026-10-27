@@ -362,14 +362,14 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         m_lighting->WriteFrame(m_frame);
 
-        // every window -- file camera (rebuilt with this aspect) or the controlled camera, and the field's draws
+        // every window -- its views' cameras (the live one: file camera rebuilt with this aspect, or the controlled camera), and the field's draws
         m_frame.windows.assign(m_view_windows, Ir77PVFrameWindow{});
 
         for (std::size_t w = 0; w < m_view_windows; w++) {
             Ir77PVFrameWindow& window = m_frame.windows[w];
 
-            m_view->WriteCamera(aspect, window.camera);
-            window.camera.time = glm::vec4(seconds, dt, static_cast<float>(m_frame_number), 0.0f);
+            m_view->WriteCameras(aspect, window.cameras);
+            for (Ir77PVCamera& camera : window.cameras) camera.time = glm::vec4(seconds, dt, static_cast<float>(m_frame_number), 0.0f);
 
             m_field->AppendDraws(w, Ir77PVPass::Opaque, window.opaque);
             m_field->AppendDraws(w, Ir77PVPass::Shadow, window.shadow);

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string_view>
+#include <vector>
 
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
@@ -19,7 +20,7 @@ using namespace NSIr77PeregrineV;
 namespace NSIr77Scene {
 
 // The cameras -- the file's, then the controlled orbit / fly / ortho camera (index == camera count) the UI drives.
-//   SetCameras -> SetBounds -> per frame: Update(dt) -> WriteCamera(aspect)
+//   SetCameras -> SetBounds -> per frame: Update(dt) -> WriteCameras(aspect)
 typedef struct IIr77View : virtual public IIr77Enlisted {
     IIr77View() = default;
 
@@ -35,6 +36,13 @@ typedef struct IIr77View : virtual public IIr77Enlisted {
     // The camera a window draws with: the file camera (rebuilt with this aspect) or the controlled camera (orbit / fly). Remembers its view
     // and lens, so the next switch to orbit / fly starts from it. camera.time is the caller's.
     virtual std::shared_ptr<IIr77Return const> WriteCamera(float const& aspect, Ir77PVCamera& camera) = 0;
+
+    // One camera per view, in the layout's order: "single" -- the live camera (WriteCamera's); "quad" -- top, front, side (orthographic,
+    // framed on the bounds), then the live camera. Each keeps this aspect -- PeregrineV's quad cells keep the window's.
+    virtual std::shared_ptr<IIr77Return const> WriteCameras(float const& aspect, std::vector<Ir77PVCamera>& cameras) = 0;
+
+    // "single" | "quad" -- how many views each window draws, from the next frame
+    virtual std::shared_ptr<IIr77Return const> SetViewLayout(std::string_view const& layout) = 0;
 
     // For the frame stats -- the active camera, and whether it is the controlled one
     virtual std::shared_ptr<IIr77Return const> GetCameraState(std::uint32_t& index, bool& controlled) = 0;

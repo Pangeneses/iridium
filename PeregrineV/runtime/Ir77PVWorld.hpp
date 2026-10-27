@@ -48,9 +48,9 @@ namespace NSIr77PeregrineV {
 //   load:      LoadAsset(bundle) -- textures and materials (Materials), BLEND primitives split off into their own compacted scene, the opaque
 //              ones sorted into material runs, one material-row table per stream (Transfer), the static stream on the mesh or vertex path,
 //              the skinned stream and its compute-skinned copy (the posed stream), BLASes with MASK alpha rows (Acceleration)
-//   per frame: SubmitFrame(frame) -- models[], bone bases + palettes, lights, shadow matrices and each window's camera (Paint frame data),
-//              skinning then the frame's dispatches, every window's opaque / shadow / sorted transparent draws, the TLAS transforms and which
-//              assets are in the rays
+//   per frame: SubmitFrame(frame) -- models[], bone bases + palettes, lights, shadow matrices and each window's cameras (Paint frame data),
+//              skinning then the frame's dispatches, every view's opaque / shadow / sorted transparent draws, each window's pass list when its
+//              view count changes, the TLAS transforms and which assets are in the rays
 //   unload:    UnloadAsset -- BLASes, scenes and tables freed, its ranges back
 //
 // Every asset gets its own range of models[] slots and joint matrices (first fit), so a scene is any number of files. LoadAsset moves the
@@ -313,16 +313,22 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
     // The frame -> Paint and Acceleration:
     //   1. models[] and the bones from each asset in the frame; assets left out drop out of the rays
     //   2. skinning, then the frame's own dispatches -- once a frame
-    //   3. per window: camera, models[], lights, shadow matrices, bones; opaque and shadow draws (the same for every window), then the
-    //      transparent objects back to front from that window's eye; the frame's own draws after the assets' in each list
+    //   3. per window: cameras, models[], lights, shadow matrices, bones; the pass list when its view count changed; per view the opaque
+    //      draws (the same for every view), the shadow draws (view 0 -- the one shadow pass), then the transparent objects back to front from
+    //      that view's eye; the frame's own draws after the assets' in each list
     std::shared_ptr<IIr77Return const> SubmitFrame(Ir77PVFrame const& frame, Ir77PVFrameReport& report) {
         report = Ir77PVFrameReport{};
 
         if (!m_paint || !m_geometry) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVWorld: not wired.");
 
+        for (Ir77PVFrameWindow const& window : frame.windows)
+            if (window.cameras.empty() || window.cameras.size() > MAX_VIEWS)
+                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVWorld: every window needs 1 to MAX_VIEWS cameras.");
+
         std::shared_ptr<IIr77Return const> result{};
 
         m_windows = frame.windows.size();
+        m_window_views.resize(m_windows, 0);
 
         // 1.
         m_present.clear();
@@ -392,8 +398,21 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
         for (std::size_t w = 0; w < frame.windows.size(); w++) {
             Ir77PVFrameWindow const& window = frame.windows[w];
+            std::uint32_t const views = static_cast<std::uint32_t>(window.cameras.size());
 
-            m_paint->SetFrameData(w, Ir77PVBufferSlot::Camera, &window.camera, sizeof(Ir77PVCamera));
+            if (views != m_window_views[w]) {
+                if (Failed(m_paint->SetPassList(w, MakePassList(views)), result)) return result;
+
+                m_paint->ClearDraws(w);  // the views it no longer has
+                m_window_views[w] = views;
+            }
+
+            // one camera per view, VIEW_STRIDE apart -- where each view's frame table points
+            m_cameras_packed.assign(static_cast<std::size_t>(VIEW_STRIDE) * views, 0);
+            for (std::uint32_t v = 0; v < views; v++)
+                std::memcpy(m_cameras_packed.data() + static_cast<std::size_t>(VIEW_STRIDE) * v, &window.cameras[v], sizeof(Ir77PVCamera));
+
+            m_paint->SetFrameData(w, Ir77PVBufferSlot::Camera, m_cameras_packed.data(), m_cameras_packed.size());
             m_paint->SetFrameData(w, Ir77PVBufferSlot::Lights, m_lights_packed.data(), m_lights_packed.size());
 
             if (!m_models.empty()) m_paint->SetFrameData(w, Ir77PVBufferSlot::Instances, m_models.data(), m_models.size() * sizeof(glm::mat4));
@@ -407,17 +426,22 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             std::vector<Ir77PVDrawItem> window_shadow = shadow;
             window_shadow.insert(window_shadow.end(), window.shadow.begin(), window.shadow.end());
 
-            std::vector<Ir77PVDrawItem> window_transparent{};
-            if (Failed(MakeTransparentDraws(window.camera, window_transparent), result)) return result;
-            window_transparent.insert(window_transparent.end(), window.transparent.begin(), window.transparent.end());
-
-            m_paint->SetDraws(w, Ir77PVPass::Opaque, window_opaque);
-            m_paint->SetDraws(w, Ir77PVPass::Shadow, window_shadow);
-            m_paint->SetDraws(w, Ir77PVPass::Transparent, window_transparent);
+            m_paint->SetDraws(w, 0, Ir77PVPass::Shadow, window_shadow);
 
             report.opaque_items = static_cast<std::uint32_t>(window_opaque.size());
             report.shadow_items = static_cast<std::uint32_t>(window_shadow.size());
-            report.transparent_items = static_cast<std::uint32_t>(window_transparent.size());
+            report.transparent_items = 0;
+
+            for (std::uint32_t v = 0; v < views; v++) {
+                std::vector<Ir77PVDrawItem> view_transparent{};
+                if (Failed(MakeTransparentDraws(window.cameras[v], view_transparent), result)) return result;
+                view_transparent.insert(view_transparent.end(), window.transparent.begin(), window.transparent.end());
+
+                m_paint->SetDraws(w, v, Ir77PVPass::Opaque, window_opaque);
+                m_paint->SetDraws(w, v, Ir77PVPass::Transparent, view_transparent);
+
+                report.transparent_items += static_cast<std::uint32_t>(view_transparent.size());
+            }
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
@@ -929,6 +953,44 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // What a window records for this many views: Compute, the Shadow pass (view 0's shadow list -- the lights are the same for every view),
+    // one swapchain pass per view, then the overlay. One view fills the window and composites the overlay itself; 2 to 4 tile it 2 x 2, left
+    // to right then top to bottom (every cell keeps the window's aspect), and the overlay gets a whole-window pass of its own after them.
+    std::vector<Ir77PVPassDesc> MakePassList(std::uint32_t const views) const {
+        Ir77PVPassDesc compute{};
+        compute.type = Ir77PVPassType::Compute;
+
+        Ir77PVPassDesc shadow{};
+        shadow.target = Ir77PVPassTarget::Shadow;
+        shadow.formats = Ir77PVRenderPassKind::Shadow;
+        shadow.lists = {Ir77PVPass::Shadow};
+
+        std::vector<Ir77PVPassDesc> passes{compute, shadow};
+
+        for (std::uint32_t v = 0; v < views; v++) {
+            Ir77PVPassDesc pass{};
+            pass.target = Ir77PVPassTarget::Swapchain;
+            pass.formats = Ir77PVRenderPassKind::Main;
+            pass.lists = {Ir77PVPass::Opaque, Ir77PVPass::Transparent};
+            pass.view = v;
+            pass.area = views == 1 ? glm::vec4(0.0f, 0.0f, 1.0f, 1.0f) : glm::vec4(0.5f * static_cast<float>(v % 2), 0.5f * static_cast<float>(v / 2), 0.5f, 0.5f);
+            pass.overlay = views == 1;
+
+            passes.push_back(pass);
+        }
+
+        if (views > 1) {
+            Ir77PVPassDesc overlay{};
+            overlay.target = Ir77PVPassTarget::Swapchain;
+            overlay.formats = Ir77PVRenderPassKind::Main;
+            overlay.overlay = true;
+
+            passes.push_back(overlay);
+        }
+
+        return passes;
+    }
+
     // 64 threads a group, spread over x and y -- skin.comp rebuilds the flat index
     std::array<std::uint32_t, 3> SkinGroups(std::uint64_t const threads) const {
         std::uint64_t const groups = std::max<std::uint64_t>((threads + 63) / 64, 1);
@@ -966,6 +1028,10 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
     // per frame
     std::size_t m_windows{0};  // the last frame's -- UnloadAsset clears their draws
+
+    std::vector<std::uint32_t> m_window_views{};  // [window] -- views its pass list was built for (0 = none yet)
+
+    std::vector<std::uint8_t> m_cameras_packed{};  // one window's cameras, VIEW_STRIDE apart
 
     std::vector<std::uint32_t> m_present{};  // the assets in this frame, sorted
 

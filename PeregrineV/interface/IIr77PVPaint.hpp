@@ -61,7 +61,7 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     // The shadow atlas -- without it the Shadow pass has no target and is skipped
     virtual std::shared_ptr<IIr77Return const> SetShadowMap(std::shared_ptr<IIr77PVTexture> shadow_map) = 0;
 
-    // [window][frame in flight] -- the frame table slot and the slots it lists
+    // [window][frame in flight] -- each view's frame table slot and the slots they list
     virtual std::shared_ptr<IIr77Return const> SetFrameSlots(std::vector<std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT>> const& frame_slots) = 0;
 
     // [window][slot] -- the frame-level buffers SetFrameData writes into
@@ -73,7 +73,8 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     // Ray-query devices only -- the first window recorded each frame builds the acceleration structures after its Compute pass
     virtual std::shared_ptr<IIr77Return const> SetAcceleration(std::shared_ptr<IIr77PVAcceleration> acceleration) = 0;
 
-    // [window] -- the frame table buffers. Each window's copy is rewritten before submit with the TLAS built this frame.
+    // [window] -- the frame table buffers, one table per view VIEW_STRIDE apart. Each window's copy is rewritten before submit with the TLAS
+    // built this frame.
     virtual std::shared_ptr<IIr77Return const> SetFrameTables(std::vector<std::shared_ptr<IIr77PVBuffer>> const& frame_tables) = 0;
 
     // One command buffer per window. After the wiring and the pipeline cache.
@@ -85,13 +86,14 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> SetFrameData(std::size_t const& window, Ir77PVBufferSlot const& slot, void const* data,
                                                             VkDeviceSize const& size, VkDeviceSize const& offset = 0) = 0;
 
-    // Replaces one pass's draw list for a window. Persists until replaced.
-    virtual std::shared_ptr<IIr77Return const> SetDraws(std::size_t const& window, Ir77PVPass const& pass, std::vector<Ir77PVDrawItem> const& draws) = 0;
+    // Replaces one view's draw list for a pass in a window. Persists until replaced.
+    virtual std::shared_ptr<IIr77Return const> SetDraws(std::size_t const& window, std::uint32_t const& view, Ir77PVPass const& pass,
+                                                        std::vector<Ir77PVDrawItem> const& draws) = 0;
 
     // Replaces the once-a-frame compute list (skinning, the field) -- recorded by the first window Draw records. Persists until replaced.
     virtual std::shared_ptr<IIr77Return const> SetFrameDispatches(std::vector<Ir77PVDispatch> const& dispatches) = 0;
 
-    // Replaces a window's pass list. Exactly one pass must target the swapchain.
+    // Replaces a window's pass list. At least one pass must target the swapchain.
     virtual std::shared_ptr<IIr77Return const> SetPassList(std::size_t const& window, std::vector<Ir77PVPassDesc> const& passes) = 0;
 
     virtual std::shared_ptr<IIr77Return const> ClearDraws(std::size_t const& window) = 0;

@@ -1022,7 +1022,8 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Per window, per frame in flight: every frame buffer's copy gets a slot, then a frame table row listing them gets its own slot
+    // Per window, per frame in flight: every frame buffer's copy gets a slot -- the camera buffer one per view, VIEW_STRIDE apart -- then one
+    // frame table per view, VIEW_STRIDE apart in the frame table buffer, each listing its view's camera and the shared rest, gets its own slot
     std::shared_ptr<IIr77Return const> RegisterFrameBuffers() {
         auto const& table = m_descriptor_sets.at(m_current_device);
         auto const& frame_buffers = m_buffers_frame.at(m_current_device);
@@ -1055,13 +1056,19 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
             frame_table->SetMode(Ir77PVBufferMode::Dynamic);
 
-            auto result = frame_table->CreateResources(sizeof(Ir77PVFrameTable), MAX_FRAMES_IN_FLIGHT);
+            auto result = frame_table->CreateResources(VIEW_STRIDE * MAX_VIEWS, MAX_FRAMES_IN_FLIGHT);
             if (result->ID() != GUIDIr77OperationSucceeded) return result;
 
             for (std::uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
                 Ir77PVFrameSlots& slots = frame_slots[w][frame];
 
-                slots.values.camera = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Camera), Ir77PVSlotKind::Camera, frame);
+                for (std::uint32_t view = 0; view < MAX_VIEWS; view++) {
+                    slots.cameras[view] = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Camera), Ir77PVSlotKind::Camera, frame,
+                                                            view * VIEW_STRIDE, VIEW_STRIDE);
+                    if (slots.cameras[view] == BINDLESS_NO_SLOT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: camera registration failed.");
+                }
+
+                slots.values.camera = slots.cameras[0];
                 slots.values.lights = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Lights), Ir77PVSlotKind::Lights, frame);
                 slots.values.instances = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Instances), Ir77PVSlotKind::Instances, frame);
                 slots.values.shadow_matrices =
@@ -1074,11 +1081,16 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
                     slots.values.shadow_matrices == BINDLESS_NO_SLOT || slots.values.bones == BINDLESS_NO_SLOT)
                     return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: frame buffer registration failed.");
 
-                result = frame_table->Update(frame, &slots.values, sizeof(Ir77PVFrameTable));
-                if (result->ID() != GUIDIr77OperationSucceeded) return result;
+                for (std::uint32_t view = 0; view < MAX_VIEWS; view++) {
+                    Ir77PVFrameTable values = slots.values;
+                    values.camera = slots.cameras[view];
 
-                slots.table = RegisterFrameCopy(table, frame_table, Ir77PVSlotKind::FrameTable, frame);
-                if (slots.table == BINDLESS_NO_SLOT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: frame table registration failed.");
+                    result = frame_table->Update(frame, &values, sizeof(Ir77PVFrameTable), view * VIEW_STRIDE);
+                    if (result->ID() != GUIDIr77OperationSucceeded) return result;
+
+                    slots.tables[view] = RegisterFrameCopy(table, frame_table, Ir77PVSlotKind::FrameTable, frame, view * VIEW_STRIDE, VIEW_STRIDE);
+                    if (slots.tables[view] == BINDLESS_NO_SLOT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: frame table registration failed.");
+                }
             }
 
             frame_tables.push_back(frame_table);
@@ -1090,11 +1102,16 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // One frame copy of a Dynamic buffer -> its bindless slot, holding kind; BINDLESS_NO_SLOT on failure
+    // One frame copy of a Dynamic buffer -> its bindless slot, holding kind; BINDLESS_NO_SLOT on failure. offset / range pick a piece of the
+    // copy (one view's camera or frame table); the default is the whole copy.
     std::uint32_t RegisterFrameCopy(std::shared_ptr<IIr77PVDescriptorSet> const& table, std::shared_ptr<IIr77PVBuffer> const& buffer,
-                                    Ir77PVSlotKind const& kind, std::uint32_t const& frame) {
+                                    Ir77PVSlotKind const& kind, std::uint32_t const& frame, VkDeviceSize const& offset = 0,
+                                    VkDeviceSize const& range = VK_WHOLE_SIZE) {
         VkDescriptorBufferInfo info{};
         if (buffer->GetBufferInfo(frame, &info)->ID() != GUIDIr77OperationSucceeded) return BINDLESS_NO_SLOT;
+
+        info.offset += offset;
+        if (range != VK_WHOLE_SIZE) info.range = range;
 
         std::uint32_t slot{BINDLESS_NO_SLOT};
         if (table->RegisterBuffer(info.buffer, info.offset, info.range, kind, slot)->ID() != GUIDIr77OperationSucceeded) return BINDLESS_NO_SLOT;

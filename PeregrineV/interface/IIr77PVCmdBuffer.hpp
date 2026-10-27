@@ -50,7 +50,7 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     // The device's one bindless table
     virtual std::shared_ptr<IIr77Return const> SetDescriptorSet(std::shared_ptr<IIr77PVDescriptorSet> descriptor_set) = 0;
 
-    // This window's frame table slot + the slots it lists, one entry per frame in flight (Ir77PeregrineV::GetFrameSlots)
+    // This window's frame table slot per view + the slots they list, one entry per frame in flight
     virtual std::shared_ptr<IIr77Return const> SetFrameSlots(std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT> const& frame_slots) = 0;
 
     // Buffer slot of the device's material table (Ir77PeregrineV::GetMaterialTableSlot)
@@ -59,13 +59,14 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     // The device's pipeline cache -- resolves the pipeline handles on draw items and the overlay while recording. Required.
     virtual std::shared_ptr<IIr77Return const> SetPipelineCache(std::shared_ptr<IIr77PVPipelineCache> pipeline_cache) = 0;
 
-    // CEF composite, drawn last in the main pass; the overlay's texture slot goes in pc.user[0]. pipeline -- usually FindPipeline(CEF).
+    // CEF composite, drawn by the pass that has overlay set; the overlay's texture slot goes in pc.user[0]. pipeline -- usually FindPipeline(CEF).
     virtual std::shared_ptr<IIr77Return const> SetOverlay(std::shared_ptr<IIr77PVOverlay> overlay, Ir77PVPipelineHandle const& pipeline) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetClearColor(VkClearColorValue const& clear_color) = 0;
 
     // ---- pass list -----------------------------------------------------------------------------------------------------------------------
-    // What RecordCommandBuffer records, in order. Exactly one Raster pass must target the swapchain. Default: Compute -> Shadow -> Main.
+    // What RecordCommandBuffer records, in order. At least one Raster pass must target the swapchain -- the first clears it, the last presents.
+    // Default: Compute -> Shadow -> Main (view 0, the whole window).
     virtual std::shared_ptr<IIr77Return const> SetPassList(std::vector<Ir77PVPassDesc> const& passes) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPassList(std::vector<Ir77PVPassDesc>& passes) = 0;
@@ -94,8 +95,8 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     // ---- per frame: SetCurrentFrame -> WaitForFence -> AcquireNextImage -> ResetFence -> RecordCommandBuffer -> SubmitFrame -> PresentFrame
     virtual std::shared_ptr<IIr77Return const> SetCurrentFrame(std::uint32_t const& current_frame) = 0;
 
-    // Replaces the list for one pass. Opaque sorted by pipeline then material; Transparent back to front.
-    virtual std::shared_ptr<IIr77Return const> SetDraws(Ir77PVPass const& pass, std::vector<Ir77PVDrawItem> const& draws) = 0;
+    // Replaces one view's list for one pass. Opaque sorted by pipeline then material; Transparent back to front from that view's eye.
+    virtual std::shared_ptr<IIr77Return const> SetDraws(std::uint32_t const& view, Ir77PVPass const& pass, std::vector<Ir77PVDrawItem> const& draws) = 0;
 
     virtual std::shared_ptr<IIr77Return const> ClearDraws() = 0;
 

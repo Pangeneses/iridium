@@ -61,6 +61,7 @@ namespace NSIr77Scene {
 //   camera.select   index                         -- == camera count -> the controlled camera
 //   camera.next                                   -- next file camera, then the controlled camera
 //   camera.reset                                  -- orbit framed on the scene
+//   camera.layout   value "single" | "quad"       -- one view, or top / front / side / live in a 2 x 2 grid
 //   animation.play  name, loop (true), speed (1)
 //   animation.stop  name
 //   animation.stop_all
@@ -274,6 +275,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         m_operations["camera.select"] = [this](Ir77SceneArgs const& a) { return m_view->SelectCamera(static_cast<std::uint32_t>(Number(a, "index", 0.0f))); };
         m_operations["camera.next"] = [this](Ir77SceneArgs const&) { return m_view->NextCamera(); };
         m_operations["camera.reset"] = [this](Ir77SceneArgs const&) { return m_view->ResetCamera(); };
+        m_operations["camera.layout"] = [this](Ir77SceneArgs const& a) { return m_view->SetViewLayout(Text(a, "value")); };
     }
 
     void DefineAnimationOperations() {

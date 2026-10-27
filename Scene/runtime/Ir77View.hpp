@@ -11,6 +11,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -40,8 +41,11 @@ namespace NSIr77Scene {
 // Ir77Animate; the UI reaches it through the scene server's camera.* ops.
 //
 //   scene:     SetCameras (the file's) -> SetBounds (frames the controlled camera)
-//   UI:        SetCameraMove / Look / Zoom / Speed / Mode / View, SelectCamera / NextCamera / ResetCamera -- next frame
-//   per frame: Update(dt) -> WriteCamera(aspect) per window
+//   UI:        SetCameraMove / Look / Zoom / Speed / Mode / View, SelectCamera / NextCamera / ResetCamera, SetViewLayout -- next frame
+//   per frame: Update(dt) -> WriteCameras(aspect) per window
+//
+// Layout: "single" -- one view, the live camera. "quad" -- four, in PeregrineV's 2 x 2 order (left to right, then top to bottom): top,
+// front and side, orthographic and framed on the scene's bounds, then the live camera.
 // =============================================================================================================================================
 class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_shared_from_this<Ir77View> {
    public:
@@ -148,6 +152,33 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
 
         // the lens too -- an orthographic projection has none, it keeps the last one
         if (built || !m_camera_ortho) m_camera_fov = glm::degrees(2.0f * std::atan(1.0f / std::abs(camera.proj[1][1])));
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // One camera per view, in the layout's order -- the live one is WriteCamera's. Each cell of the quad keeps the window's aspect.
+    std::shared_ptr<IIr77Return const> WriteCameras(float const& aspect, std::vector<Ir77PVCamera>& cameras) {
+        cameras.clear();
+
+        Ir77PVCamera live{};
+        WriteCamera(aspect, live);
+
+        if (m_quad) {
+            cameras.push_back(MakeFixedCamera(glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), aspect));  // top: down -Y, -Z up the screen
+            cameras.push_back(MakeFixedCamera(glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, 1.0f, 0.0f), aspect));   // front: down -Z
+            cameras.push_back(MakeFixedCamera(glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), aspect));   // side: down -X
+        }
+
+        cameras.push_back(live);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // "single" | "quad" -- see the layout note at the top of the class
+    std::shared_ptr<IIr77Return const> SetViewLayout(std::string_view const& layout) {
+        if (layout != "single" && layout != "quad") return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Scene: view layout must be single or quad.");
+
+        m_quad = layout == "quad";
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -372,6 +403,27 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
         return camera;
     }
 
+    // A quad view's fixed camera: orthographic down forward, the whole scene in the box, screen up along up -- the controls don't move it
+    Ir77PVCamera MakeFixedCamera(glm::vec3 const& forward, glm::vec3 const& up, float const aspect) const {
+        glm::vec3 const center = (m_bounds_min + m_bounds_max) * 0.5f;
+        float const radius = std::max(glm::length(m_bounds_max - m_bounds_min) * 0.5f, 0.01f);
+
+        glm::vec3 const eye = center - forward * radius * 2.0f;
+
+        // the bounds' sphere fits the shorter side
+        float const half_height = aspect >= 1.0f ? radius : radius / aspect;
+
+        Ir77PVCamera camera{};
+        camera.eye = glm::vec4(eye, 1.0f);
+        camera.view = glm::lookAtRH(eye, center, up);
+        camera.proj = glm::orthoRH_ZO(-half_height * aspect, half_height * aspect, -half_height, half_height, radius * 0.5f, radius * 3.5f);
+        camera.proj[1][1] *= -1.0f;
+
+        DefineReversedDepth(camera);
+
+        return camera;
+    }
+
    private:
     std::shared_ptr<IIr77Camera> m_cameras{};  // the file's -- Ir77Pose's component
 
@@ -410,5 +462,7 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
     static constexpr float CAMERA_PITCH_LIMIT{1.5f};  // just short of straight up / down
 
     bool m_camera_ortho{false};  // the controlled orbit camera draws orthographic
+
+    bool m_quad{false};  // view layout -- four views instead of one
 };
 }  // namespace NSIr77Scene
