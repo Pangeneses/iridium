@@ -193,6 +193,32 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // The background every window clears to -- sRGB 0..1; CreateFrame hands the renderer its linear value
+    std::shared_ptr<IIr77Return const> SetBackground(glm::vec3 const& color) {
+        m_background = glm::clamp(color, glm::vec3(0.0f), glm::vec3(1.0f));
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetBackground(glm::vec3& color) const {
+        color = m_background;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The editor grid -- one procedural draw per view at the end of the opaque list (grid.vert / grid.frag); the next frame uses it
+    std::shared_ptr<IIr77Return const> SetGridVisible(bool const& visible) {
+        m_grid_visible = visible;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> GetGridVisible(bool& visible) const {
+        visible = m_grid_visible;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // The scene: every entity and light goes, then the glTF becomes entity 0 -- its clips with it, its lights as world lights (lights), its
     // cameras (cameras; every view is framed on it either way). use_mesh -> mesh shading for the static geometry when the device has it.
     // No geometry is fine: an empty path, a file with nothing drawable, or a file that fails to load all leave a running scene with no
@@ -245,8 +271,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         m_stats.gpu = report.device;
         m_stats.render_path = std::string{report.mesh_path ? "mesh shading indirect" : "vertex indirect"} + (report.ray_query ? ", ray queries" : "");
 
-        pose->GetAssetCounts(m_stats.nodes, m_stats.meshes, m_stats.materials, m_stats.textures, m_stats.cameras, m_stats.skins, m_stats.bones,
-                             m_stats.clips);
+        pose->GetAssetCounts(m_stats.nodes, m_stats.meshes, m_stats.materials, m_stats.textures, m_stats.cameras, m_stats.skins, m_stats.bones, m_stats.clips);
 
         m_stats.clip_names.assign(m_stats.clips, std::string{});
         for (std::uint32_t c = 0; c < m_stats.clips; c++) scene_animations->GetClipName(c, m_stats.clip_names[c]);
@@ -445,8 +470,17 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         // every window -- one camera per view (each a file camera rebuilt with this aspect, or that view's controlled camera), and the field's draws
         m_frame.windows.assign(m_view_windows, Ir77PVFrameWindow{});
 
+        // the background, sRGB -> linear (the swapchain is sRGB and converts it back)
+        glm::vec4 clear_color{1.0f};
+        for (int c = 0; c < 3; c++) {
+            float const s = m_background[c];
+            clear_color[c] = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+        }
+
         for (std::size_t w = 0; w < m_view_windows; w++) {
             Ir77PVFrameWindow& window = m_frame.windows[w];
+
+            window.clear_color = clear_color;
 
             m_view->WriteCameras(aspect, window.cameras, window.areas);
             for (Ir77PVCamera& camera : window.cameras) camera.time = glm::vec4(seconds, dt, static_cast<float>(m_frame_number), 0.0f);
@@ -454,6 +488,8 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
             m_field->AppendDraws(w, Ir77PVPass::Opaque, window.opaque);
             m_field->AppendDraws(w, Ir77PVPass::Shadow, window.shadow);
             m_field->AppendDraws(w, Ir77PVPass::Transparent, window.transparent);
+
+            AppendGrid(w, window.opaque);
         }
 
         Ir77PVFrameReport report{};
@@ -538,10 +574,28 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
    private:
+    // The grid's draw for one window -- after the opaque geometry it has to sit behind, before anything transparent. The pipeline is looked
+    // up once; a manifest without "grid" leaves the grid out and says so once in the stats warnings.
+    void AppendGrid(std::size_t const& window, std::vector<Ir77PVDrawItem>& opaque) {
+        if (!m_grid_visible || m_grid_missing || !m_renderer) return;
+
+        if (m_grid_pipeline == IR77PV_NO_PIPELINE && m_renderer->FindPipeline(std::string{"grid"}, m_grid_pipeline)->ID() != GUIDIr77OperationSucceeded) {
+            m_grid_pipeline = IR77PV_NO_PIPELINE;
+            m_grid_missing = true;
+            m_stats.warnings.push_back("no \"grid\" pipeline in the manifest -- the editor grid is off");
+            return;
+        }
+
+        Ir77PVDrawItem item{};
+        if (m_renderer->MakeProceduralDrawItem(window, m_grid_pipeline, 3, 1, item)->ID() != GUIDIr77OperationSucceeded) return;
+
+        opaque.push_back(item);
+    }
+
     // One parsed file -> the renderer as one asset bundle (geometry per channel with each primitive's material, the decoded textures, the
     // materials, the instance slots and joint palettes) -> a new entity at the origin, its clips playing. entity is its id.
     std::shared_ptr<IIr77Return const> LoadEntity(std::shared_ptr<IIr77Pose> const& pose, std::string const& path, bool const use_mesh,
-                                                    Ir77PVAssetBundle& bundle, Ir77PVAssetReport& report, std::uint32_t& entity) {
+                                                  Ir77PVAssetBundle& bundle, Ir77PVAssetReport& report, std::uint32_t& entity) {
         std::shared_ptr<IIr77Return const> result{};
 
         // the file's components -- Pose owns them
@@ -755,6 +809,13 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     int m_view_height{720};
 
     Ir77PVPipelineHandle m_pipeline{IR77PV_NO_PIPELINE};  // what the static geometry draws with
+
+    glm::vec3 m_background{0.0f};  // sRGB 0..1 -- what every window clears to
+
+    // the editor grid
+    bool m_grid_visible{true};
+    bool m_grid_missing{false};  // the manifest has no "grid" -- stop looking
+    Ir77PVPipelineHandle m_grid_pipeline{IR77PV_NO_PIPELINE};
 
     // what CreateScene loaded
     bool m_scene_ready{false};

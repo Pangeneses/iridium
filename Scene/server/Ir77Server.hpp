@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -36,6 +38,8 @@
 
 #include "../../PeregrineV/server/Ir77Server.hpp"
 
+#include "../types/Ir77Types.hpp"
+
 using namespace NSIr77RT;
 
 namespace NSIr77Scene {
@@ -69,8 +73,10 @@ namespace NSIr77Scene {
 //   camera.layout   views [{x, y, w, h}] 1 .. 4   -- where each view draws, fractions of the window; view 0 the main camera, 1 / 2 / 3 start
 //                                                    ortho top / front / side
 //   camera.focus    view                          -- which view the camera.* ops above drive (the one under the mouse)
-//   entity.import   path, use_mesh (false), lights -- one more file in the scene at the origin; lights: its lights become world lights
-//                                                    (default SCENE_IMPORT_LIGHTS) -- data { entity }
+//   entity.import   path | model, use_mesh (false), lights -- one more model in the scene at the origin; lights: its lights become world
+//                                                    lights (default SCENE_IMPORT_LIGHTS) -- data { entity, model }. model: the project's,
+//                                                    <project>/Models/<model>.glb. path: a .glb from anywhere, copied into Models/ first (a
+//                                                    project open) -- either way the dump names it, so it saves
 //   entity.remove   entity
 //   entity.transform entity, t [x,y,z], r [x,y,z,w], s [x,y,z] -- the whole entity in the world; a part left out keeps what it was
 //   entity.list                                   -- data { entities: [{entity, path, t, r, s}] }
@@ -97,7 +103,15 @@ namespace NSIr77Scene {
 //   field.clear                                    -- blank the canvas
 //   field.reset                                    -- the program's first frame again (f.first), blank canvas, pens at t = 0
 //   field.show      value true | false
-//   scene.project   path                          -- the project folder -- fields.json lives here
+//   scene.project   path                          -- the project folder -- fields.json and Models/<name>.glb live here
+//   scene.startup   name                          -- the stored scene the UI opens at start (iridium.json startup.scene); the dump carries it
+//                                                    until the UI's first scene.create
+//   scene.document  id, name                      -- which stored scene this is (the UI's, after a load or a save) -- kept here so a page
+//                                                    reload knows; the dump carries it
+//   scene.dump                                    -- data { project, startup, document {id, name}, background, grid,
+//                                                    entities: [{entity, model ("" = imported by path), path,
+//                                                    t, r, s, clips: [{clip, name, duration}], playing: [{clip, name, time, speed, loop}],
+//                                                    nodes: [as node.list]}], lights: [as light.list] } -- the whole scene graph in one reply
 //   field.list                                    -- data { names: [...] } from <project>/fields.json (none yet -> [])
 //   field.load      name                          -- data { name, field } -- the panel's form, as saved
 //   field.save      name, field                   -- adds or replaces that entry; the file is rewritten (temp file, then rename)
@@ -254,9 +268,21 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
     // setup -- iridium sends these at startup; the UI can send scene.create to open another file
     void DefineSceneOperations() {
-        m_operations["scene.create"] = [this](Ir77SceneArgs const& a) {
-            return m_animate->CreateScene(std::string{Text(a, "path")}, Flag(a, "use_mesh", false), Flag(a, "lights", SCENE_IMPORT_LIGHTS),
-                                          Flag(a, "cameras", SCENE_IMPORT_CAMERAS));
+        m_operations["scene.create"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::string const model{Text(a, "model")};
+            std::string const path = model.empty() ? std::string{Text(a, "path")} : ModelPath(model);
+
+            m_entity_models.clear();  // the ids start over
+            m_startup_scene.clear();  // the UI has opened something -- a page reload mustn't open the startup scene over it
+
+            std::shared_ptr<IIr77Return const> result{};
+            if (Failed(m_animate->CreateScene(path, Flag(a, "use_mesh", false), Flag(a, "lights", SCENE_IMPORT_LIGHTS), Flag(a, "cameras", SCENE_IMPORT_CAMERAS)),
+                       result))
+                return result;
+
+            if (!model.empty()) m_entity_models[0] = model;
+
+            return result;
         };
 
         m_operations["scene.pipeline"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
@@ -285,6 +311,60 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
                 return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: scene.view_size needs windows, width and height of at least 1.");
 
             return m_animate->SetViewSize(static_cast<std::size_t>(windows), static_cast<int>(width), static_cast<int>(height));
+        };
+
+        // the background -- color [r, g, b] sRGB 0..1 sets it; no color just reads it. Replies {"color":[r, g, b]} either way.
+        m_operations["scene.background"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+
+            glm::vec3 color{0.0f};
+            m_animate->GetBackground(color);
+
+            Numbers(a, "color", &color.x, 3);
+            if (Failed(m_animate->SetBackground(color), result)) return result;
+            m_animate->GetBackground(color);
+
+            char text[96]{};
+            std::snprintf(text, sizeof(text), "{\"color\":[%.6g,%.6g,%.6g]}", static_cast<double>(color.r), static_cast<double>(color.g),
+                          static_cast<double>(color.b));
+            m_data = text;
+
+            return result;
+        };
+
+        m_operations["scene.startup"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            m_startup_scene = std::string{Text(a, "name")};
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        m_operations["scene.document"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            m_document_id = std::string{Text(a, "id")};
+            m_document_name = std::string{Text(a, "name")};
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        // the whole scene graph in one reply -- see the op list above
+        m_operations["scene.dump"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
+            m_data = DumpJson();
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        // the editor grid -- show true / false sets it; no show just reads it. Replies {"show":bool} either way.
+        m_operations["scene.grid"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+
+            bool visible{true};
+            m_animate->GetGridVisible(visible);
+
+            if (Failed(m_animate->SetGridVisible(Flag(a, "show", visible)), result)) return result;
+            m_animate->GetGridVisible(visible);
+
+            m_data = std::string{"{\"show\":"} + (visible ? "true" : "false") + "}";
+
+            return result;
         };
     }
 
@@ -323,17 +403,33 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         m_operations["entity.import"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             std::shared_ptr<IIr77Return const> result{};
 
-            std::uint32_t entity{0};
-            if (Failed(m_animate->ImportEntity(std::string{Text(a, "path")}, Flag(a, "use_mesh", false), Flag(a, "lights", SCENE_IMPORT_LIGHTS), entity),
-                       result))
-                return result;
+            std::string model{Text(a, "model")};
+            std::string path{Text(a, "path")};
 
-            m_data = "{\"entity\":" + std::to_string(entity) + "}";
+            // a file from anywhere -> into the project's Models/ first, so it's a project model and the scene graph can save it
+            if (model.empty() && !path.empty() && !m_project.empty())
+                if (!AdoptModel(path, model)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
+
+            if (!model.empty()) path = ModelPath(model);
+
+            std::uint32_t entity{0};
+            if (Failed(m_animate->ImportEntity(path, Flag(a, "use_mesh", false), Flag(a, "lights", SCENE_IMPORT_LIGHTS), entity), result)) return result;
+
+            if (!model.empty()) m_entity_models[entity] = model;
+
+            m_data = "{\"entity\":" + std::to_string(entity) + ",\"model\":\"" + Escape(model) + "\"}";
 
             return result;
         };
 
-        m_operations["entity.remove"] = [this](Ir77SceneArgs const& a) { return m_animate->RemoveEntity(Entity(a)); };
+        m_operations["entity.remove"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+            if (Failed(m_animate->RemoveEntity(Entity(a)), result)) return result;
+
+            m_entity_models.erase(Entity(a));
+
+            return result;
+        };
 
         m_operations["entity.transform"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             std::vector<std::uint32_t> ids{};
@@ -383,22 +479,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
             std::shared_ptr<IIr77Pose> pose{};
             if (Failed(m_animate->GetPose(Entity(a), pose), result)) return result;
 
-            std::uint32_t count{0};
-            pose->GetNodeCount(count);
-
-            std::string nodes{};
-            for (std::uint32_t n = 0; n < count; n++) {
-                std::string name{};
-                std::uint32_t parent{UINT32_MAX};
-                glm::vec3 translation{0.0f};
-                glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
-                glm::vec3 scale{1.0f};
-                pose->GetNode(n, name, parent, translation, rotation, scale);
-
-                if (!nodes.empty()) nodes += ",";
-                nodes += "{\"node\":" + std::to_string(n) + ",\"name\":\"" + Escape(name) + "\",\"parent\":" +
-                         (parent == UINT32_MAX ? std::string{"-1"} : std::to_string(parent)) + "," + PlacementJson(translation, rotation, scale) + "}";
-            }
+            std::string const nodes = NodesJson(pose);
 
             m_data = "{\"nodes\":[" + nodes + "]}";
 
@@ -484,30 +565,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         };
 
         m_operations["light.list"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
-            std::vector<std::uint32_t> ids{};
-            m_animate->GetLightIds(ids);
-
-            auto const number = [](float const value) {
-                char text[32]{};
-                std::snprintf(text, sizeof(text), "%.6g", static_cast<double>(value));
-                return std::string{text};
-            };
-
-            std::string lights{};
-            for (std::uint32_t const id : ids) {
-                Ir77PVLight light{};
-                glm::vec3 translation{0.0f};
-                glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
-                std::uint32_t entity{UINT32_MAX};
-                if (m_animate->GetLight(id, light, translation, rotation, entity)->ID() != GUIDIr77OperationSucceeded) continue;
-
-                if (!lights.empty()) lights += ",";
-                lights += "{\"light\":" + std::to_string(id) + ",\"type\":\"" + LightTypeName(light.type) + "\",\"color\":[" + number(light.color.r) + "," +
-                          number(light.color.g) + "," + number(light.color.b) + "],\"intensity\":" + number(light.intensity) +
-                          ",\"range\":" + number(light.range) + ",\"inner\":" + number(light.innerConeAngle) + ",\"outer\":" + number(light.outerConeAngle) +
-                          "," + PlacementJson(translation, rotation, glm::vec3(1.0f)) + ",\"entity\":" +
-                          (entity == UINT32_MAX ? std::string{"-1"} : std::to_string(entity)) + "}";
-            }
+            std::string const lights = LightsJson();
 
             m_data = "{\"lights\":[" + lights + "]}";
 
@@ -543,6 +601,201 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     }
 
     std::string LightTypeName(int const type) const { return type == LIGHT_DIRECTIONAL ? "directional" : type == LIGHT_SPOT ? "spot" : "point"; }
+
+    // One entity's nodes, comma-separated -- node.list and scene.dump
+    std::string NodesJson(std::shared_ptr<IIr77Pose> const& pose) const {
+        std::uint32_t count{0};
+        pose->GetNodeCount(count);
+
+        std::string nodes{};
+        for (std::uint32_t n = 0; n < count; n++) {
+            std::string name{};
+            std::uint32_t parent{UINT32_MAX};
+            glm::vec3 translation{0.0f};
+            glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+            glm::vec3 scale{1.0f};
+            pose->GetNode(n, name, parent, translation, rotation, scale);
+
+            if (!nodes.empty()) nodes += ",";
+            nodes += "{\"node\":" + std::to_string(n) + ",\"name\":\"" + Escape(name) + "\",\"parent\":" +
+                     (parent == UINT32_MAX ? std::string{"-1"} : std::to_string(parent)) + "," + PlacementJson(translation, rotation, scale) + "}";
+        }
+
+        return nodes;
+    }
+
+    // Every world light, comma-separated -- light.list and scene.dump
+    std::string LightsJson() const {
+        std::vector<std::uint32_t> ids{};
+        m_animate->GetLightIds(ids);
+
+        std::string lights{};
+        for (std::uint32_t const id : ids) {
+            Ir77PVLight light{};
+            glm::vec3 translation{0.0f};
+            glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+            std::uint32_t entity{UINT32_MAX};
+            if (m_animate->GetLight(id, light, translation, rotation, entity)->ID() != GUIDIr77OperationSucceeded) continue;
+
+            if (!lights.empty()) lights += ",";
+            lights += "{\"light\":" + std::to_string(id) + ",\"type\":\"" + LightTypeName(light.type) + "\",\"color\":[" + JsonNumber(light.color.r) +
+                      "," + JsonNumber(light.color.g) + "," + JsonNumber(light.color.b) + "],\"intensity\":" + JsonNumber(light.intensity) +
+                      ",\"range\":" + JsonNumber(light.range) + ",\"inner\":" + JsonNumber(light.innerConeAngle) +
+                      ",\"outer\":" + JsonNumber(light.outerConeAngle) + "," + PlacementJson(translation, rotation, glm::vec3(1.0f)) + ",\"entity\":" +
+                      (entity == UINT32_MAX ? std::string{"-1"} : std::to_string(entity)) + "}";
+        }
+
+        return lights;
+    }
+
+    // One entity's clips (what its file has) and players (what's running), comma-separated
+    void ClipsJson(std::shared_ptr<IIr77Pose> const& pose, std::string& clips, std::string& playing) const {
+        clips.clear();
+        playing.clear();
+
+        std::shared_ptr<IIr77Animation> animations{};
+        std::uint32_t clip_count{0};
+        if (pose->GetAnimations(animations)->ID() == GUIDIr77OperationSucceeded && animations) animations->GetClipCount(clip_count);
+
+        std::vector<std::string> names(clip_count);
+        for (std::uint32_t c = 0; c < clip_count; c++) {
+            float duration{0.0f};
+            animations->GetClipName(c, names[c]);
+            animations->GetClipDuration(c, duration);
+
+            if (!clips.empty()) clips += ",";
+            clips += "{\"clip\":" + std::to_string(c) + ",\"name\":\"" + Escape(names[c]) + "\",\"duration\":" + JsonNumber(duration) + "}";
+        }
+
+        std::uint32_t players{0};
+        pose->GetPlayerCount(players);
+
+        for (std::uint32_t p = 0; p < players; p++) {
+            std::uint32_t clip{UINT32_MAX};
+            float time{0.0f};
+            float duration{0.0f};
+            float speed{1.0f};
+            bool loop{true};
+            if (pose->GetPlayer(p, clip, time, duration, speed, loop)->ID() != GUIDIr77OperationSucceeded) continue;
+
+            if (!playing.empty()) playing += ",";
+            playing += "{\"clip\":" + std::to_string(clip) + ",\"name\":\"" + Escape(clip < names.size() ? names[clip] : std::string{}) +
+                       "\",\"time\":" + JsonNumber(time) + ",\"speed\":" + JsonNumber(speed) + ",\"loop\":" + (loop ? "true" : "false") + "}";
+        }
+    }
+
+    // The whole scene graph -- what the UI builds its outliner from at start, and what a save turns into a scene document
+    std::string DumpJson() const {
+        glm::vec3 background{0.0f};
+        m_animate->GetBackground(background);
+
+        bool grid{true};
+        m_animate->GetGridVisible(grid);
+
+        std::vector<std::uint32_t> ids{};
+        std::vector<std::string> paths{};
+        std::vector<glm::vec3> translations{};
+        std::vector<glm::quat> rotations{};
+        std::vector<glm::vec3> scales{};
+        m_animate->GetEntities(ids, paths, translations, rotations, scales);
+
+        std::string entities{};
+        for (std::size_t i = 0; i < ids.size(); i++) {
+            auto const named = m_entity_models.find(ids[i]);
+            std::string const model = named == m_entity_models.end() ? std::string{} : named->second;
+
+            std::string nodes{};
+            std::string clips{};
+            std::string playing{};
+
+            std::shared_ptr<IIr77Pose> pose{};
+            if (m_animate->GetPose(ids[i], pose)->ID() == GUIDIr77OperationSucceeded && pose) {
+                nodes = NodesJson(pose);
+                ClipsJson(pose, clips, playing);
+            }
+
+            if (!entities.empty()) entities += ",";
+            entities += "{\"entity\":" + std::to_string(ids[i]) + ",\"model\":\"" + Escape(model) + "\",\"path\":\"" + Escape(paths[i]) + "\"," +
+                        PlacementJson(translations[i], rotations[i], scales[i]) + ",\"clips\":[" + clips + "],\"playing\":[" + playing +
+                        "],\"nodes\":[" + nodes + "]}";
+        }
+
+        return "{\"project\":\"" + Escape(m_project) + "\",\"startup\":\"" + Escape(m_startup_scene) + "\",\"document\":{\"id\":\"" +
+               Escape(m_document_id) + "\",\"name\":\"" + Escape(m_document_name) + "\"},\"background\":[" + JsonNumber(background.r) + "," + JsonNumber(background.g) + "," +
+               JsonNumber(background.b) + "],\"grid\":" + (grid ? "true" : "false") + ",\"entities\":[" + entities + "],\"lights\":[" + LightsJson() +
+               "]}";
+    }
+
+    // A .glb from anywhere -> a model of the open project: copied into <project>/Models/ unless it's already there, model = its file name
+    // without .glb. A different file already under that name is refused (rename one) -- nothing in Models/ is ever overwritten. A .gltf is
+    // refused: its buffers and textures are separate files the copy would leave behind.
+    bool AdoptModel(std::string const& source_text, std::string& model) {
+        std::error_code ec{};
+        std::filesystem::path const source = std::filesystem::absolute(source_text, ec).lexically_normal();
+
+        if (!std::filesystem::is_regular_file(source, ec)) {
+            m_error = "no file " + source.string();
+            return false;
+        }
+
+        std::string extension = source.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        if (extension != ".glb") {
+            m_error = "only .glb files go into a project -- export " + source.filename().string() + " as .glb";
+            return false;
+        }
+
+        model = source.stem().string();
+
+        std::filesystem::path const models = std::filesystem::path{m_project} / "Models";
+        std::filesystem::path const target = models / (model + ".glb");
+
+        if (std::filesystem::exists(target, ec)) {
+            if (std::filesystem::equivalent(source, target, ec) || SameContents(source, target)) return true;  // already the project's
+
+            m_error = "Models/ already has a different " + target.filename().string() + " -- rename the file you're importing";
+            return false;
+        }
+
+        std::filesystem::create_directories(models, ec);
+        if (!std::filesystem::copy_file(source, target, ec)) {
+            m_error = "couldn't copy " + source.string() + " into " + models.string() + " (" + ec.message() + ")";
+            return false;
+        }
+
+        return true;
+    }
+
+    // byte for byte -- sizes first
+    static bool SameContents(std::filesystem::path const& a, std::filesystem::path const& b) {
+        std::error_code ec{};
+        if (std::filesystem::file_size(a, ec) != std::filesystem::file_size(b, ec) || ec) return false;
+
+        std::ifstream fa{a, std::ios::binary};
+        std::ifstream fb{b, std::ios::binary};
+
+        std::array<char, 65536> ba{};
+        std::array<char, 65536> bb{};
+
+        while (fa && fb) {
+            fa.read(ba.data(), ba.size());
+            fb.read(bb.data(), bb.size());
+
+            if (fa.gcount() != fb.gcount() || std::memcmp(ba.data(), bb.data(), static_cast<std::size_t>(fa.gcount())) != 0) return false;
+        }
+
+        return true;
+    }
+
+    // A project model by name -- <project>/Models/<model>.glb
+    std::string ModelPath(std::string const& model) const { return (std::filesystem::path{m_project} / "Models" / (model + ".glb")).string(); }
+
+    static std::string JsonNumber(float const value) {
+        char text[32]{};
+        std::snprintf(text, sizeof(text), "%.6g", static_cast<double>(value));
+        return std::string{text};
+    }
 
     void DefineAnimationOperations() {
         m_operations["animation.play"] = [this](Ir77SceneArgs const& a) {
@@ -940,7 +1193,15 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
     std::string m_data{"{}"};  // a handler's result for the reply's "data" -- a JSON object, reset before every message
 
-    std::string m_project{};  // scene.project -- the folder fields.json lives in
+    std::string m_project{};  // scene.project -- the folder fields.json and models/ live in
+
+    std::map<std::uint32_t, std::string> m_entity_models{};  // entity -> the project model it was loaded as (scene.create / entity.import model)
+
+    std::string m_startup_scene{};  // scene.startup -- until the UI's first scene.create
+
+    std::string m_document_id{};  // scene.document -- the stored scene this is; '' = not stored
+
+    std::string m_document_name{};
 
     simdjson::dom::parser m_fields_parser{};  // fields.json -- separate from m_parser, which holds the message being handled
 

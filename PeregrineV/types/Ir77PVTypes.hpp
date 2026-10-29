@@ -900,6 +900,7 @@ struct Ir77PVFrameWindow {
     std::vector<Ir77PVDrawItem> opaque{};
     std::vector<Ir77PVDrawItem> shadow{};
     std::vector<Ir77PVDrawItem> transparent{};
+        glm::vec4 clear_color{0.0f, 0.0f, 0.0f, 1.0f};  // the background, linear -- the swapchain is sRGB, so the UI's colour is converted first
 };
 
 // Everything one frame needs. lights in engine units, each with its shadow tile; shadow_matrices[tile]. dispatches run after the assets'

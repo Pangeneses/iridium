@@ -121,10 +121,7 @@
       "depth_write": true,
       "depth_bias": false,
       "flip_back_faces": true,
-      "user": [
-        "config",
-        "points"
-      ]
+      "user": ["config", "points"]
     },
     "field.particles": {
       "vertex": "field.vert",
@@ -136,10 +133,7 @@
       "depth_write": false,
       "depth_bias": false,
       "flip_back_faces": true,
-      "user": [
-        "config",
-        "points"
-      ]
+      "user": ["config", "points"]
     },
     "field.shadow": {
       "vertex": "field_shadow.vert",
@@ -150,10 +144,7 @@
       "depth_write": true,
       "depth_bias": false,
       "flip_back_faces": true,
-      "user": [
-        "config",
-        "points"
-      ]
+      "user": ["config", "points"]
     },
     "field.compute": {
       "compute": "field.comp"
@@ -163,6 +154,18 @@
     },
     "cull.compute": {
       "compute": "cull.comp"
+    },
+    "grid": {
+      "vertex": "grid.vert",
+      "fragment": "grid.frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": []
     }
   }
 }

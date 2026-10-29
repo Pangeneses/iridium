@@ -104,6 +104,9 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> ClearDraws(std::size_t const& window) = 0;
 
+    // A window's background -- what its first swapchain pass clears to. Linear; persists until replaced.
+    virtual std::shared_ptr<IIr77Return const> SetClearColor(std::size_t const& window, VkClearColorValue const& clear_color) = 0;
+
     // Records, submits and presents every window that isn't minimized
     virtual std::shared_ptr<IIr77Return const> Draw() = 0;
 

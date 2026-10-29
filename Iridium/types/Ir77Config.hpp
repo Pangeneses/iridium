@@ -2,8 +2,22 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace NSIr77 {
+
+struct Ir77ServiceConfig {
+    std::string name{};                    // what the log lines say
+    bool enabled{false};
+    std::string binary{};                  // a bare name is looked up on PATH; anything with a '/' is a path
+    std::vector<std::string> args{};
+    std::vector<std::string> env{};        // "KEY=value", added to Iridium's own environment (and winning over it)
+    std::string cwd{};                     // '' = Iridium's
+    std::string log{};                     // '' = Iridium's stdout / stderr
+    std::vector<std::string> folders{};    // made before the start -- mongod won't create its own dbpath
+    std::uint16_t port{0};                 // ready = something accepts on 127.0.0.1:port
+    int stop_ms{10000};                    // how long a clean shutdown gets
+};
 
 // Command line. Each field that is set overrides the same setting from iridium.json.
 //   --config=<path>  --url=<url>  --debug-port=<n>  --log=<path>  --debug

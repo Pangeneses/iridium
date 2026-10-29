@@ -12,8 +12,25 @@
   },
   "projects": "/home/alpha/workspace/iridium/Projects",
   "startup": {
-    "project": "Project001",
-    "scene": "Flower 003.glb",
+    "project": "",
+    "scene": "",
     "pipeline": ""
+  },
+  "services": {
+    "mongod": {
+      "enabled": true,
+      "binary": "mongod",
+      "data": "mongodb/data",
+      "log": "mongodb/log/mongod.log",
+      "port": 27018
+    },
+    "sapphire": {
+      "enabled": true,
+      "binary": "node",
+      "script": "/home/alpha/workspace/sapphire/app.js",
+      "log": "/home/alpha/workspace/iridium/Projects/sapphire.log",
+      "port": 50002,
+      "database": "aurum"
+    }
   }
 }

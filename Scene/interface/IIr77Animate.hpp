@@ -30,12 +30,6 @@ using namespace NSIr77PeregrineV;
 
 namespace NSIr77Scene {
 
-// What an import brings besides geometry when the op doesn't say -- a file's lights and cameras. Imported for now; strip (false) once the UI
-// places lights and cameras itself.
-inline constexpr bool SCENE_IMPORT_LIGHTS{true};
-
-inline constexpr bool SCENE_IMPORT_CAMERAS{true};
-
 // The scene module's work -- owns and wires the entities (one Pose each), View, Lighting and Field; hands the renderer each file as one asset
 // and each frame as one frame.
 //   SetRenderer / SetViewSize / SetPipeline -> CreateScene -> [ImportEntity / RemoveEntity / SetEntityTransform, AddLight / SetLight /
@@ -53,6 +47,17 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
     // What the static (non-skinned, opaque) geometry draws with -- a manifest pipeline or role. Unset -> the "static" role. Taken by the next
     // CreateScene.
     virtual std::shared_ptr<IIr77Return const> SetPipeline(Ir77PVPipelineHandle const& pipeline) = 0;
+
+    // The background every window clears to -- sRGB 0..1, as a colour picker gives it. Any time; the next frame uses it.
+    virtual std::shared_ptr<IIr77Return const> SetBackground(glm::vec3 const& color) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetBackground(glm::vec3& color) const = 0;
+
+    // The editor grid in every view -- the ground (XZ) in perspective, the plane facing the camera in orthographic. On by default; a manifest
+    // without a "grid" pipeline leaves it out (one stats warning).
+    virtual std::shared_ptr<IIr77Return const> SetGridVisible(bool const& visible) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetGridVisible(bool& visible) const = 0;
 
     // The scene: every entity and light goes, then the glTF becomes entity 0 (one asset bundle in the renderer) -- its clips with it, its
     // lights as world lights (lights), its cameras (cameras). use_mesh -> mesh shading for the static geometry when the device has it.
@@ -78,7 +83,8 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
 
     // World lights -- the scene graph's. light: type, color, intensity (glTF units -- lux for the sun, candela for point / spot), range,
     // cones; the placement says where it is (it shines down its local -Z). Each change rebuilds the scene's lights.
-    virtual std::shared_ptr<IIr77Return const> AddLight(Ir77PVLight const& light, glm::vec3 const& translation, glm::quat const& rotation, std::uint32_t& id) = 0;
+    virtual std::shared_ptr<IIr77Return const> AddLight(Ir77PVLight const& light, glm::vec3 const& translation, glm::quat const& rotation,
+                                                        std::uint32_t& id) = 0;
 
     virtual std::shared_ptr<IIr77Return const> SetLight(std::uint32_t const& id, Ir77PVLight const& light, glm::vec3 const& translation,
                                                         glm::quat const& rotation) = 0;

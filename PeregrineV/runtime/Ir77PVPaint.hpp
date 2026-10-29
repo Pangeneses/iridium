@@ -194,6 +194,12 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> SetClearColor(std::size_t const& window, VkClearColorValue const& clear_color) {
+        if (window >= m_command_buffers.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: window index out of range.");
+
+        return m_command_buffers[window]->SetClearColor(clear_color);
+    }
+
     // -------------------------------------------------------------------------------------------------------------------------------------
     // setup -- after the wiring and the pipeline cache. Overlays are optional (wired if there is one per window).
     // Every command buffer shares the device's bindless layout + table; each gets its window's frame slots.

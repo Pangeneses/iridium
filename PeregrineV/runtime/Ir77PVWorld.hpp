@@ -439,6 +439,10 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
                 m_window_areas[w] = areas;
             }
 
+            VkClearColorValue clear{};
+            std::memcpy(clear.float32, &window.clear_color, sizeof(clear.float32));
+            if (Failed(m_paint->SetClearColor(w, clear), result)) return result;
+
             // one camera per view, VIEW_STRIDE apart -- where each view's frame table points
             m_cameras_packed.assign(static_cast<std::size_t>(VIEW_STRIDE) * window_views, 0);
             for (std::uint32_t v = 0; v < window_views; v++)
@@ -448,8 +452,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             m_paint->SetFrameData(w, Ir77PVBufferSlot::Lights, m_lights_packed.data(), m_lights_packed.size());
 
             if (!m_models.empty()) m_paint->SetFrameData(w, Ir77PVBufferSlot::Instances, m_models.data(), m_models.size() * sizeof(glm::mat4));
-            if (shadow_count > 0)
-                m_paint->SetFrameData(w, Ir77PVBufferSlot::ShadowMatrices, frame.shadow_matrices.data(), shadow_count * sizeof(glm::mat4));
+            if (shadow_count > 0) m_paint->SetFrameData(w, Ir77PVBufferSlot::ShadowMatrices, frame.shadow_matrices.data(), shadow_count * sizeof(glm::mat4));
             if (m_bone_high > 0) m_paint->SetFrameData(w, Ir77PVBufferSlot::Bones, m_bones_packed.data(), m_bones_packed.size());
 
             std::vector<Ir77PVDrawItem> window_shadow = shadow;
@@ -508,7 +511,8 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             Ir77PVAssetTexture const& texture = bundle.textures[t];
             if (texture.rgba.empty()) continue;
 
-            if (m_materials->CreateTexture(texture.rgba.data(), texture.width, texture.height, texture.srgb, texture_ids[t])->ID() != GUIDIr77OperationSucceeded)
+            if (m_materials->CreateTexture(texture.rgba.data(), texture.width, texture.height, texture.srgb, texture_ids[t])->ID() !=
+                GUIDIr77OperationSucceeded)
                 texture_ids[t] = IR77PV_NO_TEXTURE;
         }
 
@@ -583,10 +587,9 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             asset.blends.push_back({material_id(primitive.material), index, r.first_instance + asset.instance_base, false});
             blend_materials.push_back(primitive.material);
 
-            blend_upload.indirect_commands.push_back(VkDrawIndexedIndirectCommand{r.index_count, r.instance_count,
-                                                                                  static_cast<std::uint32_t>(blend_upload.indices.size()),
-                                                                                  static_cast<std::int32_t>(blend_upload.vertices.size()),
-                                                                                  r.first_instance + asset.instance_base});
+            blend_upload.indirect_commands.push_back(
+                VkDrawIndexedIndirectCommand{r.index_count, r.instance_count, static_cast<std::uint32_t>(blend_upload.indices.size()),
+                                             static_cast<std::int32_t>(blend_upload.vertices.size()), r.first_instance + asset.instance_base});
 
             blend_upload.indices.insert(blend_upload.indices.end(), bundle.indices.begin() + r.index_offset,
                                         bundle.indices.begin() + r.index_offset + r.index_count);
@@ -757,8 +760,9 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
         if (Failed(m_geometry->GetSceneVertexSlot(asset.posed_id, false, asset.skin_destination), result)) return result;
         if (Failed(m_geometry->GetSceneVertexSlot(asset.skinned_id, true, asset.skin_source), result)) return result;
-        if (Failed(m_transfer->CreateStorageBuffer(static_cast<VkDeviceSize>(jobs.size() * sizeof(glm::uvec2)), jobs.data(), asset.jobs_buffer, asset.jobs_slot),
-                   result))
+        if (Failed(
+                m_transfer->CreateStorageBuffer(static_cast<VkDeviceSize>(jobs.size() * sizeof(glm::uvec2)), jobs.data(), asset.jobs_buffer, asset.jobs_slot),
+                result))
             return result;
 
         asset.posed_count = static_cast<std::uint32_t>(posed.indirect_commands.size());
@@ -768,7 +772,8 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
     }
 
     // Bundle material per indirect command -> Materials rows, for the upload's command_materials
-    std::shared_ptr<IIr77Return const> MaterialRows(Ir77PVWorldAsset const& asset, std::vector<std::uint32_t> const& materials, std::vector<std::uint32_t>& rows) {
+    std::shared_ptr<IIr77Return const> MaterialRows(Ir77PVWorldAsset const& asset, std::vector<std::uint32_t> const& materials,
+                                                    std::vector<std::uint32_t>& rows) {
         std::shared_ptr<IIr77Return const> result{};
 
         rows.assign(materials.size(), 0);
@@ -856,9 +861,10 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
     // -------------------------------------------------------------------------------------------------------------------------------------
 
     // Every asset in the frame: one opaque draw per stream (each command finds its material in Geometry's command material table -- the item
-    // carries it: pc.user[4] = table, pc.user[5] = first command in the pool, gl_DrawID = the command within the draw), and per shadow tile the same streams depth-only. The mesh
-    // path's static stream has no vertex / index buffers, so on that path only skinned geometry casts. The same lists serve every window.
-    std::shared_ptr<IIr77Return const> MakeOpaqueDraws(std::uint32_t const& shadow_count, std::vector<Ir77PVDrawItem>& opaque, std::vector<Ir77PVDrawItem>& shadow) {
+    // carries it: pc.user[4] = table, pc.user[5] = first command in the pool, gl_DrawID = the command within the draw), and per shadow tile the same streams
+    // depth-only. The mesh path's static stream has no vertex / index buffers, so on that path only skinned geometry casts. The same lists serve every window.
+    std::shared_ptr<IIr77Return const> MakeOpaqueDraws(std::uint32_t const& shadow_count, std::vector<Ir77PVDrawItem>& opaque,
+                                                       std::vector<Ir77PVDrawItem>& shadow) {
         std::shared_ptr<IIr77Return const> result{};
 
         for (std::uint32_t const id : m_present) {
@@ -872,7 +878,8 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
                 opaque.push_back(item);
             } else if (asset.has_static) {
-                if (Failed(m_geometry->MakeIndirectDrawItem(0, asset.pipeline, asset.static_id, m_default_material, 0, asset.static_count, false, item), result))
+                if (Failed(m_geometry->MakeIndirectDrawItem(0, asset.pipeline, asset.static_id, m_default_material, 0, asset.static_count, false, item),
+                           result))
                     return result;
 
                 opaque.push_back(item);
@@ -880,9 +887,9 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
             if (asset.has_posed) {
                 // compute-skinned -- the posed stream through the static pipeline, one command per (primitive, instance)
-                if (Failed(m_geometry->MakeIndirectDrawItem(0, Ir77PVPipelineKind::Static, asset.posed_id, m_default_material, 0, asset.posed_count, false,
-                                                            item),
-                           result))
+                if (Failed(
+                        m_geometry->MakeIndirectDrawItem(0, Ir77PVPipelineKind::Static, asset.posed_id, m_default_material, 0, asset.posed_count, false, item),
+                        result))
                     return result;
 
                 opaque.push_back(item);
@@ -1033,7 +1040,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
         for (std::vector<Ir77PVDrawItem>& list : opaque) list.insert(list.end(), meshlets.begin(), meshlets.end());
 
-        return result;
+        return Ir77RETURN<Ir77OperationSucceeded>();  // not result -- an empty scene calls nothing above, and it would still be null
     }
 
     // Every transparent object of every asset in the frame, back to front from this camera's eye -- two draws each: far side first (front
