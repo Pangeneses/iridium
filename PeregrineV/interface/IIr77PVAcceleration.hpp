@@ -49,23 +49,23 @@ typedef struct IIr77PVAcceleration : virtual public IIr77Enlisted {
     // Loads the extension commands. Fails on a device without ray queries.
     virtual std::shared_ptr<IIr77Return const> CreateAcceleration() = 0;
 
-    // ---- scenes ------------------------------------------------------------------------------------------------------------------------------
+    // ---- blocks ------------------------------------------------------------------------------------------------------------------------------
 
-    // One BLAS per command of a vertex-path scene (UploadScene), and one TLAS instance per (command, instance). Blocking. dynamic = the
+    // One BLAS per command of a vertex-path block (UploadBlock), and one TLAS instance per (command, instance). Blocking. dynamic = the
     // vertices move every frame (compute skinning) -> refit every frame. alpha = per command, the material row of a MASK material or
     // BINDLESS_NO_SLOT (opaque); missing entries are opaque. The TLAS buffers grow to fit. objects = the BLASes it made, [first, first + count)
     // -- for SetObjectsVisible / ReleaseObjects.
-    virtual std::shared_ptr<IIr77Return const> BuildScene(std::uint32_t const& scene_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha,
+    virtual std::shared_ptr<IIr77Return const> BuildBlock(std::uint32_t const& block_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha,
                                                           glm::uvec2& objects) = 0;
 
     // The same for the mesh path's static stream (UploadMeshlets) -- static
     virtual std::shared_ptr<IIr77Return const> BuildMeshlets(std::uint32_t const& meshlet_id, std::vector<std::uint32_t> const& alpha,
                                                              glm::uvec2& objects) = 0;
 
-    // A scene's BLASes in the TLAS or not, from the next frame -- an asset left out of a frame
+    // A block's BLASes in the TLAS or not, from the next frame -- an asset left out of a frame
     virtual std::shared_ptr<IIr77Return const> SetObjectsVisible(glm::uvec2 const& objects, bool const& visible) = 0;
 
-    // A scene's BLASes gone for good -- waits for the device. Release before unloading the scene.
+    // A block's BLASes gone for good -- waits for the device. Release before unloading the block.
     virtual std::shared_ptr<IIr77Return const> ReleaseObjects(glm::uvec2 const& objects) = 0;
 
     // ---- surfaces -- world-space geometry rebuilt every frame (a field) ----------------------------------------------------------------------

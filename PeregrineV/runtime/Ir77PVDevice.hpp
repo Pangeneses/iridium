@@ -198,7 +198,7 @@ class Ir77PVDevice : public Ir77Enlisted, public IIr77PVDevice, public std::enab
     }
 
     // true only when VK_KHR_ray_query and VK_KHR_acceleration_structure are enabled with their features (and buffer device address)
-    std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) {
+    std::shared_ptr<IIr77Return const> ImplementsRayQuery(bool& enabled) {
         enabled = m_ray_query;
 
         return Ir77RETURN<Ir77OperationSucceeded>();

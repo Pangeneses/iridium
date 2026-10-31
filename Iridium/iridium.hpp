@@ -31,6 +31,7 @@
 
 #include <simdjson.h>
 
+#include "../../Ir77RT/runtime/Ir77Json.hpp"
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
 // every module's switchboard is <module>/server/Ir77Server.hpp, class Ir77Server in the module's namespace -- always named qualified here,
@@ -50,6 +51,8 @@ using namespace NSIr77PeregrineV;
 using namespace NSIr77Scene;
 
 namespace NSIr77 {
+
+using NSIr77RT::Ir77Json;  // every message Iridium sends is built as one
 
 class iridium {
    public:
@@ -71,10 +74,12 @@ class iridium {
         m_ui->SetPost([this](std::string json) { Post(std::move(json)); });
         m_sinks["windows"] = [this](std::string json) { m_ui->Sink(std::move(json)); };
 
-        Require(DispatchOperation("windows", "page.configure",
-                                  "{\"url\":\"" + Escape(m_config.url) + "\",\"debug_port\":" + std::to_string(m_config.debug_port) +
-                                      ",\"width\":" + std::to_string(m_config.width) + ",\"height\":" + std::to_string(m_config.height) + "}"),
-                "Configure pages.");
+        Ir77Json pages = Ir77Json::Object();
+        pages["url"] = m_config.url;
+        pages["debug_port"] = m_config.debug_port;
+        pages["width"] = m_config.width;
+        pages["height"] = m_config.height;
+        Require(DispatchOperation("windows", "page.configure", pages), "Configure pages.");
 
         m_ui->Initialize(argc, argv);  // a CEF subprocess leaves here -- everything below is the browser process only
 
@@ -105,7 +110,9 @@ class iridium {
 
         // renderer -- instance through pipelines. The windows are pointers: direct link, not args.
         Require(m_peregrine->SetWindows(windows), "Set windows.");
-        Require(DispatchOperation("peregrinev", "renderer.create", "{\"shader_root\":\"" + Escape(m_config.shader_root) + "\"}"), "Create renderer.");
+        Ir77Json renderer = Ir77Json::Object();
+        renderer["shader_root"] = m_config.shader_root;
+        Require(DispatchOperation("peregrinev", "renderer.create", renderer), "Create renderer.");
 
         simdjson::dom::element created{};
         if (m_reply_parser.parse(m_reply_data).get(created) != simdjson::SUCCESS || created["device_id"].get(m_device_id) != simdjson::SUCCESS)
@@ -129,20 +136,24 @@ class iridium {
 
         Require(DispatchOperation("scene", "scene.view_size", ViewSizeArgs()), "Scene view size.");
 
-        // the static runs' pipeline -- startup.pipeline from the manifest; unset -> the "static" role
-        Require(DispatchOperation("scene", "scene.pipeline", "{\"name\":\"" + Escape(m_config.startup_pipeline) + "\"}"), "Scene pipeline.");
-
         // content -- an empty scene. What goes in it is MongoDB's: startup.scene names a stored scene, and the UI opens it (Iridium never talks
         // to the database -- the dump hands the UI the name).
-        Require(DispatchOperation("scene", "scene.create", "{\"path\":\"\",\"use_mesh\":" + std::string{m_config.mesh_path ? "true" : "false"} + "}"),
-                "Create scene.");
+        Ir77Json scene = Ir77Json::Object();
+        scene["path"] = "";
+        scene["use_mesh"] = m_config.mesh_path;
+        Require(DispatchOperation("scene", "scene.create", scene), "Create scene.");
 
         // startup.project set -> straight into it, as if the landing page had picked it; '' -> none until the user picks one
-        if (!m_config.startup_project.empty())
-            Require(DispatchOperation("project", "project.open", "{\"name\":\"" + Escape(m_config.startup_project) + "\"}"), "Open startup project.");
+        if (!m_config.startup_project.empty()) {
+            Ir77Json project = Ir77Json::Object();
+            project["name"] = m_config.startup_project;
+            Require(DispatchOperation("project", "project.open", project), "Open startup project.");
+        }
 
         // after the open -- its empty scene.create would clear it. The UI opens this stored scene of the startup project.
-        Require(DispatchOperation("scene", "scene.startup", "{\"name\":\"" + Escape(m_config.startup_scene) + "\"}"), "Scene startup.");
+        Ir77Json startup = Ir77Json::Object();
+        startup["name"] = m_config.startup_scene;
+        Require(DispatchOperation("scene", "scene.startup", startup), "Scene startup.");
 
         // command buffers wire the overlay and the pipelines -- after the content
         Require(DispatchOperation("peregrinev", "renderer.command_buffers"), "Create command buffers.");
@@ -167,10 +178,12 @@ class iridium {
                     SDL_GetWindowSizeInPixels(m_window, &m_window_width, &m_window_height);
 
                     // no replies wanted -- delivered on the next IridiumStep, before the frame is built
-                    Post("{\"to\":\"windows\",\"op\":\"page.view_size\",\"args\":{\"width\":" + std::to_string(m_window_width) +
-                         ",\"height\":" + std::to_string(m_window_height) + "}}");
+                    Ir77Json size = Ir77Json::Object();
+                    size["width"] = m_window_width;
+                    size["height"] = m_window_height;
+                    Post(Message("windows", "page.view_size", size));
 
-                    if (m_scene) Post("{\"to\":\"scene\",\"op\":\"scene.view_size\",\"args\":" + ViewSizeArgs() + "}");
+                    if (m_scene) Post(Message("scene", "scene.view_size", ViewSizeArgs()));
 
                     break;
                 }
@@ -194,6 +207,8 @@ class iridium {
         std::lock_guard lock{m_post_mutex};
         m_posted.push_back(std::move(json));
     }
+
+    void Post(Ir77Json const& message) { Post(message.Write()); }
 
     void VulkanStep() {
         auto const frame_start = std::chrono::steady_clock::now();
@@ -379,7 +394,6 @@ class iridium {
 
             read_string("/startup/project", m_config.startup_project);
             read_string("/startup/scene", m_config.startup_scene);
-            read_string("/startup/pipeline", m_config.startup_pipeline);
 
             Ir77ReadServices(root, base, m_services_config);
 
@@ -456,7 +470,7 @@ class iridium {
             return;
         }
 
-        std::string data{"{}"};
+        Ir77Json data = Ir77Json::Object();
         std::string error{};
         bool const ok = ProjectOperation(op, name, path, data, error);
 
@@ -469,9 +483,17 @@ class iridium {
     }
 
     void PostProjectReply(std::int64_t const id, std::string const& from, std::string const& op, bool const ok, std::string const& error,
-                          std::string const& data) {
-        Post("{\"id\":" + std::to_string(id) + ",\"from\":\"project\",\"to\":\"" + Escape(from) + "\",\"op\":\"" + Escape(op) + "\",\"ok\":" +
-             (ok ? "true" : "false") + ",\"error\":\"" + Escape(error) + "\",\"data\":" + (ok ? data : std::string{"{}"}) + "}");
+                          Ir77Json const& data) {
+        Ir77Json reply = Ir77Json::Object();
+        reply["id"] = id;
+        reply["from"] = "project";
+        reply["to"] = from;
+        reply["op"] = op;
+        reply["ok"] = ok;
+        reply["error"] = error;
+        reply["data"] = ok ? data : Ir77Json::Object();
+
+        Post(reply.Write());
     }
 
     // The desktop's picker (SDL: the XDG portal, or zenity) over Iridium's window -- a folder (a project, starting in "projects") or a .glb
@@ -497,12 +519,13 @@ class iridium {
             if (pick->from.empty()) return;  // nobody asked for an answer
 
             if (!filelist) {
-                pick->owner->PostProjectReply(pick->id, pick->from, "project.pick", false, std::string{"picker: "} + SDL_GetError(), "{}");
+                pick->owner->PostProjectReply(pick->id, pick->from, "project.pick", false, std::string{"picker: "} + SDL_GetError(), Ir77Json::Object());
                 return;
             }
 
-            std::string const path = filelist[0] ? std::string{filelist[0]} : std::string{};  // nothing picked = cancelled
-            pick->owner->PostProjectReply(pick->id, pick->from, "project.pick", true, "", "{\"path\":\"" + pick->owner->Escape(path) + "\"}");
+            Ir77Json picked = Ir77Json::Object();
+            picked["path"] = filelist[0] ? std::string{filelist[0]} : std::string{};  // nothing picked = cancelled
+            pick->owner->PostProjectReply(pick->id, pick->from, "project.pick", true, "", picked);
         };
 
         char const* const location = pick->start.empty() ? nullptr : pick->start.c_str();
@@ -515,7 +538,7 @@ class iridium {
         }
     }
 
-    bool ProjectOperation(std::string const& op, std::string const& name, std::string const& path, std::string& data, std::string& error) {
+    bool ProjectOperation(std::string const& op, std::string const& name, std::string const& path, Ir77Json& data, std::string& error) {
         std::error_code ec{};
         std::filesystem::path const projects{m_config.projects};
 
@@ -527,15 +550,16 @@ class iridium {
             }
             std::sort(names.begin(), names.end());
 
-            std::string list{};
-            for (std::string const& n : names) list += (list.empty() ? "" : ",") + std::string{"{\"name\":\""} + Escape(n) + "\"}";
+            Ir77Json& list = data["projects"] = Ir77Json::Array();
+            for (std::string const& n : names) list.Push(Ir77Json::Object())["name"] = n;
 
-            data = "{\"projects\":[" + list + "],\"open\":\"" + Escape(m_project) + "\"}";
+            data["open"] = m_project;
             return true;
         }
 
         if (op == "project.current") {
-            data = "{\"name\":\"" + Escape(m_project) + "\",\"path\":\"" + Escape(m_project_path) + "\"}";
+            data["name"] = m_project;
+            data["path"] = m_project_path;
             return true;
         }
 
@@ -553,7 +577,7 @@ class iridium {
                 return false;
             }
 
-            data = "{\"name\":\"" + Escape(name) + "\"}";
+            data["name"] = name;
             return true;
         }
 
@@ -580,10 +604,13 @@ class iridium {
             m_project_path = folder.string();
 
             // delivered before this reply -- the page's next message finds the scene on the new project, empty
-            Post("{\"to\":\"scene\",\"op\":\"scene.project\",\"args\":{\"path\":\"" + Escape(folder.string()) + "\"}}");
-            Post("{\"to\":\"scene\",\"op\":\"scene.create\",\"args\":{\"path\":\"\",\"lights\":false,\"cameras\":false}}");
+            Ir77Json project = Ir77Json::Object();
+            project["path"] = folder.string();
+            Post(Message("scene", "scene.project", project));
+            Post(Message("scene", "scene.create", EmptySceneArgs()));
 
-            data = "{\"name\":\"" + Escape(m_project) + "\",\"path\":\"" + Escape(m_project_path) + "\"}";
+            data["name"] = m_project;
+            data["path"] = m_project_path;
             return true;
         }
 
@@ -592,8 +619,10 @@ class iridium {
             m_project.clear();
             m_project_path.clear();
 
-            Post("{\"to\":\"scene\",\"op\":\"scene.create\",\"args\":{\"path\":\"\",\"lights\":false,\"cameras\":false}}");
-            Post("{\"to\":\"scene\",\"op\":\"scene.project\",\"args\":{\"path\":\"\"}}");
+            Ir77Json project = Ir77Json::Object();
+            project["path"] = "";
+            Post(Message("scene", "scene.create", EmptySceneArgs()));
+            Post(Message("scene", "scene.project", project));
             return true;
         }
 
@@ -616,7 +645,7 @@ class iridium {
 
     // One command, answered before this returns -- startup and shutdown, where order matters. Posted, routed now (anything else queued
     // goes too), the reply's data left in m_reply_data.
-    std::shared_ptr<IIr77Return const> DispatchOperation(std::string const& to, std::string const& op, std::string const& args = "{}") {
+    std::shared_ptr<IIr77Return const> DispatchOperation(std::string const& to, std::string const& op, Ir77Json const& args = Ir77Json::Object()) {
         std::int64_t const id = ++m_command_id;
 
         m_reply_id = 0;
@@ -624,7 +653,10 @@ class iridium {
         m_reply_error.clear();
         m_reply_data = "{}";
 
-        Post("{\"id\":" + std::to_string(id) + ",\"from\":\"iridium\",\"to\":\"" + to + "\",\"op\":\"" + op + "\",\"args\":" + args + "}");
+        Ir77Json command = Message(to, op, args);
+        command["id"] = id;
+        command["from"] = "iridium";
+        Post(command.Write());
 
         EmptyQueue();
 
@@ -660,26 +692,35 @@ class iridium {
     }
 
     // scene.view_size's args -- the display device's windows and their size now
-    std::string ViewSizeArgs() const {
+    Ir77Json ViewSizeArgs() const {
         auto const windows = m_windows.find(m_device_id);
-        std::size_t const count = windows == m_windows.end() ? 1 : windows->second.size();
 
-        return "{\"windows\":" + std::to_string(count) + ",\"width\":" + std::to_string(m_window_width) + ",\"height\":" + std::to_string(m_window_height) +
-               "}";
+        Ir77Json args = Ir77Json::Object();
+        args["windows"] = windows == m_windows.end() ? std::size_t{1} : windows->second.size();
+        args["width"] = m_window_width;
+        args["height"] = m_window_height;
+
+        return args;
     }
 
-    // JSON string escaping for args
-    std::string Escape(std::string const& text) const {
-        std::string out{};
-        out.reserve(text.size());
+    // scene.create's args for an empty scene -- a project opened or closed
+    static Ir77Json EmptySceneArgs() {
+        Ir77Json args = Ir77Json::Object();
+        args["path"] = "";
+        args["lights"] = false;
+        args["cameras"] = false;
 
-        for (char const c : text) {
-            if (c == '"' || c == '\\') out += '\\';
-            if (static_cast<unsigned char>(c) < 0x20) continue;  // control characters dropped
-            out += c;
-        }
+        return args;
+    }
 
-        return out;
+    // A message for the router with no reply wanted -- { to, op, args }
+    static Ir77Json Message(std::string const& to, std::string const& op, Ir77Json const& args) {
+        Ir77Json message = Ir77Json::Object();
+        message["to"] = to;
+        message["op"] = op;
+        message["args"] = args;
+
+        return message;
     }
 
     void Require(std::shared_ptr<IIr77Return const> const& result, char const* step = "") {

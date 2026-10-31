@@ -9,7 +9,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <memory>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"

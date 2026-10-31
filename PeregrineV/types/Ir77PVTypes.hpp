@@ -55,7 +55,7 @@ static constexpr std::size_t MESHLET_MAX_TRIANGLES = 124;
 // 0 = pure locality, higher = tighter normal cones for backface culling
 static constexpr float MESHLET_CONE_WEIGHT = 0.25f;
 
-// geometry pools -- every scene's vertices and indices live in one device buffer per stream (Ir77PVGeometryPool), each scene in its own range
+// geometry pools -- every block's vertices and indices live in one device buffer per stream (Ir77PVGeometryPool), each block in its own range
 // (first fit), the rest free for whatever loads later. Fixed size: an upload that doesn't fit fails and says which pool. Made on first use.
 static constexpr std::uint32_t GEOMETRY_VERTEX_CAPACITY = 2u << 20;            // Ir77PVVertex (48 bytes) -- 96 MB
 static constexpr std::uint32_t GEOMETRY_INDEX_CAPACITY = 8u << 20;             // uint32 -- 32 MB
@@ -616,13 +616,12 @@ static_assert(sizeof(Ir77MeshRange) == sizeof(VkDrawIndexedIndirectCommand));
 // asset handles -- what Ir77PVAsset hands back after an upload
 // =============================================================================================================================================
 
-// Whole-scene vertex-domain upload. Scene (glTF loader) stacks every primitive's data into these
-// arrays itself -- one entry per vertex/index across the entire file, not per mesh -- and prebuilds
-// indirect_commands with the offsets it already knows from that stacking. Asset does not compute
-// per-mesh ranges or hand back CPU-side mesh IDs; GPU-side indexing comes entirely from
-// indirect_commands at draw time via vkCmdDrawIndexedIndirect.
+// One block -- a vertex-domain upload that lands in ranges of the geometry pools and loads / unloads as one. World stacks one stream of an
+// asset (static, blend, skinned or posed) into these arrays -- one entry per vertex / index across the whole stream, not per mesh -- and
+// prebuilds indirect_commands with the offsets it already knows from that stacking. Geometry computes no per-mesh ranges and hands back no
+// CPU-side mesh ids; GPU-side indexing comes entirely from indirect_commands at draw time via vkCmdDrawIndexedIndirect.
 // Materials, textures and animation are separate channels -- not stacked into this struct.
-struct Ir77PVSceneUpload {
+struct Ir77PVBlockUpload {
     std::vector<Ir77PVVertex> vertices{};
     std::vector<std::uint32_t> indices{};
     std::vector<Ir77PVVertexSkinned> vertices_skinned{};
@@ -638,7 +637,7 @@ struct Ir77PVSingleMesh {
 };
 
 // Uploaded mesh: device-local vertex + index buffers (single-mesh path, used by the testbed and any
-// one-off load). Scene loading uses UploadScene instead -- ranges of the geometry pools, not one buffer pair per mesh.
+// one-off load). Asset loading uses UploadBlock instead -- ranges of the geometry pools, not one buffer pair per mesh.
 struct Ir77PVSingleMeshBuffer {
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
@@ -672,16 +671,16 @@ enum class Ir77PVGeometryPool : std::uint8_t { Vertices, Indices, SkinnedVertice
 
 static constexpr std::size_t GEOMETRY_POOL_COUNT = 6;
 
-// A scene's piece of one pool -- elements [first, first + count). count 0 = it has nothing there.
+// A block's piece of one pool -- elements [first, first + count). count 0 = it has nothing there.
 struct Ir77PVGeometryRange {
     std::uint32_t first{0};
     std::uint32_t count{0};
 };
 
-// vertex path scene -- its stacked objects in its ranges of the geometry pools; vertex / index (or the skinned pair) and indirect are the pool
+// vertex path block -- its stacked objects in its ranges of the geometry pools; vertex / index (or the skinned pair) and indirect are the pool
 // buffers. commands are rebased into the pools (firstIndex past the index range's start, vertexOffset past the vertex range's) and live in
 // its range of the command pool.
-struct Ir77PVSceneSlot {
+struct Ir77PVBlockSlot {
     std::array<Ir77PVGeometryRange, GEOMETRY_POOL_COUNT> ranges{};  // [Ir77PVGeometryPool]
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
@@ -693,14 +692,14 @@ struct Ir77PVSceneSlot {
     std::vector<std::uint8_t> visible{};
     std::uint32_t dirty{0};  // frame copies still to rewrite
     bool alive{false};
-    std::uint32_t vertex_slot{BINDLESS_NO_SLOT};          // GetSceneVertexSlot -- its vertex range as a storage buffer (indices local to it)
+    std::uint32_t vertex_slot{BINDLESS_NO_SLOT};          // GetBlockVertexSlot -- its vertex range as a storage buffer (indices local to it)
     std::uint32_t vertex_skinned_slot{BINDLESS_NO_SLOT};  // the same for the skinned channel
     std::uint32_t vertex_count{0};                        // where its vertex range ends in `vertex` -- the BLAS builds' upper bound
 };
 
-// What Acceleration reads out of a vertex-path scene (Ir77PVGeometry::GetSceneGeometry) -- the buffers it builds from and the commands
+// What Acceleration reads out of a vertex-path block (Ir77PVGeometry::GetBlockGeometry) -- the buffers it builds from and the commands
 // that cut them into objects
-struct Ir77PVSceneGeometry {
+struct Ir77PVBlockGeometry {
     std::shared_ptr<IIr77PVBuffer> vertex{};
     std::shared_ptr<IIr77PVBuffer> index{};
     std::uint32_t vertex_count{0};
@@ -708,21 +707,21 @@ struct Ir77PVSceneGeometry {
     std::vector<std::uint32_t> instance_counts{};  // per command, whatever its visibility
 };
 
-// mesh path scene -- meshlet buffers plus the per-record command state
+// mesh path block -- meshlet buffers plus the per-instance command state
 struct Ir77PVMeshletSlot {
     Ir77PVMeshletMesh mesh{};
-    std::vector<VkDrawMeshTasksIndirectCommandEXT> commands{};  // live, one per record -- groupCountX 0 = hidden
-    std::vector<std::uint32_t> groups{};                        // what a visible record dispatches
-    std::vector<std::uint32_t> first_record{};                  // per scene command, plus one end entry
+    std::vector<VkDrawMeshTasksIndirectCommandEXT> commands{};  // live, one per instance -- groupCountX 0 = hidden
+    std::vector<std::uint32_t> groups{};                        // what a visible instance dispatches
+    std::vector<std::uint32_t> first_instance{};                // per block command, plus one end entry
     std::uint32_t dirty{0};
     bool alive{false};
     std::array<Ir77PVGeometryRange, GEOMETRY_POOL_COUNT> ranges{};  // its vertices (mesh.vertices is the pool, its slot just the range); ray indices
-    // ray queries -- what Acceleration builds the static stream's BLASes from (GetMeshletGeometry). ray_index is the index pool, the scene's
+    // ray queries -- what Acceleration builds the static stream's BLASes from (GetMeshletGeometry). ray_index is the index pool, the block's
     // indices kept in it only on ray-query devices; the vertices are mesh.vertices.
     std::shared_ptr<IIr77PVBuffer> ray_index{};
     std::uint32_t vertex_count{0};                               // where its vertex range ends in the pool
-    std::vector<VkDrawIndexedIndirectCommand> scene_commands{};  // the upload's indirect commands, rebased into the pools -- one BLAS each
-    std::vector<std::uint32_t> instance_counts{};                // per scene command
+    std::vector<VkDrawIndexedIndirectCommand> block_commands{};  // the upload's indirect commands, rebased into the pools -- one BLAS each
+    std::vector<std::uint32_t> instance_counts{};                // per block command
 };
 
 // What an owner let go of -- held by Transfer's graveyard until every frame that could still read it has finished, then released in one
@@ -783,10 +782,10 @@ struct Ir77PVDrawItem {
     std::uint32_t light_index{0};                                                                                                 // shadow pass -> pc.user[0]
 };
 
-// A cull bin's commands -- [first_command, first_command + command_count) of one vertex-path scene. test: frustum-cull them against the view
+// A cull bin's commands -- [first_command, first_command + command_count) of one vertex-path block. test: frustum-cull them against the view
 // (false: every instance not hidden passes -- shadow casters, animated geometry whose bind-pose bounds don't hold).
 struct Ir77PVCullRun {
-    std::uint32_t scene{0};
+    std::uint32_t block{0};
     std::uint32_t first_command{0};
     std::uint32_t command_count{0};
     bool test{true};
@@ -926,7 +925,7 @@ struct Ir77PVFrameReport {
 
 // ---- acceleration structures (ray queries) -- Ir77PVAcceleration ----
 
-// One object's BLAS: the triangles of one scene command (or one surface), read from its buffers by GPU address.
+// One object's BLAS: the triangles of one block command (or one surface), read from its buffers by GPU address.
 //   static:  built once at load, fastest to trace
 //   dynamic: refit every frame (the posed stream -- same triangles, moved vertices)
 //   rebuild: built from scratch every frame (a field surface -- its shape is whatever the program wrote this frame)
@@ -935,7 +934,7 @@ struct Ir77PVBottomLevel {
     VkAccelerationStructureKHR structure{VK_NULL_HANDLE};
     std::shared_ptr<IIr77PVBuffer> storage{};
     VkDeviceAddress address{0};  // what TLAS instances point at
-    std::uint32_t scene_id{0};
+    std::uint32_t block_id{0};
     std::uint32_t command{0};
     bool dynamic{false};
     VkDeviceAddress vertex_address{0};

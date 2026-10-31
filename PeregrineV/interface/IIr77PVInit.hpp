@@ -72,7 +72,7 @@ typedef struct IIr77PVInit : virtual public IIr77Enlisted {
     // ---- the device --------------------------------------------------------------------------------------------------------------------------
 
     // The display device has ray queries -- and so an Acceleration
-    virtual std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) = 0;
+    virtual std::shared_ptr<IIr77Return const> ImplementsRayQuery(bool& enabled) = 0;
 
     // The display device has mesh shading
     virtual std::shared_ptr<IIr77Return const> GetMeshShading(bool& enabled) = 0;

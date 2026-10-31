@@ -237,7 +237,8 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
     // piece of it (one scene's range of a geometry pool; offset a multiple of the device's storage-buffer offset alignment); the default is
     // the whole copy.
     std::shared_ptr<IIr77Return const> RegisterBuffer(std::shared_ptr<IIr77PVBuffer> const& buffer, Ir77PVSlotKind const& kind, std::uint32_t& slot,
-                                                      VkDeviceSize const& offset = 0, VkDeviceSize const& range = VK_WHOLE_SIZE, std::uint32_t const& copy = 0) {
+                                                      VkDeviceSize const& offset = 0, VkDeviceSize const& range = VK_WHOLE_SIZE,
+                                                      std::uint32_t const& copy = 0) {
         if (!buffer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: no buffer.");
 
         if (!m_descriptor_set) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTransfer: bindless table not set.");
@@ -349,7 +350,7 @@ class Ir77PVTransfer : public Ir77Enlisted, public IIr77PVTransfer, public std::
     // With ray queries on, storage buffers can also be acceleration-structure build inputs, read by GPU address
     VkBufferUsageFlags RayInputUsage() const {
         bool ray_query{false};
-        if (m_device) m_device->GetRayQuery(ray_query);
+        if (m_device) m_device->ImplementsRayQuery(ray_query);
 
         return ray_query ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0;
     }

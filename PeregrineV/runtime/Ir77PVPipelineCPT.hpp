@@ -123,6 +123,12 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    std::shared_ptr<IIr77Return const> SetPipelineCache(VkPipelineCache const& cache) {
+        m_cache = cache;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // -------------------------------------------------------------------------------------------------------------------------------------
     // create
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -195,7 +201,7 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
         compute_info.basePipelineIndex = -1;
 
         VkPipeline pipeline{VK_NULL_HANDLE};
-        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &compute_info, nullptr, &pipeline) != VK_SUCCESS)
+        if (vkCreateComputePipelines(device, m_cache, 1, &compute_info, nullptr, &pipeline) != VK_SUCCESS)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCPT: vkCreateComputePipelines failed.");
 
         m_pipeline = pipeline;
@@ -215,6 +221,8 @@ class Ir77PVPipelineCPT : public Ir77Enlisted, public IIr77PVPipelineCPT, public
     VkPipelineShaderStageCreateInfo m_shader_stage{};
 
     VkPipeline m_pipeline{VK_NULL_HANDLE};
+
+    VkPipelineCache m_cache{VK_NULL_HANDLE};  // the device's -- SetPipelineCache; none -> the driver compiles from scratch
 };
 
 }  // namespace NSIr77PeregrineV

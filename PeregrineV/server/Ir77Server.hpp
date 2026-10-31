@@ -287,7 +287,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         surface = IR77PV_NO_SURFACE;
 
         bool ray_query{false};
-        m_init->GetRayQuery(ray_query);
+        m_init->ImplementsRayQuery(ray_query);
         if (!ray_query) return Ir77RETURN<Ir77OperationSucceeded>();
 
         std::shared_ptr<IIr77Return const> result{};
@@ -463,7 +463,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
             bool ray_query{false};
             bool mesh_shading{false};
-            m_init->GetRayQuery(ray_query);
+            m_init->ImplementsRayQuery(ray_query);
             m_init->GetMeshShading(mesh_shading);
 
             data = "{\"gpu\":\"" + Escape(gpu) + "\",\"ray_query\":" + (ray_query ? "true" : "false") +
@@ -478,13 +478,12 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
             std::shared_ptr<IIr77PVGeometry> geometry{};
             if (Failed(m_init->GetGeometry(geometry), result)) return result;
 
-            std::array<std::pair<Ir77PVGeometryPool, char const*>, GEOMETRY_POOL_COUNT> const pools{
-                {{Ir77PVGeometryPool::Vertices, "vertices"},
-                 {Ir77PVGeometryPool::Indices, "indices"},
-                 {Ir77PVGeometryPool::SkinnedVertices, "skinned_vertices"},
-                 {Ir77PVGeometryPool::SkinnedIndices, "skinned_indices"},
-                 {Ir77PVGeometryPool::Commands, "commands"},
-                 {Ir77PVGeometryPool::MeshCommands, "mesh_commands"}}};
+            std::array<std::pair<Ir77PVGeometryPool, char const*>, GEOMETRY_POOL_COUNT> const pools{{{Ir77PVGeometryPool::Vertices, "vertices"},
+                                                                                                     {Ir77PVGeometryPool::Indices, "indices"},
+                                                                                                     {Ir77PVGeometryPool::SkinnedVertices, "skinned_vertices"},
+                                                                                                     {Ir77PVGeometryPool::SkinnedIndices, "skinned_indices"},
+                                                                                                     {Ir77PVGeometryPool::Commands, "commands"},
+                                                                                                     {Ir77PVGeometryPool::MeshCommands, "mesh_commands"}}};
 
             std::string entries{};
             for (auto const& [pool, name] : pools) {

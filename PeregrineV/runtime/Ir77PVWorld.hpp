@@ -9,7 +9,6 @@
 #include <cstring>
 #include <map>
 #include <memory>
-#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -45,7 +44,7 @@ namespace NSIr77PeregrineV {
 // Ir77PVWorld -- what gets drawn. Takes assets whole and frames whole, and does everything between them and the peers that draw.
 //
 //   startup:   Ir77PVInit wires it -- SetTransfer / SetMaterials / SetGeometry / SetPipelineCache / SetPaint / [SetAcceleration] -> CreateWorld
-//   load:      LoadAsset(bundle) -- textures and materials (Materials), BLEND primitives split off into their own compacted scene, the opaque
+//   load:      LoadAsset(bundle) -- textures and materials (Materials), BLEND primitives split off into their own compacted block, the opaque
 //              ones sorted into material runs, each command's material row going up with it (Geometry), the static stream on the mesh or vertex path,
 //              the skinned stream and its compute-skinned copy (the posed stream), BLASes with MASK alpha rows (Acceleration)
 //   per frame: SubmitFrame(frame) -- models[], bone bases + palettes, lights, shadow matrices and each window's cameras (Paint frame data),
@@ -57,7 +56,7 @@ namespace NSIr77PeregrineV {
 // bin's culled list with one indirect-count draw, the shadow pass each shadow bin's (view 0's); static geometry is frustum-tested, animated
 // (posed / skinned) geometry passes untested. The mesh path keeps its own task-shader culling; transparent objects stay sorted on the CPU.
 // Without the pipeline, every asset draws unculled as before.
-//   unload:    UnloadAsset -- BLASes, scenes and tables freed, its ranges back
+//   unload:    UnloadAsset -- BLASes, blocks and tables freed, its ranges back
 //
 // Every asset gets its own range of models[] slots and joint matrices (first fit), so a scene is any number of files. LoadAsset moves the
 // bundle's instance slots there; SubmitFrame writes each asset's transforms and bones into its ranges.
@@ -74,7 +73,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
     // one transparent object -- a single indirect command, sorted by camera distance every frame
     struct Ir77PVWorldBlend {
         std::uint32_t material_id{0};
-        std::uint32_t command{0};  // in the asset's blend scene, or in its skinned scene when skinned
+        std::uint32_t command{0};  // in the asset's blend block, or in its skinned block when skinned
         std::uint32_t slot{0};     // models[] slot -- its translation is the sort position
         bool skinned{false};
     };
@@ -95,13 +94,13 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
         std::vector<std::uint32_t> material_ids{};  // [bundle material] -> Materials id
 
-        // static opaque -- vertex path (UploadScene) or mesh path (UploadMeshlets)
+        // static opaque -- vertex path (UploadBlock) or mesh path (UploadMeshlets)
         bool has_static{false};
         bool mesh_path{false};
         std::uint32_t static_id{0};
         std::uint32_t static_count{0};
 
-        // static transparent -- its own compacted vertex-path scene
+        // static transparent -- its own compacted vertex-path block
         bool has_blend{false};
         std::uint32_t blend_id{0};
 
@@ -293,7 +292,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
                                                             std::to_string(report.instance_base + bundle.instance_count) + ").");
     }
 
-    // Its BLASes, scenes and tables freed, its models[] and joint ranges back. The draw lists are cleared now -- they name its buffers --
+    // Its BLASes, blocks and tables freed, its models[] and joint ranges back. The draw lists are cleared now -- they name its buffers --
     // and the next SubmitFrame refills them.
     std::shared_ptr<IIr77Return const> UnloadAsset(std::uint32_t const& asset_id) {
         auto const found = m_assets.find(asset_id);
@@ -565,15 +564,15 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         };
 
         // ---- static opaque -- vertex path or mesh shading ----
-        Ir77PVSceneUpload upload{};
+        Ir77PVBlockUpload upload{};
         upload.vertices = bundle.vertices;
         upload.indices = bundle.indices;
 
         std::vector<std::uint32_t> static_materials{};
         report.opaque_runs = opaque_runs(bundle.primitives, upload.indirect_commands, static_materials);
 
-        // ---- static transparent -- compacted into its own small vertex-path scene (the mesh path has no Transparent pipeline) ----
-        Ir77PVSceneUpload blend_upload{};
+        // ---- static transparent -- compacted into its own small vertex-path block (the mesh path has no Transparent pipeline) ----
+        Ir77PVBlockUpload blend_upload{};
         std::vector<std::uint32_t> blend_materials{};
 
         for (Ir77PVAssetPrimitive const& primitive : bundle.primitives) {
@@ -598,7 +597,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         }
 
         // ---- skinned -- vertex path only: opaque runs, then one command per transparent object (SkinnedTransparent) ----
-        Ir77PVSceneUpload skinned_upload{};
+        Ir77PVBlockUpload skinned_upload{};
         std::vector<std::uint32_t> posed_materials{};  // bundle material per posed command -- its BLASes' alpha rows
 
         skinned_upload.vertices_skinned = bundle.vertices_skinned;
@@ -641,23 +640,23 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
                     std::fill_n(upload.triangle_materials.begin() + cmd.firstIndex / 3, cmd.indexCount / 3, material.row);
                 }
 
-                std::uint32_t records{0};
-                asset.mesh_path = m_geometry->UploadMeshlets(upload, asset.static_id, records, true)->ID() == GUIDIr77OperationSucceeded;
+                std::uint32_t instances{0};
+                asset.mesh_path = m_geometry->UploadMeshlets(upload, asset.static_id, instances, true)->ID() == GUIDIr77OperationSucceeded;
             }
 
-            if (!asset.mesh_path && Failed(m_geometry->UploadScene(upload, asset.static_id, true), result)) return result;
+            if (!asset.mesh_path && Failed(m_geometry->UploadBlock(upload, asset.static_id, true), result)) return result;
 
             asset.has_static = true;
         }
 
         if (!blend_upload.indirect_commands.empty()) {
-            if (Failed(m_geometry->UploadScene(blend_upload, asset.blend_id, true), result)) return result;
+            if (Failed(m_geometry->UploadBlock(blend_upload, asset.blend_id, true), result)) return result;
 
             asset.has_blend = true;
         }
 
         if (!skinned_upload.indirect_commands.empty()) {
-            if (Failed(m_geometry->UploadScene(skinned_upload, asset.skinned_id, true), result)) return result;
+            if (Failed(m_geometry->UploadBlock(skinned_upload, asset.skinned_id, true), result)) return result;
 
             asset.has_skinned = true;
 
@@ -688,7 +687,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             alpha_rows(static_materials, rows);
 
             if (Failed(asset.mesh_path ? m_acceleration->BuildMeshlets(asset.static_id, rows, objects)
-                                       : m_acceleration->BuildScene(asset.static_id, false, rows, objects),
+                                       : m_acceleration->BuildBlock(asset.static_id, false, rows, objects),
                        result))
                 return result;
 
@@ -698,7 +697,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         if (asset.has_posed) {
             alpha_rows(posed_materials, rows);
 
-            if (Failed(m_acceleration->BuildScene(asset.posed_id, true, rows, objects), result)) return result;
+            if (Failed(m_acceleration->BuildBlock(asset.posed_id, true, rows, objects), result)) return result;
 
             asset.objects.push_back(objects);
         }
@@ -710,7 +709,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
     // with the bind pose here and posed by skin.comp every frame. It draws through the static and shadow pipelines like any static geometry.
     // No skin.compute pipeline -> the skinned geometry stays on the Skinned pipelines.
     // posed_materials = the bundle material of every posed command.
-    std::shared_ptr<IIr77Return const> UploadPosedStream(Ir77PVSceneUpload const& skinned_upload, std::vector<std::uint32_t> const& skinned_materials,
+    std::shared_ptr<IIr77Return const> UploadPosedStream(Ir77PVBlockUpload const& skinned_upload, std::vector<std::uint32_t> const& skinned_materials,
                                                          Ir77PVWorldAsset& asset, std::vector<std::uint32_t>& posed_materials) {
         std::shared_ptr<IIr77Return const> result{};
 
@@ -720,7 +719,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         if (m_pipeline_cache->FindPipeline(std::string{"skin.compute"}, asset.skin_compute)->ID() != GUIDIr77OperationSucceeded)
             return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVWorld: no skin.compute pipeline -- skinned geometry stays on the Skinned pipeline.");
 
-        Ir77PVSceneUpload posed{};
+        Ir77PVBlockUpload posed{};
         std::vector<glm::uvec2> jobs{};  // per posed vertex: source vertex, models[] slot
 
         posed.indices = skinned_upload.indices_skinned;  // shared by every instance -- vertexOffset picks the region
@@ -754,12 +753,12 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
         if (Failed(MaterialRows(asset, posed_materials, posed.command_materials), result)) return result;
 
-        if (Failed(m_geometry->UploadScene(posed, asset.posed_id, true), result)) return result;
+        if (Failed(m_geometry->UploadBlock(posed, asset.posed_id, true), result)) return result;
 
         asset.has_posed = true;  // from here on ReleaseAsset unloads it
 
-        if (Failed(m_geometry->GetSceneVertexSlot(asset.posed_id, false, asset.skin_destination), result)) return result;
-        if (Failed(m_geometry->GetSceneVertexSlot(asset.skinned_id, true, asset.skin_source), result)) return result;
+        if (Failed(m_geometry->GetBlockVertexSlot(asset.posed_id, false, asset.skin_destination), result)) return result;
+        if (Failed(m_geometry->GetBlockVertexSlot(asset.skinned_id, true, asset.skin_source), result)) return result;
         if (Failed(
                 m_transfer->CreateStorageBuffer(static_cast<VkDeviceSize>(jobs.size() * sizeof(glm::uvec2)), jobs.data(), asset.jobs_buffer, asset.jobs_slot),
                 result))
@@ -793,16 +792,16 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         return index < asset.material_ids.size() ? asset.material_ids[index] : m_default_material;
     }
 
-    // Everything an asset put on the device, BLASes first (they read the scenes' buffers), then its materials and textures, and its ranges.
+    // Everything an asset put on the device, BLASes first (they read the blocks' buffers), then its materials and textures, and its ranges.
     // Safe on a half-loaded asset. All of it goes through Transfer's graveyard -- freed once no frame in flight can read it.
     void ReleaseAsset(Ir77PVWorldAsset& asset) {
         if (m_acceleration)
             for (glm::uvec2 const& objects : asset.objects) m_acceleration->ReleaseObjects(objects);
 
-        if (asset.has_static) asset.mesh_path ? m_geometry->UnloadMeshlets(asset.static_id) : m_geometry->UnloadScene(asset.static_id);
-        if (asset.has_blend) m_geometry->UnloadScene(asset.blend_id);
-        if (asset.has_skinned) m_geometry->UnloadScene(asset.skinned_id);
-        if (asset.has_posed) m_geometry->UnloadScene(asset.posed_id);
+        if (asset.has_static) asset.mesh_path ? m_geometry->UnloadMeshlets(asset.static_id) : m_geometry->UnloadBlock(asset.static_id);
+        if (asset.has_blend) m_geometry->UnloadBlock(asset.blend_id);
+        if (asset.has_skinned) m_geometry->UnloadBlock(asset.skinned_id);
+        if (asset.has_posed) m_geometry->UnloadBlock(asset.posed_id);
 
         if (asset.jobs_slot != BINDLESS_NO_SLOT) m_transfer->DestroyStorageBuffer(asset.jobs_buffer);
 
@@ -873,8 +872,8 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             Ir77PVDrawItem item{};
 
             if (asset.has_static && asset.mesh_path) {
-                // mesh shading -- one draw for every record; each meshlet carries its own material row
-                if (Failed(m_geometry->MakeMeshletSceneDrawItem(0, asset.static_id, m_default_material, 0, asset.static_count, item), result)) return result;
+                // mesh shading -- one draw for every instance; each meshlet carries its own material row
+                if (Failed(m_geometry->MakeMeshletDrawItem(0, asset.static_id, m_default_material, 0, asset.static_count, item), result)) return result;
 
                 opaque.push_back(item);
             } else if (asset.has_static) {
@@ -1010,7 +1009,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             if (!asset.has_static || !asset.mesh_path) continue;
 
             Ir77PVDrawItem item{};
-            if (Failed(m_geometry->MakeMeshletSceneDrawItem(0, asset.static_id, m_default_material, 0, asset.static_count, item), result)) return result;
+            if (Failed(m_geometry->MakeMeshletDrawItem(0, asset.static_id, m_default_material, 0, asset.static_count, item), result)) return result;
 
             meshlets.push_back(item);
         }
@@ -1072,12 +1071,12 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             Ir77PVWorldAsset const& asset = m_assets.at(entry.asset);
             Ir77PVWorldBlend const& draw = asset.blends[entry.blend];
 
-            std::uint32_t const scene = draw.skinned ? asset.skinned_id : asset.blend_id;
+            std::uint32_t const block = draw.skinned ? asset.skinned_id : asset.blend_id;
             Ir77PVPipelineKind const kind{draw.skinned ? Ir77PVPipelineKind::SkinnedTransparent : Ir77PVPipelineKind::Transparent};
 
             for (bool const back_faces : {true, false}) {
                 Ir77PVDrawItem item{};
-                if (Failed(m_geometry->MakeIndirectDrawItem(0, kind, scene, draw.material_id, draw.command, 1, draw.skinned, item), result)) return result;
+                if (Failed(m_geometry->MakeIndirectDrawItem(0, kind, block, draw.material_id, draw.command, 1, draw.skinned, item), result)) return result;
 
                 item.back_faces = back_faces;
 

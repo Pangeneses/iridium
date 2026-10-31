@@ -31,6 +31,9 @@ typedef struct IIr77PVPipelineCPT : virtual public IIr77Enlisted {
     // A registered compute shader -- e.g. FindShader("culling.comp", handle)
     virtual std::shared_ptr<IIr77Return const> SetComputeShader(Ir77PVShaderHandle const& handle) = 0;
 
+    // optional -- the device's VkPipelineCache, so the driver reuses compiled code
+    virtual std::shared_ptr<IIr77Return const> SetPipelineCache(VkPipelineCache const& cache) = 0;
+
     virtual std::shared_ptr<IIr77Return const> CreatePipeline() = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetPipeline(VkPipeline* pipeline) = 0;

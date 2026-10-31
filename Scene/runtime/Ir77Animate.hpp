@@ -67,7 +67,7 @@ namespace NSIr77Scene {
 // scene's peers -- the entities (one Pose each: a file, its node tree and animation), View (the cameras), Lighting (lights and shadows) and
 // Field (the compute visual) -- which it creates and wires; and the one place that talks to all of them at once:
 //
-//   setup:     SetRenderer / SetViewSize / SetPipeline -> CreateScene(path, use_mesh, lights, cameras) -- every entity and light goes, the
+//   setup:     SetRenderer / SetViewSize -> CreateScene(path, use_mesh, lights, cameras) -- every entity and light goes, the
 //              file becomes entity 0: Pose parses, the file goes to the renderer as one asset bundle (LoadAsset), its lights become world
 //              lights, View takes its cameras and frames it
 //   entities:  ImportEntity(path, lights) -> its id / RemoveEntity / SetEntityTransform -- any number of files, each its own asset in the
@@ -95,6 +95,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         glm::vec3 bounds_max{1.0f};
         std::vector<glm::mat4> transforms{};  // its instances, in its own slot order
         std::vector<glm::mat4> bones{};       // its joint palettes, back to back
+        bool visible{true};                   // false -- left out of the frame (SetEntityVisible)
     };
 
     // one world light -- what it is (type, color, intensity in glTF units: lux / candela, range, cones) and where it sits; it shines down its
@@ -104,6 +105,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         glm::vec3 translation{0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         std::uint32_t entity{UINT32_MAX};  // the entity it was imported with; UINT32_MAX = placed by the UI
+        bool visible{true};                // false -- off (SetLightVisible)
     };
 
    public:
@@ -181,14 +183,6 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         m_view_windows = windows;
         m_view_width = width;
         m_view_height = height;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // What the static (non-skinned, opaque) geometry draws with -- a manifest pipeline or role. Unset -> the "static" role. Taken by the next
-    // CreateScene.
-    std::shared_ptr<IIr77Return const> SetPipeline(Ir77PVPipelineHandle const& pipeline) {
-        m_pipeline = pipeline;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -333,6 +327,15 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return BuildLights();
     }
 
+    std::shared_ptr<IIr77Return const> SetEntityVisible(std::uint32_t const& entity, bool const& visible) {
+        auto const found = m_entities.find(entity);
+        if (found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such entity.");
+
+        found->second.visible = visible;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // Where the whole entity sits in the world -- everything it draws moves with it from the next frame, and the shadow casters' box with it
     std::shared_ptr<IIr77Return const> SetEntityTransform(std::uint32_t const& entity, glm::vec3 const& translation, glm::quat const& rotation,
                                                           glm::vec3 const& scale) {
@@ -404,6 +407,15 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return BuildLights();
     }
 
+    std::shared_ptr<IIr77Return const> SetLightVisible(std::uint32_t const& id, bool const& visible) {
+        auto const found = m_lights.find(id);
+        if (found == m_lights.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such light.");
+
+        found->second.visible = visible;
+
+        return BuildLights();
+    }
+
     // One world light -- entity is the one it was imported with (UINT32_MAX = placed by the UI)
     std::shared_ptr<IIr77Return const> GetLight(std::uint32_t const& id, Ir77PVLight& light, glm::vec3& translation, glm::quat& rotation,
                                                 std::uint32_t& entity) {
@@ -448,10 +460,13 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         float const aspect = m_view_height > 0 ? static_cast<float>(m_view_width) / static_cast<float>(m_view_height) : 1.78f;
 
         // the entities -- their instances and joint palettes as their Poses left them
-        m_frame.assets.resize(m_entities.size());
+        std::size_t const shown = static_cast<std::size_t>(std::count_if(m_entities.begin(), m_entities.end(), [](auto const& e) { return e.second.visible; }));
+        m_frame.assets.resize(shown);
 
         std::size_t a{0};
         for (auto& [id, entity] : m_entities) {
+            if (!entity.visible) continue;  // hidden -- out of the frame, so out of the draws and the rays
+
             entity.pose->WriteInstanceTransforms(entity.transforms);
             entity.pose->WriteBoneMatrices(entity.bones);
 
@@ -614,7 +629,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         bundle = Ir77PVAssetBundle{};
         bundle.name = path.empty() ? std::string{"(empty scene)"} : path;
         bundle.use_mesh = use_mesh;
-        bundle.pipeline = m_pipeline;
+        bundle.pipeline = IR77PV_NO_PIPELINE;
 
         // geometry -- each channel stacked, one primitive per range with its glTF material
         auto const primitives = [](std::vector<Ir77MeshRange> const& ranges, std::vector<std::uint32_t> const& range_materials,
@@ -722,6 +737,8 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         std::vector<Ir77PVLight> lights{};
 
         for (auto const& [id, placed] : m_lights) {
+            if (!placed.visible) continue;
+
             Ir77PVLight light = placed.light;
             light.position = placed.translation;
             light.direction = glm::normalize(placed.rotation * glm::vec3(0.0f, 0.0f, -1.0f));

@@ -298,13 +298,13 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
 
         std::size_t const available = m_free_rows.size() + (MATERIAL_CAPACITY - m_row_used.size());
         if (constants.size() > available)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVMaterial: material table full (" + std::to_string(MATERIAL_CAPACITY) +
-                                                           " rows) -- unload something or raise MATERIAL_CAPACITY.");
+            return Ir77RETURN<Ir77NotConfigured>(
+                this, "Ir77PVMaterial: material table full (" + std::to_string(MATERIAL_CAPACITY) + " rows) -- unload something or raise MATERIAL_CAPACITY.");
 
         std::vector<Ir77PVMaterialRow> rows(constants.size());
 
         for (std::size_t i = 0; i < constants.size(); i++) {
-            auto const result = DefineMaterialRow(constants[i], textures[i], rows[i]);
+            auto const result = WriteMaterialRow(constants[i], textures[i], rows[i]);
             if (result->ID() != GUIDIr77OperationSucceeded) return result;
         }
 
@@ -380,8 +380,8 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
 
    private:
     // One material-table row: the constants plus a texture slot per map -- the texture's when given, a placeholder's otherwise
-    std::shared_ptr<IIr77Return const> DefineMaterialRow(Ir77PVMaterialConstants const& constants, Ir77PVMaterialTextures const& textures,
-                                                         Ir77PVMaterialRow& row) {
+    std::shared_ptr<IIr77Return const> WriteMaterialRow(Ir77PVMaterialConstants const& constants, Ir77PVMaterialTextures const& textures,
+                                                        Ir77PVMaterialRow& row) {
         auto const white_found = m_placeholder_slots.find(Ir77PVPlaceholderKind::White);
         auto const normal_found = m_placeholder_slots.find(Ir77PVPlaceholderKind::Normal);
 
@@ -419,7 +419,7 @@ class Ir77PVMaterial : public Ir77Enlisted, public IIr77PVMaterial, public std::
 
     std::shared_ptr<IIr77PVTransfer> m_transfer{};
 
-    std::shared_ptr<IIr77PVBuffer> m_material_table{};  // MATERIAL_CAPACITY rows -- UploadMaterials appends
+    std::shared_ptr<IIr77PVBuffer> m_material_table{};  // MATERIAL_CAPACITY rows -- UploadMaterials fills free rows first, then the unused end
 
     std::map<Ir77PVPlaceholderKind, std::uint32_t> m_placeholder_slots{};
 

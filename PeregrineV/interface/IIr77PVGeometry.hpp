@@ -22,7 +22,7 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
-// Meshes on the device -- scene (vertex path) and meshlets (mesh path) -- and the draw items that reference them. Every buffer
+// Meshes on the device -- blocks (vertex path) and meshlets (mesh path) -- and the draw items that reference them. Every buffer
 // is made and released through Transfer; materials come from Material. Every upload takes `wait` -- true blocks, false runs ahead of
 // later frames.
 //   Ir77PVInit wires it: SetDevice / SetTransfer / SetMaterials -> [pipeline cache] -> SetPipelineCache -> CreateGeometry. Ir77PVInit::Tick
@@ -54,83 +54,83 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     // copy per Tick until every copy matches.
     virtual std::shared_ptr<IIr77Return const> Tick(std::uint32_t const& frame) = 0;
 
-    // ---- scene path (vertex) -- one stacked upload, one indirect command per object, one draw item for the lot -------------------------------
+    // ---- vertex path -- one stacked upload (a block), one indirect command per object, one draw item for the lot -----------------------------
 
-    // scene path (vertex) -- the client stacks every object into one Ir77PVSceneUpload and prebuilds one indirect command per object:
+    // vertex path -- the client stacks every object into one Ir77PVBlockUpload and prebuilds one indirect command per object:
     //   firstIndex / indexCount   -> its slice of indices (indices stay local, 0-based)
     //   vertexOffset              -> where its vertices start
     //   instanceCount / firstInstance -> how many copies, and their slots in models[] (set 0 binding 2)
     // One stream per upload (static or skinned). It lands in ranges of the geometry pools, the commands rebased onto them and kept in its range
-    // of the command pool, their material rows (command_materials) at the same places in the command material table -- every scene draws from
+    // of the command pool, their material rows (command_materials) at the same places in the command material table -- every block draws from
     // the same buffers; a pool too full for it fails the upload. One draw item covers every command (MakeIndirectDrawItem) and carries the
     // table: the vertex shader reads table[pc.user[5] + gl_DrawID]. The command pool is host-written per frame, so objects can be hidden /
     // shown / resized per frame without re-uploading geometry.
-    virtual std::shared_ptr<IIr77Return const> UploadScene(Ir77PVSceneUpload const& data, std::uint32_t& scene_id, bool const& wait = true) = 0;
+    virtual std::shared_ptr<IIr77Return const> UploadBlock(Ir77PVBlockUpload const& data, std::uint32_t& block_id, bool const& wait = true) = 0;
 
-    // Draw item for commands [first_command, first_command + command_count) of a scene through an engine role
-    virtual std::shared_ptr<IIr77Return const> MakeIndirectDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& scene_id,
+    // Draw item for commands [first_command, first_command + command_count) of a block through an engine role
+    virtual std::shared_ptr<IIr77Return const> MakeIndirectDrawItem(std::size_t const& window, Ir77PVPipelineKind const& kind, std::uint32_t const& block_id,
                                                                     std::uint32_t const& material_id, std::uint32_t const& first_command,
                                                                     std::uint32_t const& command_count, bool const& skinned, Ir77PVDrawItem& item) = 0;
 
     // The same through any pipeline handle (FindPipeline) -- its vertex shader must read the channel `skinned` selects
     virtual std::shared_ptr<IIr77Return const> MakeIndirectDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline,
-                                                                    std::uint32_t const& scene_id, std::uint32_t const& material_id,
+                                                                    std::uint32_t const& block_id, std::uint32_t const& material_id,
                                                                     std::uint32_t const& first_command, std::uint32_t const& command_count, bool const& skinned,
                                                                     Ir77PVDrawItem& item) = 0;
 
     // Hide / show one object (every instance of it). Applied to each frame copy by Tick.
-    virtual std::shared_ptr<IIr77Return const> SetSceneObjectVisible(std::uint32_t const& scene_id, std::uint32_t const& command, bool const& visible) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetCommandVisible(std::uint32_t const& block_id, std::uint32_t const& command, bool const& visible) = 0;
 
     // Change how many copies of an object draw -- spawn / despawn inside the models[] slots the client reserved for it
     // ([firstInstance, firstInstance + count) must not run into the next object's slots).
-    virtual std::shared_ptr<IIr77Return const> SetSceneObjectInstances(std::uint32_t const& scene_id, std::uint32_t const& command,
+    virtual std::shared_ptr<IIr77Return const> SetCommandInstances(std::uint32_t const& block_id, std::uint32_t const& command,
                                                                        std::uint32_t const& count) = 0;
 
-    // A scene's vertices (skinned = the skinned channel) as a bindless storage buffer over just its pool range -- vertex 0 is its first, so
-    // compute reads / writes them in place with scene-local indices. Registered on the first call, the same slot after; UnloadScene releases it.
-    virtual std::shared_ptr<IIr77Return const> GetSceneVertexSlot(std::uint32_t const& scene_id, bool const& skinned, std::uint32_t& slot) = 0;
+    // A block's vertices (skinned = the skinned channel) as a bindless storage buffer over just its pool range -- vertex 0 is its first, so
+    // compute reads / writes them in place with block-local indices. Registered on the first call, the same slot after; UnloadBlock releases it.
+    virtual std::shared_ptr<IIr77Return const> GetBlockVertexSlot(std::uint32_t const& block_id, bool const& skinned, std::uint32_t& slot) = 0;
 
-    // What Acceleration builds from: the pools, where the scene's vertex range ends and its commands, rebased into the pools
-    virtual std::shared_ptr<IIr77Return const> GetSceneGeometry(std::uint32_t const& scene_id, Ir77PVSceneGeometry& geometry) = 0;
+    // What Acceleration builds from: the pools, where the block's vertex range ends and its commands, rebased into the pools
+    virtual std::shared_ptr<IIr77Return const> GetBlockGeometry(std::uint32_t const& block_id, Ir77PVBlockGeometry& geometry) = 0;
 
     // Its vertex slots and pool ranges (geometry and commands) -- released once no frame in flight can read them. Remove its draw items from Paint first.
-    virtual std::shared_ptr<IIr77Return const> UnloadScene(std::uint32_t const& scene_id) = 0;
+    virtual std::shared_ptr<IIr77Return const> UnloadBlock(std::uint32_t const& block_id) = 0;
 
     // ---- meshlet path -- Mesh pipeline kind only (VK_EXT_mesh_shader) ----------------------------------------------------------------------
 
-    // meshlet path -- Mesh pipeline kind only (VK_EXT_mesh_shader). Takes the same stacked Ir77PVSceneUpload as UploadScene.
+    // meshlet path -- Mesh pipeline kind only (VK_EXT_mesh_shader). Takes the same stacked Ir77PVBlockUpload as UploadBlock.
     // Each indirect command is one object's range; meshlets are cut from that range only, so none ever spans two objects -- and from one
     // material row's triangles at a time (triangle_materials), so each meshlet has exactly one material.
     // One draw record + one mesh command per instance. Static (non-skinned) vertices only.
-    // record_count = records written. Fails when the device has no mesh shading.
-    virtual std::shared_ptr<IIr77Return const> UploadMeshlets(Ir77PVSceneUpload const& scene, std::uint32_t& meshlet_id, std::uint32_t& record_count,
+    // instance_count = instances written (one draw record each). Fails when the device has no mesh shading.
+    virtual std::shared_ptr<IIr77Return const> UploadMeshlets(Ir77PVBlockUpload const& block, std::uint32_t& meshlet_id, std::uint32_t& instance_count,
                                                               bool const& wait = true) = 0;
 
-    // What Acceleration builds the mesh path's static stream from: the vertices, the scene's index buffer (ray-query devices only) and its
-    // commands -- the same shape as GetSceneGeometry
-    virtual std::shared_ptr<IIr77Return const> GetMeshletGeometry(std::uint32_t const& meshlet_id, Ir77PVSceneGeometry& geometry) = 0;
+    // What Acceleration builds the mesh path's static stream from: the vertices, the block's index buffer (ray-query devices only) and its
+    // commands -- the same shape as GetBlockGeometry
+    virtual std::shared_ptr<IIr77Return const> GetMeshletGeometry(std::uint32_t const& meshlet_id, Ir77PVBlockGeometry& geometry) = 0;
 
-    // First record of a scene command -- record = first_record + instance offset, for SetMeshletRecordVisible.
-    virtual std::shared_ptr<IIr77Return const> GetMeshletFirstRecord(std::uint32_t const& meshlet_id, std::uint32_t const& command,
-                                                                     std::uint32_t& first_record) = 0;
+    // First instance of a block command -- instance = first_instance + instance offset, for SetMeshletInstanceVisible.
+    virtual std::shared_ptr<IIr77Return const> GetMeshletFirstInstance(std::uint32_t const& meshlet_id, std::uint32_t const& command,
+                                                                     std::uint32_t& first_instance) = 0;
 
-    // Same as MakeIndirectDrawItem but on the mesh path: commands [first_command, first_command + command_count) of the uploaded scene,
-    // mapped to their records. Every meshlet carries its own material row, so the whole scene is one mesh draw.
-    virtual std::shared_ptr<IIr77Return const> MakeMeshletSceneDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id,
+    // Same as MakeIndirectDrawItem but on the mesh path: commands [first_command, first_command + command_count) of the uploaded block,
+    // mapped to their instances. Every meshlet carries its own material row, so the whole block is one mesh draw.
+    virtual std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id,
                                                                         std::uint32_t const& material_id, std::uint32_t const& first_command,
                                                                         std::uint32_t const& command_count, Ir77PVDrawItem& item) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> MakeMeshletSceneDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline,
+    virtual std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline,
                                                                         std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
                                                                         std::uint32_t const& first_command, std::uint32_t const& command_count,
                                                                         Ir77PVDrawItem& item) = 0;
 
-    // Hide / show every instance of one scene object on the mesh path. Applied to each frame copy by Tick.
-    virtual std::shared_ptr<IIr77Return const> SetMeshletObjectVisible(std::uint32_t const& meshlet_id, std::uint32_t const& command, bool const& visible) = 0;
+    // Hide / show every instance of one block object on the mesh path. Applied to each frame copy by Tick.
+    virtual std::shared_ptr<IIr77Return const> SetMeshletCommandVisible(std::uint32_t const& meshlet_id, std::uint32_t const& command, bool const& visible) = 0;
 
-    // Hide / show one instance (record). The record count is fixed at build time -- spawn capacity is reserved by uploading
+    // Hide / show one instance. The instance count is fixed at build time -- spawn capacity is reserved by uploading
     // extra instances and starting them hidden.
-    virtual std::shared_ptr<IIr77Return const> SetMeshletRecordVisible(std::uint32_t const& meshlet_id, std::uint32_t const& record, bool const& visible) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetMeshletInstanceVisible(std::uint32_t const& meshlet_id, std::uint32_t const& instance, bool const& visible) = 0;
 
     // Its meshlet buffers, their slots and its pool ranges -- released once no frame in flight can read them. Remove its draw items from Paint
     // first.

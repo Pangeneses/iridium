@@ -167,21 +167,21 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
         VkPhysicalDeviceVulkan12Properties limits{};
         m_device->GetVulkan12Properties(limits);
 
-        m_capacity.textures = std::min({BINDLESS_TEXTURES, limits.maxPerStageDescriptorUpdateAfterBindSampledImages,
-                                        limits.maxDescriptorSetUpdateAfterBindSampledImages});
+        m_capacity.textures =
+            std::min({BINDLESS_TEXTURES, limits.maxPerStageDescriptorUpdateAfterBindSampledImages, limits.maxDescriptorSetUpdateAfterBindSampledImages});
 
-        m_capacity.buffers = std::min({BINDLESS_BUFFERS, limits.maxPerStageDescriptorUpdateAfterBindStorageBuffers,
-                                       limits.maxDescriptorSetUpdateAfterBindStorageBuffers});
+        m_capacity.buffers =
+            std::min({BINDLESS_BUFFERS, limits.maxPerStageDescriptorUpdateAfterBindStorageBuffers, limits.maxDescriptorSetUpdateAfterBindStorageBuffers});
 
-        m_capacity.storage_images = std::min({BINDLESS_STORAGE_IMAGES, limits.maxPerStageDescriptorUpdateAfterBindStorageImages,
-                                              limits.maxDescriptorSetUpdateAfterBindStorageImages});
+        m_capacity.storage_images =
+            std::min({BINDLESS_STORAGE_IMAGES, limits.maxPerStageDescriptorUpdateAfterBindStorageImages, limits.maxDescriptorSetUpdateAfterBindStorageImages});
 
         if (m_capacity.textures == 0 || m_capacity.buffers == 0 || m_capacity.storage_images == 0)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVLayout: device reports no update-after-bind descriptor capacity.");
 
         // acceleration structures -- ray-query devices only; 0 leaves binding 3 out of the layout
         bool ray_query{false};
-        m_device->GetRayQuery(ray_query);
+        m_device->ImplementsRayQuery(ray_query);
 
         m_capacity.acceleration_structures = 0;
 
@@ -189,8 +189,9 @@ class Ir77PVLayout : public Ir77Enlisted, public IIr77PVLayout, public std::enab
             VkPhysicalDeviceAccelerationStructurePropertiesKHR acceleration{};
             m_device->GetAccelerationStructureProperties(acceleration);
 
-            m_capacity.acceleration_structures = std::min({BINDLESS_ACCELERATION_STRUCTURES, acceleration.maxPerStageDescriptorUpdateAfterBindAccelerationStructures,
-                                                           acceleration.maxDescriptorSetUpdateAfterBindAccelerationStructures});
+            m_capacity.acceleration_structures =
+                std::min({BINDLESS_ACCELERATION_STRUCTURES, acceleration.maxPerStageDescriptorUpdateAfterBindAccelerationStructures,
+                          acceleration.maxDescriptorSetUpdateAfterBindAccelerationStructures});
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();

@@ -246,7 +246,7 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
 
         // Acceleration -- ray-query devices only: BLASes over Geometry's scenes, a TLAS per frame, buffers through Transfer
         bool ray_query{false};
-        device->GetRayQuery(ray_query);
+        device->ImplementsRayQuery(ray_query);
 
         if (ray_query) {
             m_acceleration = std::static_pointer_cast<IIr77PVAcceleration>(std::make_shared<Ir77PVAcceleration>());
@@ -361,9 +361,10 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // NotConfigured on a device without ray queries -- check GetRayQuery first
+    // NotConfigured on a device without ray queries -- check ImplementsRayQuery first
     std::shared_ptr<IIr77Return const> GetAcceleration(std::shared_ptr<IIr77PVAcceleration>& acceleration) {
-        if (!m_acceleration) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no acceleration structures (no ray queries, or CreateRenderer not called).");
+        if (!m_acceleration)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no acceleration structures (no ray queries, or CreateRenderer not called).");
 
         acceleration = m_acceleration;
 
@@ -379,13 +380,13 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
     }
 
     // The display device has ray queries -- and so an Acceleration
-    std::shared_ptr<IIr77Return const> GetRayQuery(bool& enabled) {
+    std::shared_ptr<IIr77Return const> ImplementsRayQuery(bool& enabled) {
         enabled = false;
 
         auto const device = m_devices.find(m_current_device);
         if (device == m_devices.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: no display device.");
 
-        return device->second->GetRayQuery(enabled);
+        return device->second->ImplementsRayQuery(enabled);
     }
 
     // The display device has mesh shading -- assets can take the mesh path
@@ -593,13 +594,14 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
                 bool mesh_shading{false};
                 bool ray_query{false};
                 device->GetMeshShading(mesh_shading);
-                device->GetRayQuery(ray_query);
+                device->ImplementsRayQuery(ray_query);
 
-                std::string const features = std::string{" (mesh shading "} + (mesh_shading ? "on" : "off") + ", ray queries " + (ray_query ? "on" : "off") + ")";
+                std::string const features =
+                    std::string{" (mesh shading "} + (mesh_shading ? "on" : "off") + ", ray queries " + (ray_query ? "on" : "off") + ")";
 
                 if (c.rank == 0)
-                    return Ir77RETURN<Ir77OperationSucceeded>(this, "DefineDisplayDevice: only a CPU device (" + c.name +
-                                                                        ") -- software rendering, check the GPU driver." + features + skipped);
+                    return Ir77RETURN<Ir77OperationSucceeded>(
+                        this, "DefineDisplayDevice: only a CPU device (" + c.name + ") -- software rendering, check the GPU driver." + features + skipped);
 
                 return Ir77RETURN<Ir77OperationSucceeded>(this, "DefineDisplayDevice: " + c.name + features + skipped);
             }
@@ -1068,8 +1070,8 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
                 Ir77PVFrameSlots& slots = frame_slots[w][frame];
 
                 for (std::uint32_t view = 0; view < MAX_VIEWS; view++) {
-                    slots.cameras[view] = RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Camera), Ir77PVSlotKind::Camera, frame,
-                                                            view * VIEW_STRIDE, VIEW_STRIDE);
+                    slots.cameras[view] =
+                        RegisterFrameCopy(table, frame_buffers[w].at(Ir77PVBufferSlot::Camera), Ir77PVSlotKind::Camera, frame, view * VIEW_STRIDE, VIEW_STRIDE);
                     if (slots.cameras[view] == BINDLESS_NO_SLOT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVInit: camera registration failed.");
                 }
 

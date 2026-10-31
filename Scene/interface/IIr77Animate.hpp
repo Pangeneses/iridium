@@ -44,10 +44,6 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
     // The windows CreateFrame fills, and their size -- the cameras' aspect. Any time; the next frame uses it.
     virtual std::shared_ptr<IIr77Return const> SetViewSize(std::size_t const& windows, int const& width, int const& height) = 0;
 
-    // What the static (non-skinned, opaque) geometry draws with -- a manifest pipeline or role. Unset -> the "static" role. Taken by the next
-    // CreateScene.
-    virtual std::shared_ptr<IIr77Return const> SetPipeline(Ir77PVPipelineHandle const& pipeline) = 0;
-
     // The background every window clears to -- sRGB 0..1, as a colour picker gives it. Any time; the next frame uses it.
     virtual std::shared_ptr<IIr77Return const> SetBackground(glm::vec3 const& color) = 0;
 
@@ -58,6 +54,11 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> SetGridVisible(bool const& visible) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetGridVisible(bool& visible) const = 0;
+
+    // after RemoveEntity
+    virtual std::shared_ptr<IIr77Return const> SetEntityVisible(std::uint32_t const& entity, bool const& visible) = 0;
+    // after RemoveLight
+    virtual std::shared_ptr<IIr77Return const> SetLightVisible(std::uint32_t const& id, bool const& visible) = 0;
 
     // The scene: every entity and light goes, then the glTF becomes entity 0 (one asset bundle in the renderer) -- its clips with it, its
     // lights as world lights (lights), its cameras (cameras). use_mesh -> mesh shading for the static geometry when the device has it.

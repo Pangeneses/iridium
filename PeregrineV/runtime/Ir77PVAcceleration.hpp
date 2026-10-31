@@ -43,7 +43,7 @@ namespace NSIr77PeregrineV {
 // Ir77PVAcceleration -- the acceleration structures ray queries trace against.
 //
 //   startup:   Ir77PVInit wires it (ray-query devices only) -- SetDevice / SetTransfer / SetGeometry / SetDescriptorSet -> CreateAcceleration
-//   load:      BuildScene(scene_id, dynamic, alpha) per vertex-path scene, BuildMeshlets(meshlet_id, alpha) for the mesh path's static stream --
+//   load:      BuildBlock(block_id, dynamic, alpha) per vertex-path block, BuildMeshlets(meshlet_id, alpha) for the mesh path's static stream --
 //              one BLAS per command, built now (blocking); its instances join the TLAS. SetObjectsVisible / ReleaseObjects on what they made.
 //   surfaces:  CreateSurface (a field) -> SetSurfaceVisible -> ReleaseSurface -- one BLAS rebuilt from its buffers every frame
 //   per frame: SetInstanceTransforms (models[]) -> the first window Paint records calls RecordBuild after its Compute pass:
@@ -54,7 +54,7 @@ namespace NSIr77PeregrineV {
 // The TLASes are a ring of MAX_FRAMES_IN_FLIGHT, advanced once per build -- not tied to any one window's frame index, so the build can move
 // to another window (window 0 minimized). Each TLAS has a fixed binding-3 slot; regrowing rewrites the slot's descriptor, never the slot.
 //
-// One BLAS per object: the triangles of one indirect command, read straight out of the scene's vertex / index buffers by GPU address
+// One BLAS per object: the triangles of one indirect command, read straight out of the block's vertex / index buffers by GPU address
 // (firstIndex / vertexOffset become the build range). Instances share it -- one TLAS entry per (command, instance), transform from its
 // models[] slot. Static BLASes are built once for fast tracing; dynamic ones (posed geometry) allow update and are refit every frame;
 // surfaces are rebuilt every frame.
@@ -138,7 +138,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Where the scenes' vertex / index buffers and commands come from
+    // Where the blocks' vertex / index buffers and commands come from
     std::shared_ptr<IIr77Return const> SetGeometry(std::shared_ptr<IIr77PVGeometry> geometry) {
         m_geometry = geometry;
 
@@ -157,7 +157,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         if (!m_device) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: SetDevice not called.");
 
         bool ray_query{false};
-        m_device->GetRayQuery(ray_query);
+        m_device->ImplementsRayQuery(ray_query);
 
         if (!ray_query) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: the device has no ray queries.");
 
@@ -181,38 +181,38 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
     }
 
     // =========================================================================================================================================
-    // scenes -- at load
+    // blocks -- at load
     // =========================================================================================================================================
 
-    // One BLAS per command of a vertex-path scene, built now in one blocking submit, and one TLAS instance per (command, instance). dynamic =
+    // One BLAS per command of a vertex-path block, built now in one blocking submit, and one TLAS instance per (command, instance). dynamic =
     // the vertices move every frame (the posed stream) -> built to allow update and refit by every RecordBuild. alpha = the material row per
     // command for MASK materials, BINDLESS_NO_SLOT for opaque ones; shorter than the commands (or empty) -> the rest are opaque. The TLAS
     // buffers grow to fit. objects = the BLASes it made, [first, first + count).
-    std::shared_ptr<IIr77Return const> BuildScene(std::uint32_t const& scene_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha,
+    std::shared_ptr<IIr77Return const> BuildBlock(std::uint32_t const& block_id, bool const& dynamic, std::vector<std::uint32_t> const& alpha,
                                                   glm::uvec2& objects) {
         if (!m_geometry) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: SetGeometry not called.");
 
         std::shared_ptr<IIr77Return const> result{};
 
-        Ir77PVSceneGeometry scene{};
-        if (Failed(m_geometry->GetSceneGeometry(scene_id, scene), result)) return result;
+        Ir77PVBlockGeometry block{};
+        if (Failed(m_geometry->GetBlockGeometry(block_id, block), result)) return result;
 
-        return DefineScene(scene_id, scene, dynamic, alpha, objects);
+        return DefineBlock(block_id, block, dynamic, alpha, objects);
     }
 
-    // The same for the mesh path's static stream (UploadMeshlets on a ray-query device keeps the scene's index buffer for this). Static.
+    // The same for the mesh path's static stream (UploadMeshlets on a ray-query device keeps the block's index buffer for this). Static.
     std::shared_ptr<IIr77Return const> BuildMeshlets(std::uint32_t const& meshlet_id, std::vector<std::uint32_t> const& alpha, glm::uvec2& objects) {
         if (!m_geometry) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: SetGeometry not called.");
 
         std::shared_ptr<IIr77Return const> result{};
 
-        Ir77PVSceneGeometry scene{};
-        if (Failed(m_geometry->GetMeshletGeometry(meshlet_id, scene), result)) return result;
+        Ir77PVBlockGeometry block{};
+        if (Failed(m_geometry->GetMeshletGeometry(meshlet_id, block), result)) return result;
 
-        return DefineScene(meshlet_id, scene, false, alpha, objects);
+        return DefineBlock(meshlet_id, block, false, alpha, objects);
     }
 
-    // A scene's BLASes (what BuildScene / BuildMeshlets made) in the TLAS or not, from the next frame. Dynamic ones keep being refit.
+    // A block's BLASes (what BuildBlock / BuildMeshlets made) in the TLAS or not, from the next frame. Dynamic ones keep being refit.
     std::shared_ptr<IIr77Return const> SetObjectsVisible(glm::uvec2 const& objects, bool const& visible) {
         if (static_cast<std::size_t>(objects.x) + objects.y > m_bottom.size())
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: unknown objects.");
@@ -222,7 +222,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // A scene's BLASes out of the TLAS for good; their structures are destroyed now (waits for the device). Before the scene is unloaded.
+    // A block's BLASes out of the TLAS for good; their structures are destroyed now (waits for the device). Before the block is unloaded.
     std::shared_ptr<IIr77Return const> ReleaseObjects(glm::uvec2 const& objects) {
         if (static_cast<std::size_t>(objects.x) + objects.y > m_bottom.size())
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: unknown objects.");
@@ -435,37 +435,37 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
     // steps
     // =========================================================================================================================================
 
-    // BuildScene / BuildMeshlets: one BLAS per command of scene, built now in one submit, and its instances
-    std::shared_ptr<IIr77Return const> DefineScene(std::uint32_t const& scene_id, Ir77PVSceneGeometry const& scene, bool const& dynamic,
+    // BuildBlock / BuildMeshlets: one BLAS per command of block, built now in one submit, and its instances
+    std::shared_ptr<IIr77Return const> DefineBlock(std::uint32_t const& block_id, Ir77PVBlockGeometry const& block, bool const& dynamic,
                                                    std::vector<std::uint32_t> const& alpha, glm::uvec2& objects) {
         objects = glm::uvec2(static_cast<std::uint32_t>(m_bottom.size()), 0u);
 
         if (!m_cmd_build) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: CreateAcceleration not called.");
         if (!m_transfer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: SetTransfer not called.");
 
-        if (!scene.vertex || !scene.index || scene.vertex_count == 0)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: scene has no vertex / index buffers to build from.");
+        if (!block.vertex || !block.index || block.vertex_count == 0)
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVAcceleration: block has no vertex / index buffers to build from.");
 
         std::shared_ptr<IIr77Return const> result{};
 
-        VkDeviceAddress const vertex_address = GetBufferAddress(scene.vertex, 0);
-        VkDeviceAddress const index_address = GetBufferAddress(scene.index, 0);
+        VkDeviceAddress const vertex_address = GetBufferAddress(block.vertex, 0);
+        VkDeviceAddress const index_address = GetBufferAddress(block.index, 0);
 
         std::size_t const first = m_bottom.size();
         std::uint32_t tested{0};
 
         // 1. one BLAS per command -- what it builds from, its sizes, its storage and the structure itself
-        for (std::size_t c = 0; c < scene.commands.size(); c++) {
-            VkDrawIndexedIndirectCommand const& cmd = scene.commands[c];
+        for (std::size_t c = 0; c < block.commands.size(); c++) {
+            VkDrawIndexedIndirectCommand const& cmd = block.commands[c];
             if (cmd.indexCount == 0 || cmd.indexCount % 3 != 0 || cmd.vertexOffset < 0) continue;
 
             Ir77PVBottomLevel blas{};
-            blas.scene_id = scene_id;
+            blas.block_id = block_id;
             blas.command = static_cast<std::uint32_t>(c);
             blas.dynamic = dynamic;
             blas.vertex_address = vertex_address;
             blas.index_address = index_address;
-            blas.max_vertex = scene.vertex_count - 1;  // the whole buffer -- an upper bound is all the build needs
+            blas.max_vertex = block.vertex_count - 1;  // the whole buffer -- an upper bound is all the build needs
             blas.first_index = cmd.firstIndex;
             blas.vertex_offset = cmd.vertexOffset;
             blas.triangle_count = cmd.indexCount / 3;
@@ -477,7 +477,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
             if (Failed(DefineObject(blas, bottom), result)) return result;
 
             // its instances -- the same BLAS through every models[] slot the command draws
-            std::uint32_t const instances = c < scene.instance_counts.size() ? scene.instance_counts[c] : cmd.instanceCount;
+            std::uint32_t const instances = c < block.instance_counts.size() ? block.instance_counts[c] : cmd.instanceCount;
             for (std::uint32_t i = 0; i < instances; i++) m_instances.push_back(Ir77PVTopInstance{bottom, cmd.firstInstance + i});
         }
 
@@ -490,7 +490,7 @@ class Ir77PVAcceleration : public Ir77Enlisted, public IIr77PVAcceleration, publ
 
         objects = glm::uvec2(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(m_bottom.size() - first));
 
-        return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVAcceleration: scene " + std::to_string(scene_id) + " -- " +
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVAcceleration: block " + std::to_string(block_id) + " -- " +
                                                             std::to_string(m_bottom.size() - first) + " BLAS" + (dynamic ? " (refit every frame)" : "") +
                                                             (tested > 0 ? ", " + std::to_string(tested) + " alpha-tested" : std::string{}) + ", " +
                                                             std::to_string(m_instances.size()) + " TLAS instances in all.");
