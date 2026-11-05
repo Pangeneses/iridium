@@ -26,7 +26,7 @@
 
 #include "../interface/IIr77PVDevice.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 

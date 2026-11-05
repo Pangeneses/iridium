@@ -28,7 +28,9 @@ inline Ir77GUID GUIDIr77Animate{(static_cast<unsigned __int128>(0xB2C28720762945
 inline Ir77GUID GUIDIr77Pose{(static_cast<unsigned __int128>(0x214622AB495F49C9) << 64) | 0xB2E7CEBE871BBDB2};
 inline Ir77GUID GUIDIr77View{(static_cast<unsigned __int128>(0xDB0295AA008F4AFA) << 64) | 0xB14303650463980E};
 inline Ir77GUID GUIDIr77Lighting{(static_cast<unsigned __int128>(0x30EB0DAA1AE74DF4) << 64) | 0x9440C32959BBA05C};
-inline Ir77GUID GUIDIr77Field{(static_cast<unsigned __int128>(0x52BC14AB8F5B44BA) << 64) | 0x85FC531B7BDE5923};
+inline Ir77GUID GUIDIr77Graph{(static_cast<unsigned __int128>(0x69980895F021BDD3) << 64) | 0x704941C99744887F};
+inline Ir77GUID GUIDIr77Edit{(static_cast<unsigned __int128>(0x8388B63699268C38) << 64) | 0x0AC3AE94CD622EEC};
+inline Ir77GUID GUIDIr77Gizmo{(static_cast<unsigned __int128>(0xD0A7C74E7A7E1B71) << 64) | 0x0B1F441F226205BC};
 
 // ---- glTF loader --------------------------------------------------------------------------------------------------------------------------------
 inline Ir77GUID GUIDIr77Mesh{(static_cast<unsigned __int128>(0xAA985F8A3BBE5CF8) << 64) | 0x86C82E36A2794449};
@@ -115,9 +117,10 @@ class IDIr77Scene : public Ir77Enlisted, public IIr77Dictionary, public std::ena
     // same order as the declarations above
     std::map<std::string, IIr77GUID const*> m_index{
         {"GUIDIr77Scene", &GUIDIr77Scene},       {"GUIDIr77Animate", &GUIDIr77Animate},   {"GUIDIr77Pose", &GUIDIr77Pose},
-        {"GUIDIr77View", &GUIDIr77View},         {"GUIDIr77Lighting", &GUIDIr77Lighting}, {"GUIDIr77Field", &GUIDIr77Field},
-        {"GUIDIr77Mesh", &GUIDIr77Mesh},         {"GUIDIr77Light", &GUIDIr77Light},       {"GUIDIr77Camera", &GUIDIr77Camera},
-        {"GUIDIr77Material", &GUIDIr77Material}, {"GUIDIr77Texture", &GUIDIr77Texture},   {"GUIDIr77Animation", &GUIDIr77Animation},
+        {"GUIDIr77View", &GUIDIr77View},         {"GUIDIr77Lighting", &GUIDIr77Lighting}, {"GUIDIr77Mesh", &GUIDIr77Mesh},
+        {"GUIDIr77Light", &GUIDIr77Light},       {"GUIDIr77Camera", &GUIDIr77Camera},     {"GUIDIr77Material", &GUIDIr77Material},
+        {"GUIDIr77Texture", &GUIDIr77Texture},   {"GUIDIr77Animation", &GUIDIr77Animation}, {"GUIDIr77Edit", &GUIDIr77Edit},
+        {"GUIDIr77Graph", &GUIDIr77Graph},       {"GUIDIr77Gizmo", &GUIDIr77Gizmo},
     };
 };
 

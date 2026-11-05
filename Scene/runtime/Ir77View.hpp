@@ -30,7 +30,7 @@
 #include "../interface/IIr77Camera.hpp"
 #include "../interface/IIr77View.hpp"
 
-#include "../../PeregrineV/types/Ir77PVTypes.hpp"
+#include "../../PeregrineV/types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -63,10 +63,10 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
         float distance{1.0f};
         float yaw{0.0f};
         float pitch{0.0f};
-        float speed{1.0f};         // units per second at full key
-        glm::vec3 move{0.0f};      // held keys: right, up, forward in -1..1
-        glm::mat4 view{1.0f};      // last frame's view, whichever camera drew it -- where a takeover starts from
-        float fov{60.0f};          // vertical, degrees -- taken from whichever camera drew last, so a takeover keeps the lens
+        float speed{1.0f};     // units per second at full key
+        glm::vec3 move{0.0f};  // held keys: right, up, forward in -1..1
+        glm::mat4 view{1.0f};  // last frame's view, whichever camera drew it -- where a takeover starts from
+        float fov{60.0f};      // vertical, degrees -- taken from whichever camera drew last, so a takeover keeps the lens
     };
 
    public:

@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 

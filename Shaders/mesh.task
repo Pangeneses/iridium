@@ -95,7 +95,10 @@ void main() {
         float radius = meshlet.sphere.w * scale;
         vec3 axis = normalize(mat3(model) * meshlet.cone.xyz);
 
-        bool visible = FrustumVisible(camera.view_proj, center, radius) && !ConeCulled(camera.eye.xyz, center, radius, axis, meshlet.cone.w);
+        // the outline's hull is the back faces -- pc.user[4] bit 0 (outline.glsl's OUTLINE_KEEP_BACK_MESHLETS) keeps them
+        bool keep_back = (pc.user[4] & 1u) != 0u;
+
+        bool visible = FrustumVisible(camera.view_proj, center, radius) && (keep_back || !ConeCulled(camera.eye.xyz, center, radius, axis, meshlet.cone.w));
 
         if (visible) {
             uint slot = atomicAdd(visible_count, 1);

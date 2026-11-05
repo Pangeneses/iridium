@@ -113,7 +113,8 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
 
         fastgltf::Mesh const& mesh = asset.meshes[index];
 
-        for (fastgltf::Primitive const& primitive : mesh.primitives) {
+        for (std::size_t primitive_index = 0; primitive_index < mesh.primitives.size(); primitive_index++) {
+            fastgltf::Primitive const& primitive = mesh.primitives[primitive_index];
             if (primitive.type != fastgltf::PrimitiveType::Triangles) continue;
 
             auto const* position_attr = primitive.findAttribute("POSITION");
@@ -137,6 +138,10 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
             // positions
             prim.positions.reserve(vertex_count);
             fastgltf::iterateAccessor<glm::vec3>(asset, position_accessor, [&](glm::vec3 p) { prim.positions.push_back(p); });
+
+            // each vertex's place in the file -- MikkTSpace may split vertices; every copy still knows which file vertex it is
+            prim.origins.resize(vertex_count);
+            for (std::size_t v = 0; v < vertex_count; v++) prim.origins[v] = static_cast<std::uint32_t>(v);
 
             // normals -- default up when missing or mismatched
             auto const* normal_attr = primitive.findAttribute("NORMAL");
@@ -197,8 +202,10 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
             }
 
             stream.indices.insert(stream.indices.end(), prim.indices.begin(), prim.indices.end());
+            stream.origins.insert(stream.origins.end(), prim.origins.begin(), prim.origins.end());
 
             stream.ranges.push_back(range);
+            stream.range_origins.push_back({index, static_cast<std::uint32_t>(primitive_index), static_cast<std::uint32_t>(vertex_count)});
             stream.range_vertex_counts.push_back(static_cast<std::uint32_t>(prim.positions.size()));
             stream.range_materials.push_back(primitive.materialIndex.has_value() ? static_cast<std::uint32_t>(primitive.materialIndex.value()) : NO_MATERIAL);
             stream.ranges_of_mesh[index].push_back(stream.ranges.size() - 1);
@@ -318,6 +325,43 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Where every vertex came from in the file -- per range, its glTF mesh / primitive and that primitive's file vertex count; per vertex, its
+    // file vertex within the primitive. What a commit maps the stream back onto the file with.
+    std::shared_ptr<IIr77Return const> GetVertexOrigins(bool const& skinned, std::vector<Ir77MeshOrigin>& ranges, std::vector<std::uint32_t>& origins) {
+        Ir77MeshStream const& stream = skinned ? m_skinned : m_static;
+
+        ranges = stream.range_origins;
+        origins = stream.origins;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // An edit -- every vertex's position, normal and tangent from vertices (GetVertexBuffer's order and count); UVs stay
+    std::shared_ptr<IIr77Return const> UpdateVertices(std::vector<Ir77PVVertex> const& vertices) {
+        if (vertices.size() != m_static.positions.size()) return Ir77RETURN<Ir77OutOfRange>(this, "Ir77Mesh: an edit keeps the vertex count.");
+
+        for (std::size_t i = 0; i < vertices.size(); i++) {
+            m_static.positions[i] = vertices[i].position;
+            m_static.normals[i] = vertices[i].normal;
+            m_static.tangents[i] = vertices[i].tangent;
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The same for the skinned stream -- joints and weights stay
+    std::shared_ptr<IIr77Return const> UpdateSkinnedVertices(std::vector<Ir77PVVertexSkinned> const& vertices) {
+        if (vertices.size() != m_skinned.positions.size()) return Ir77RETURN<Ir77OutOfRange>(this, "Ir77Mesh: an edit keeps the vertex count.");
+
+        for (std::size_t i = 0; i < vertices.size(); i++) {
+            m_skinned.positions[i] = vertices[i].position;
+            m_skinned.normals[i] = vertices[i].normal;
+            m_skinned.tangents[i] = vertices[i].tangent;
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     std::shared_ptr<IIr77Return const> GetSkinnedRangeMaterials(std::vector<std::uint32_t>& materials) {
         materials = m_skinned.range_materials;
 
@@ -375,6 +419,9 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
         std::vector<std::uint32_t> range_materials{};
         std::vector<std::uint32_t> range_vertex_counts{};
         std::map<std::uint32_t, std::vector<std::size_t>> ranges_of_mesh{};  // glTF mesh -> its ranges in this stream
+
+        std::vector<std::uint32_t> origins{};           // per vertex -- its file vertex, within its primitive
+        std::vector<Ir77MeshOrigin> range_origins{};    // per range -- its file mesh / primitive and that primitive's vertex count
     };
 
    private:
@@ -413,6 +460,7 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
         for (std::uint32_t const i : prim.indices) {
             if (i >= prim.positions.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Mesh: index past the primitive's vertices.");
 
+            corners.origins.push_back(i < prim.origins.size() ? prim.origins[i] : i);
             corners.positions.push_back(prim.positions[i]);
             corners.normals.push_back(prim.normals[i]);
             corners.uvs.push_back(prim.uvs[i]);
@@ -464,8 +512,9 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
         // glTF puts the UV origin top-left, MikkTSpace assumes bottom-left -- flip the handedness so the bitangent points up the normal map
         for (glm::vec4& t : corners.tangents) t.w = -t.w;
 
-        // 3. weld -- corners identical in every attribute become one vertex again
-        std::vector<meshopt_Stream> streams{{corners.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3)},
+        // 3. weld -- corners identical in every attribute become one vertex again (their file vertex too -- a commit writes each one back)
+        std::vector<meshopt_Stream> streams{{corners.origins.data(), sizeof(std::uint32_t), sizeof(std::uint32_t)},
+                                            {corners.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3)},
                                             {corners.normals.data(), sizeof(glm::vec3), sizeof(glm::vec3)},
                                             {corners.uvs.data(), sizeof(glm::vec2), sizeof(glm::vec2)},
                                             {corners.tangents.data(), sizeof(glm::vec4), sizeof(glm::vec4)}};
@@ -477,6 +526,9 @@ class Ir77Mesh : public Ir77Enlisted, public IIr77Mesh, public std::enable_share
         std::vector<unsigned int> remap(corner_count, 0);
         std::size_t const unique =
             meshopt_generateVertexRemapMulti(remap.data(), nullptr, corner_count, corner_count, streams.data(), streams.size());
+
+        prim.origins.assign(unique, 0u);
+        meshopt_remapVertexBuffer(prim.origins.data(), corners.origins.data(), corner_count, sizeof(std::uint32_t), remap.data());
 
         prim.positions.assign(unique, glm::vec3{});
         prim.normals.assign(unique, glm::vec3{});

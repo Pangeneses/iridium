@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -161,8 +161,8 @@ class Ir77PVDescriptorSet : public Ir77Enlisted, public IIr77PVDescriptorSet, pu
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    std::shared_ptr<IIr77Return const> RegisterBuffer(VkBuffer const& buffer, VkDeviceSize const& offset, VkDeviceSize const& range,
-                                                      Ir77PVSlotKind const& kind, std::uint32_t& index) {
+    std::shared_ptr<IIr77Return const> RegisterBuffer(VkBuffer const& buffer, VkDeviceSize const& offset, VkDeviceSize const& range, Ir77PVSlotKind const& kind,
+                                                      std::uint32_t& index) {
         std::shared_ptr<IIr77Return const> result{};
         if (Failed(AllocateSlot(BINDLESS_BINDING_BUFFERS, kind, index), result)) return result;
 

@@ -11,7 +11,7 @@
 #include "IIr77PVDevice.hpp"
 #include "IIr77PVLayout.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
@@ -37,7 +37,8 @@ typedef struct IIr77PVDescriptorSet : virtual public IIr77Enlisted {
     // The first texture registered gets slot BINDLESS_PLACEHOLDER_TEXTURE (0) -- Init registers the white placeholder first.
     // layout = the layout the image is in whenever a shader samples it (a depth texture: DEPTH_STENCIL_READ_ONLY_OPTIMAL)
     virtual std::shared_ptr<IIr77Return const> RegisterTexture(VkImageView const& view, VkSampler const& sampler, Ir77PVSlotKind const& kind,
-                                                               std::uint32_t& index, VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) = 0;
+                                                               std::uint32_t& index,
+                                                               VkImageLayout const& layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) = 0;
 
     virtual std::shared_ptr<IIr77Return const> RegisterBuffer(VkBuffer const& buffer, VkDeviceSize const& offset, VkDeviceSize const& range,
                                                               Ir77PVSlotKind const& kind, std::uint32_t& index) = 0;

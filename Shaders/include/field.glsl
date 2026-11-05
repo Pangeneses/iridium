@@ -7,6 +7,9 @@
 //   vec4 Paint(vec2 coord, float t, float p[8])    optional  -- curves drawn on a surface per pixel; rgb colour, a coverage (fragment)
 //   vec2 Pen(uint pen, float t, float p[8])        optional  -- the pen(s): spirograph x,y / oscilloscope y (compute). They trace into the canvas
 //                                                              (a picture over the surface) or into point ink (the surface grid's own points)
+//
+// Data: field.data uploads an array of floats -- tables, coefficients, anything too big for params[8] (a Hartree-Fock basis and its
+// orbitals, say). Any function reads it with Ir77FieldDataCount() / Ir77FieldData(i); it outlives recompiles until replaced or released.
 // Every function is compiled into both stages; each stage only calls its own, the others are dead code.
 // =============================================================================================================================================
 #ifndef IR77_FIELD_GLSL
@@ -34,7 +37,7 @@ struct Ir77FieldIn {
 };
 
 // The field's settings -- one row in its own storage buffer, written on compile and on field.params. Must match Ir77FieldConfig in
-// Ir77Animate.hpp (336 bytes).
+// Fields/types/Ir77Types.hpp (352 bytes).
 struct Ir77FieldConfig {
     vec4 domain_x;     // x, y = coord.x range; z, w = coord.y range
     vec4 domain_z;     // x, y = coord.z range; z, w = colour map value range (value at z -> 0, at w -> 1)
@@ -48,9 +51,20 @@ struct Ir77FieldConfig {
     vec4 pen_color[8];
     vec4 pen_width[2];  // pens 0..7 -- canvas: pixels; point ink: grid cells
     uvec4 ink;          // x point-ink buffer slot, y pen target (0 canvas, 1 points)
+    uvec4 values;       // x data buffer slot (field.data), y how many floats
 };
 
 IR77_BUFFER(ir77_field_configs, Ir77FieldConfig);
+
+// field.data -- the program's own floats
+IR77_BUFFER(ir77_field_data, float);
+
+// the config's slot -- compute pushes it in user[0], the draws in user[4]
+#ifdef IR77_STAGE_COMPUTE
+#define IR77_FIELD_CONFIG_SLOT pc.user[0]
+#else
+#define IR77_FIELD_CONFIG_SLOT pc.user[4]
+#endif
 
 // point ink -- one vec4 per element (rgb colour, a amount), the pens' target when it is "points"
 #define IR77_FIELD_TARGET_CANVAS 0u
@@ -65,6 +79,15 @@ IR77_BUFFER(ir77_field_inks, vec4);
 #endif
 
 // ---- helpers -------------------------------------------------------------------------------------------------------------------------------
+
+// how many floats field.data holds (0: none uploaded)
+uint Ir77FieldDataCount() { return ir77_field_configs[IR77_FIELD_CONFIG_SLOT].data[0].values.y; }
+
+// float i of field.data -- 0.0 past the end
+float Ir77FieldData(uint i) {
+    uvec4 values = ir77_field_configs[IR77_FIELD_CONFIG_SLOT].data[0].values;
+    return i < values.y ? ir77_field_data[values.x].data[i] : 0.0;
+}
 
 // pcg3d -- a stable 32-bit hash of an element (and a seed)
 uvec3 Ir77Pcg3d(uvec3 v) {

@@ -4,26 +4,23 @@
 #include "include/bindless.glsl"
 #include "include/field.glsl"
 #line 1
-// Pickover attractor -- a map, not a flow: every frame each particle jumps once to its next point.
-// The cloud of all of them together is the attractor; the sliders reshape it live.
+// Thomas cyclically symmetric attractor -- every particle integrates from where it was last frame
 
-// one jump: the next point after (x, y, z)
-vec3 Pickover(float x, float y, float z, float a, float b, float c, float d) {
-    float next_x = sin(a * y) - z * cos(b * x);
-    float next_y = z * sin(c * x) - cos(d * y);
-    float next_z = sin(x);
+// the velocity at point (x, y, z)
+vec3 Thomas(float x, float y, float z, float b) {
+    float dx = sin(y) - b * x;
+    float dy = sin(z) - b * y;
+    float dz = sin(x) - b * z;
 
-    return vec3(next_x, next_y, next_z);
+    return vec3(dx, dy, dz);
 }
 
 Ir77FieldPoint Field(Ir77FieldIn f) {
-    // sliders -> real values. 0.5 = the classic shape (a 2.24, b 0.43, c -0.65, d -2.43); each slider moves its constant by +-1
-    float a = 2.24 + (f.params[0] - 0.5) * 2.0;
-    float b = 0.43 + (f.params[1] - 0.5) * 2.0;
-    float c = -0.65 + (f.params[2] - 0.5) * 2.0;
-    float d = -2.43 + (f.params[3] - 0.5) * 2.0;
-    float scale = 0.5 + (2.5 - 0.5) * f.params[4];      // attractor units -> world units
-    float opacity = 0.02 + (0.25 - 0.02) * f.params[5];  // particles add up where they overlap
+    // sliders -> real values (0.5 = the middle of each range)
+    float b = 0.10 + (0.30 - 0.10) * f.params[0];     // damping: ~0.208 is the classic lattice; lower = wilder
+    float speed = 0.5 + (8.0 - 0.5) * f.params[1];    // how fast simulated time runs
+    float scale = 0.4 + (1.2 - 0.4) * f.params[2];    // attractor units -> world units
+    float opacity = 0.03 + (0.3 - 0.03) * f.params[3];  // particles add up where they overlap
 
     Ir77FieldPoint point = f.prev;  // where this particle was last frame
 
@@ -32,32 +29,46 @@ Ir77FieldPoint Field(Ir77FieldIn f) {
     float y = point.position.y / scale;
     float z = point.position.z / scale;
 
-    // first frame or broken maths -- a random start in the cube -1..1
+    // does this particle need a new start?
+    bool first_frame = f.first;
     bool broken = isnan(x) || isnan(y) || isnan(z);
+    bool escaped = (x * x + y * y + z * z) > 400.0;  // more than 20 units out
 
-    if (f.first || broken) {
-        x = Ir77Random(f.id, 1u) * 2.0 - 1.0;
-        y = Ir77Random(f.id, 2u) * 2.0 - 1.0;
-        z = Ir77Random(f.id, 3u) * 2.0 - 1.0;
+    if (first_frame || broken || escaped) {
+        // a random point in the cube -4..4 on every axis
+        x = Ir77Random(f.id, 1u) * 8.0 - 4.0;
+        y = Ir77Random(f.id, 2u) * 8.0 - 4.0;
+        z = Ir77Random(f.id, 3u) * 8.0 - 4.0;
 
-        point.size = 0.006;
+        point.size = 0.008;
     }
 
-    // one jump -- no dt, a map moves a whole step every frame
-    vec3 next = Pickover(x, y, z, a, b, c, d);
+    // this frame's time, split into 4 smaller steps
+    float frame_time = min(f.dt, 0.02);
+    float step = frame_time * speed / 4.0;
+
+    vec3 velocity = vec3(0.0, 0.0, 0.0);
+
+    for (int i = 0; i < 4; i++) {
+        velocity = Thomas(x, y, z, b);
+
+        x = x + velocity.x * step;
+        y = y + velocity.y * step;
+        z = z + velocity.z * step;
+    }
 
     // attractor -> world
-    point.position = vec3(next.x * scale, next.y * scale, next.z * scale);
+    point.position = vec3(x * scale, y * scale, z * scale);
 
-    // colour by z (-1..1): teal at the bottom, magenta at the top
-    float t = (next.z + 1.0) / 2.0;
+    // colour = the direction of travel: red along x, green along y, blue along z
+    float length_of_velocity = length(velocity);
+    vec3 direction = vec3(0.0, 0.0, 0.0);
+    if (length_of_velocity > 0.0) direction = abs(velocity) / length_of_velocity;
 
-    vec3 low_colour = vec3(0.1, 0.8, 0.8);
-    vec3 high_colour = vec3(0.9, 0.2, 0.7);
-    vec3 colour = low_colour + (high_colour - low_colour) * t;
+    vec3 colour = vec3(0.15, 0.15, 0.15) + direction * 0.85;
 
     point.color = vec4(colour.x, colour.y, colour.z, opacity);
-    point.data = vec4(t, 0.0, 0.0, 0.0);  // data.x = height 0..1, for the colormap shading
+    point.data = vec4(length_of_velocity, 0.0, 0.0, 0.0);  // data.x = speed, for the colormap shading
 
     return point;
 }

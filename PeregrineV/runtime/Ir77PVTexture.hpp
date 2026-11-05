@@ -19,6 +19,8 @@
 #include "../dictionary/IDIIr77PeregrineV.hpp"
 #include "../dictionary/IDIr77PeregrineV.hpp"
 
+#include "../../Ir77RT/types/Ir77Types.hpp"
+
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
@@ -32,10 +34,32 @@ using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// =============================================================================================================================================
+// Ir77PVTexture -- one image on the device: the image, its view and its sampler, in the layout shaders read it from.
+//
+//   configure: SetDevice / SetAllocator -> SetKind (first -- resets format and sampler to the kind's defaults) -> [SetFormat] / [SetSampler]
+//   create:    one of, by kind --
+//                Color / Data   CreateFromPixels (pixels -> DefineSampled) / CreateSolid (1x1) / CreatePlaceholder (1x1, the device's upload pool)
+//                Cube           CreateCube (six faces -> DefineSampled)
+//                Depth          CreateDepth (cleared to 1.0 -> DefineCleared)
+//                Storage        CreateStorage (cleared to 0 -> DefineCleared)
+//   use:       GetImageInfo -- view, sampler and read layout, what the bindless table registers
+//
+// Every Create* blocks: it records into a one-time command buffer on the pool it's given, submits to the queue and waits for the queue to go
+// idle. Calling one again on a created texture destroys the old image first -- nothing may still be reading it (Transfer's graveyard holds a
+// texture until no frame in flight can).
+//
+// Read layouts: Color / Data / Cube SHADER_READ_ONLY_OPTIMAL; Depth DEPTH_STENCIL_READ_ONLY_OPTIMAL (valid to sample before any shadow pass);
+// Storage GENERAL for good (a storage image and a sampled texture at once).
+// =============================================================================================================================================
 class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::enable_shared_from_this<Ir77PVTexture> {
    public:
     Ir77PVTexture() {
-        m_enlisted_uuid.Generate();
+        try {
+            m_enlisted_uuid.Generate();
+        } catch (std::invalid_argument a) {
+            throw a;
+        }
 
         m_enlisted = std::chrono::system_clock::now();
     }
@@ -43,10 +67,9 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
     ~Ir77PVTexture() {
         if (!m_device) return;
 
-        VkDevice device;
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
-
-        Destroy(device);
+        if (device != VK_NULL_HANDLE) ReleaseImage(device);
     }
 
    public:
@@ -90,9 +113,9 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return GUIDQuerySucceeded;
     }
 
-    // -------------------------------------------------------------------------------------------------------------------------------------
+    // =========================================================================================================================================
     // configuration -- SetKind first; it resets format and sampler to the kind's defaults
-    // -------------------------------------------------------------------------------------------------------------------------------------
+    // =========================================================================================================================================
    public:
     std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) {
         m_device = device;
@@ -106,6 +129,8 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Color: RGBA8 sRGB, repeat. Data: RGBA8 linear, repeat. Cube: RGBA8 sRGB, clamp-to-edge. Depth: D32, clamp-to-border white (outside the
+    // map = lit), compare on (sampler2DShadow / hardware PCF). Storage: RGBA8 linear, clamp-to-edge. Every kind filters linearly.
     std::shared_ptr<IIr77Return const> SetKind(Ir77PVTextureKind const& kind) {
         m_kind = kind;
         m_sampler_desc = Ir77PVSamplerDesc{};
@@ -125,14 +150,12 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
                 break;
 
             case Ir77PVTextureKind::Depth:
-                // outside the shadow map = lit (border depth 1.0); compare on by default for sampler2DShadow / hardware PCF
                 m_format = VK_FORMAT_D32_SFLOAT;
                 m_sampler_desc.address = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
                 m_sampler_desc.compare = true;
                 break;
 
             case Ir77PVTextureKind::Storage:
-                // compute writes it (imageStore, rgba8), fragment shaders sample it -- linear, no repeat at the edges
                 m_format = VK_FORMAT_R8G8B8A8_UNORM;
                 m_sampler_desc.address = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
                 break;
@@ -144,23 +167,27 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Overrides the kind's format -- e.g. VK_FORMAT_R16G16B16A16_SFLOAT for an HDR cube. Uploads need a format BytesPerPixel knows.
     std::shared_ptr<IIr77Return const> SetFormat(VkFormat const& format) {
         m_format = format;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // anisotropy > 0 is honoured only if the device supports samplerAnisotropy, and is clamped to its limit.
-    // The logical device must also have enabled the feature -- that is not checkable from here.
+    // anisotropy > 0 is honoured only if the device supports samplerAnisotropy, clamped to its limit. The logical device must also have enabled
+    // the feature -- that isn't checkable from here.
     std::shared_ptr<IIr77Return const> SetSampler(Ir77PVSamplerDesc const& sampler) {
         m_sampler_desc = sampler;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    // creation
-    // -------------------------------------------------------------------------------------------------------------------------------------
+    // =========================================================================================================================================
+    // create -- one per texture, by kind
+    // =========================================================================================================================================
+
+    // Color / Data: tightly packed pixels, width * height * bytes-per-pixel. mipmaps = the full chain, when the format can be blitted linearly
+    // (otherwise one level).
     std::shared_ptr<IIr77Return const> CreateFromPixels(VkCommandPool const& pool, VkQueue const& queue, void const* pixels, std::uint32_t const& width,
                                                         std::uint32_t const& height, bool const& mipmaps) {
         if (m_kind != Ir77PVTextureKind::Color && m_kind != Ir77PVTextureKind::Data)
@@ -168,9 +195,10 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
 
         if (pixels == nullptr || width == 0 || height == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: empty pixels.");
 
-        return CreateSampled(pool, queue, {pixels}, width, height, mipmaps);
+        return DefineSampled(pool, queue, {pixels}, width, height, mipmaps);
     }
 
+    // Cube: six faces in +X, -X, +Y, -Y, +Z, -Z order, each size * size * bytes-per-pixel
     std::shared_ptr<IIr77Return const> CreateCube(VkCommandPool const& pool, VkQueue const& queue, std::array<void const*, 6> const& faces,
                                                   std::uint32_t const& size, bool const& mipmaps) {
         if (m_kind != Ir77PVTextureKind::Cube) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateCube needs Cube kind.");
@@ -180,37 +208,37 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         for (auto const* face : faces)
             if (face == nullptr) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: missing cube face.");
 
-        return CreateSampled(pool, queue, std::vector<void const*>(faces.begin(), faces.end()), size, size, mipmaps);
+        return DefineSampled(pool, queue, std::vector<void const*>(faces.begin(), faces.end()), size, size, mipmaps);
     }
 
+    // Color / Data: 1x1 of one RGBA8 value (bytes R,G,B,A packed little-endian: 0xAABBGGRR). Nearest filtering -- one texel has nothing to blend.
     std::shared_ptr<IIr77Return const> CreateSolid(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& rgba) {
         if (m_kind != Ir77PVTextureKind::Color && m_kind != Ir77PVTextureKind::Data)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateSolid needs Color or Data kind.");
 
         if (BytesPerPixel(m_format) != 4) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateSolid needs a 4-byte format.");
 
-        // 1x1 never needs filtering between texels
         m_sampler_desc.filter = VK_FILTER_NEAREST;
 
-        return CreateSampled(pool, queue, {&rgba}, 1, 1, false);
+        return DefineSampled(pool, queue, {&rgba}, 1, 1, false);
     }
 
-    // 1x1 solid colour through the device's upload pool -- the caller needs no Vulkan objects
+    // CreateSolid through the device's upload pool -- the caller needs no Vulkan objects
     std::shared_ptr<IIr77Return const> CreatePlaceholder(std::uint32_t const& rgba) {
         if (!Ready()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: device or allocator not set.");
 
+        std::shared_ptr<IIr77Return const> result{};
+
         VkCommandPool pool{VK_NULL_HANDLE};
         VkQueue queue{VK_NULL_HANDLE};
-
-        auto const result = m_device->GetUploadPool(pool, queue);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        if (Failed(m_device->GetUploadPool(pool, queue), result)) return result;
 
         return CreateSolid(pool, queue, rgba);
     }
 
-    // Cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL, so it is valid to sample before any shadow pass has run
-    // (reads as "fully lit"). The shadow render pass can use initialLayout UNDEFINED or DEPTH_STENCIL_READ_ONLY_OPTIMAL and
-    // must use finalLayout DEPTH_STENCIL_READ_ONLY_OPTIMAL. A 1x1 Depth texture doubles as the shadow-map placeholder.
+    // Depth: a shadow-map target cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL, so it's valid to sample before any shadow pass has
+    // run (reads as fully lit). The shadow render pass may start in UNDEFINED or DEPTH_STENCIL_READ_ONLY_OPTIMAL and must end in
+    // DEPTH_STENCIL_READ_ONLY_OPTIMAL. A 1x1 Depth texture doubles as the shadow-map placeholder.
     std::shared_ptr<IIr77Return const> CreateDepth(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width, std::uint32_t const& height) {
         if (m_kind != Ir77PVTextureKind::Depth) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateDepth needs Depth kind.");
 
@@ -218,56 +246,22 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
 
         if (!Ready()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: device or allocator not set.");
 
-        VkDevice device;
-        m_device->GetDevice(&device);
-
-        Destroy(device);
-
-        m_extent = {width, height};
-        m_layers = 1;
-        m_mip_levels = 1;
-
-        VkImageUsageFlags const usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
-        if (!CreateImage(usage, 0)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth image failed.");
-
-        VkCommandBuffer cmd{VK_NULL_HANDLE};
-        if (!BeginOneTime(device, pool, &cmd)) {
-            Destroy(device);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth init command buffer failed.");
-        }
-
-        Barrier(cmd, VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-
-        VkClearDepthStencilValue const clear{1.0f, 0};
-        VkImageSubresourceRange const range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-        vkCmdClearDepthStencilImage(cmd, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
-
-        Barrier(cmd, VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-
-        if (!EndOneTime(device, pool, queue, cmd)) {
-            Destroy(device);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth init submit failed.");
-        }
-
-        // linear on a compare sampler = 2x2 hardware PCF; needs the format feature, otherwise fall back to nearest
+        // linear on a compare sampler = 2x2 hardware PCF -- needs the format feature, otherwise nearest
         if (m_sampler_desc.filter == VK_FILTER_LINEAR && !HasFormatFeatures(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
             m_sampler_desc.filter = VK_FILTER_NEAREST;
 
-        if (!CreateView(device, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT) || !CreateSamplerObject(device)) {
-            Destroy(device);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: depth view or sampler failed.");
-        }
-
-        m_read_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(DefineCleared(pool, queue, width, height,
+                                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                 VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
+                   result))
+            return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Depth Texture.");
     }
 
-    // Storage kind: a width x height image cleared to 0 and left in VK_IMAGE_LAYOUT_GENERAL for good -- storage image and sampled texture
-    // at once (register it in both arrays). No mips.
+    // Storage: cleared to 0 and left in GENERAL for good -- a storage image and a sampled texture at once (register it in both arrays). No mips.
     std::shared_ptr<IIr77Return const> CreateStorage(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width, std::uint32_t const& height) {
         if (m_kind != Ir77PVTextureKind::Storage) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: CreateStorage needs Storage kind.");
 
@@ -278,54 +272,21 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         if (!HasFormatFeatures(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: format can't be a storage image here.");
 
-        VkDevice device;
-        m_device->GetDevice(&device);
-
-        Destroy(device);
-
-        m_extent = {width, height};
-        m_layers = 1;
-        m_mip_levels = 1;
-
-        VkImageUsageFlags const usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
-        if (!CreateImage(usage, 0)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage image failed.");
-
-        VkCommandBuffer cmd{VK_NULL_HANDLE};
-        if (!BeginOneTime(device, pool, &cmd)) {
-            Destroy(device);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage init command buffer failed.");
-        }
-
-        Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-
-        VkClearColorValue const clear{{0.0f, 0.0f, 0.0f, 0.0f}};
-        VkImageSubresourceRange const range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCmdClearColorImage(cmd, m_image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
-
-        Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-
-        if (!EndOneTime(device, pool, queue, cmd)) {
-            Destroy(device);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage init submit failed.");
-        }
-
-        if (!CreateView(device, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT) || !CreateSamplerObject(device)) {
-            Destroy(device);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: storage view or sampler failed.");
-        }
-
-        m_read_layout = VK_IMAGE_LAYOUT_GENERAL;
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(DefineCleared(pool, queue, width, height, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
+                   result))
+            return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Storage Texture.");
     }
 
-    // -------------------------------------------------------------------------------------------------------------------------------------
+    // =========================================================================================================================================
     // queries
-    // -------------------------------------------------------------------------------------------------------------------------------------
+    // =========================================================================================================================================
+
+    // View, sampler and the layout shaders read it in -- what the bindless table registers
     std::shared_ptr<IIr77Return const> GetImageInfo(VkDescriptorImageInfo* info) {
         if (m_view == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: not created.");
 
@@ -378,98 +339,62 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // -------------------------------------------------------------------------------------------------------------------------------------
-    // internals
-    // -------------------------------------------------------------------------------------------------------------------------------------
+    // =========================================================================================================================================
+    // create steps
+    // =========================================================================================================================================
    private:
-    bool Ready() const { return m_device && m_allocator != VK_NULL_HANDLE; }
-
-    static std::uint32_t BytesPerPixel(VkFormat const& format) {
-        switch (format) {
-            case VK_FORMAT_R8G8B8A8_SRGB:
-            case VK_FORMAT_R8G8B8A8_UNORM:
-            case VK_FORMAT_B8G8R8A8_SRGB:
-            case VK_FORMAT_B8G8R8A8_UNORM:
-            case VK_FORMAT_R32_SFLOAT:
-                return 4;
-            case VK_FORMAT_R8_UNORM:
-                return 1;
-            case VK_FORMAT_R8G8_UNORM:
-                return 2;
-            case VK_FORMAT_R16G16B16A16_SFLOAT:
-                return 8;
-            case VK_FORMAT_R32G32B32A32_SFLOAT:
-                return 16;
-            default:
-                return 0;
-        }
-    }
-
-    // Shared path for Color / Data / Cube: stage every layer, copy to mip 0, then blit the chain or transition straight to read
-    std::shared_ptr<IIr77Return const> CreateSampled(VkCommandPool const& pool, VkQueue const& queue, std::vector<void const*> const& layers,
+    // Color / Data / Cube: every layer staged back to back, copied to mip 0, then the mip chain blitted -- or straight to SHADER_READ_ONLY
+    std::shared_ptr<IIr77Return const> DefineSampled(VkCommandPool const& pool, VkQueue const& queue, std::vector<void const*> const& layers,
                                                      std::uint32_t const& width, std::uint32_t const& height, bool const& mipmaps) {
         if (!Ready()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: device or allocator not set.");
 
         std::uint32_t const bpp = BytesPerPixel(m_format);
         if (bpp == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: unsupported upload format.");
 
-        VkDevice device;
+        VkDevice device{VK_NULL_HANDLE};
         m_device->GetDevice(&device);
 
-        Destroy(device);
+        ReleaseImage(device);
 
         bool const can_blit =
             HasFormatFeatures(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
+        bool const cube = m_kind == Ir77PVTextureKind::Cube;
 
         m_extent = {width, height};
         m_layers = static_cast<std::uint32_t>(layers.size());
         m_mip_levels = (mipmaps && can_blit) ? static_cast<std::uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1 : 1;
 
-        bool const cube = m_kind == Ir77PVTextureKind::Cube;
-
         VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         if (m_mip_levels > 1) usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
-        if (!CreateImage(usage, cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: image failed.");
+        if (!DefineImage(usage, cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: image failed.");
 
         // staging -- layers back to back
         VkDeviceSize const layer_bytes = static_cast<VkDeviceSize>(width) * height * bpp;
-        VkDeviceSize const total_bytes = layer_bytes * m_layers;
-
-        VkBufferCreateInfo staging_info{};
-        staging_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        staging_info.size = total_bytes;
-        staging_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-        staging_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        VmaAllocationCreateInfo staging_alloc{};
-        staging_alloc.usage = VMA_MEMORY_USAGE_AUTO;
-        staging_alloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
         VkBuffer staging{VK_NULL_HANDLE};
         VmaAllocation staging_allocation{VK_NULL_HANDLE};
-        VmaAllocationInfo staging_result{};
+        void* mapped{nullptr};
 
-        if (vmaCreateBuffer(m_allocator, &staging_info, &staging_alloc, &staging, &staging_allocation, &staging_result) != VK_SUCCESS) {
-            Destroy(device);
+        if (!DefineStaging(layer_bytes * m_layers, staging, staging_allocation, mapped)) {
+            ReleaseImage(device);
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: staging failed.");
         }
 
         for (std::uint32_t i = 0; i < m_layers; i++)
-            std::memcpy(static_cast<std::uint8_t*>(staging_result.pMappedData) + layer_bytes * i, layers[i], static_cast<std::size_t>(layer_bytes));
+            std::memcpy(static_cast<std::uint8_t*>(mapped) + layer_bytes * i, layers[i], static_cast<std::size_t>(layer_bytes));
 
         vmaFlushAllocation(m_allocator, staging_allocation, 0, VK_WHOLE_SIZE);
 
-        // record
         VkCommandBuffer cmd{VK_NULL_HANDLE};
-        if (!BeginOneTime(device, pool, &cmd)) {
+        if (!BeginOneTimeCommands(device, pool, cmd)) {
             vmaDestroyBuffer(m_allocator, staging, staging_allocation);
-            Destroy(device);
+            ReleaseImage(device);
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: upload command buffer failed.");
         }
 
-        Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, m_mip_levels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
-                VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        RecordBarrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, m_mip_levels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                      VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
         std::vector<VkBufferImageCopy> regions(m_layers);
         for (std::uint32_t i = 0; i < m_layers; i++) {
@@ -480,24 +405,23 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
 
         vkCmdCopyBufferToImage(cmd, staging, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, m_layers, regions.data());
 
-        if (m_mip_levels > 1) {
-            GenerateMips(cmd);
-        } else {
-            Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-        }
+        if (m_mip_levels > 1)
+            RecordMips(cmd);
+        else
+            RecordBarrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLED_STAGES);
 
-        bool const submitted = EndOneTime(device, pool, queue, cmd);
+        bool const submitted = SubmitOneTimeCommands(device, pool, queue, cmd);
 
         vmaDestroyBuffer(m_allocator, staging, staging_allocation);
 
         if (!submitted) {
-            Destroy(device);
+            ReleaseImage(device);
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: upload submit failed.");
         }
 
-        if (!CreateView(device, cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT) || !CreateSamplerObject(device)) {
-            Destroy(device);
+        if (!DefineView(device, cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT) || !DefineSampler(device)) {
+            ReleaseImage(device);
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: view or sampler failed.");
         }
 
@@ -506,49 +430,62 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Success: Create Texture.");
     }
 
-    // Each level is blitted from the one above, then that source level moves to SHADER_READ; the last level moves at the end
-    void GenerateMips(VkCommandBuffer cmd) {
-        std::int32_t w = static_cast<std::int32_t>(m_extent.width);
-        std::int32_t h = static_cast<std::int32_t>(m_extent.height);
+    // Depth / Storage: a width x height image of usage, one level and layer, cleared (depth 1.0, colour 0) and left in read_layout, visible to
+    // dst_access at dst_stages; then its view and sampler
+    std::shared_ptr<IIr77Return const> DefineCleared(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width, std::uint32_t const& height,
+                                                     VkImageUsageFlags const& usage, VkImageAspectFlags const& aspect, VkImageLayout const& read_layout,
+                                                     VkAccessFlags const& dst_access, VkPipelineStageFlags const& dst_stages) {
+        VkDevice device{VK_NULL_HANDLE};
+        m_device->GetDevice(&device);
 
-        for (std::uint32_t level = 1; level < m_mip_levels; level++) {
-            Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        ReleaseImage(device);
 
-            std::int32_t const next_w = std::max(w / 2, 1);
-            std::int32_t const next_h = std::max(h / 2, 1);
+        m_extent = {width, height};
+        m_layers = 1;
+        m_mip_levels = 1;
 
-            VkImageBlit blit{};
-            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, m_layers};
-            blit.srcOffsets[1] = {w, h, 1};
-            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, m_layers};
-            blit.dstOffsets[1] = {next_w, next_h, 1};
+        if (!DefineImage(usage, 0)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: image failed.");
 
-            vkCmdBlitImage(cmd, m_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-
-            Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-
-            w = next_w;
-            h = next_h;
+        VkCommandBuffer cmd{VK_NULL_HANDLE};
+        if (!BeginOneTimeCommands(device, pool, cmd)) {
+            ReleaseImage(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: init command buffer failed.");
         }
 
-        Barrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, m_mip_levels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        // GENERAL can be cleared in place; anything else clears in TRANSFER_DST
+        VkImageLayout const clear_layout{read_layout == VK_IMAGE_LAYOUT_GENERAL ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
+        VkImageSubresourceRange const range{aspect, 0, 1, 0, 1};
+
+        RecordBarrier(cmd, aspect, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, clear_layout, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                      VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+        if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) {
+            VkClearDepthStencilValue const clear{1.0f, 0};
+            vkCmdClearDepthStencilImage(cmd, m_image, clear_layout, &clear, 1, &range);
+        } else {
+            VkClearColorValue const clear{{0.0f, 0.0f, 0.0f, 0.0f}};
+            vkCmdClearColorImage(cmd, m_image, clear_layout, &clear, 1, &range);
+        }
+
+        RecordBarrier(cmd, aspect, 0, 1, clear_layout, read_layout, VK_ACCESS_TRANSFER_WRITE_BIT, dst_access, VK_PIPELINE_STAGE_TRANSFER_BIT, dst_stages);
+
+        if (!SubmitOneTimeCommands(device, pool, queue, cmd)) {
+            ReleaseImage(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: init submit failed.");
+        }
+
+        if (!DefineView(device, VK_IMAGE_VIEW_TYPE_2D, aspect) || !DefineSampler(device)) {
+            ReleaseImage(device);
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVTexture: view or sampler failed.");
+        }
+
+        m_read_layout = read_layout;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // true when every bit in `features` is supported for m_format with optimal tiling
-    bool HasFormatFeatures(VkFormatFeatureFlags const& features) {
-        VkPhysicalDevice physical{VK_NULL_HANDLE};
-        m_device->GetPhysicalDevice(&physical);
-
-        VkFormatProperties props{};
-        vkGetPhysicalDeviceFormatProperties(physical, m_format, &props);
-
-        return (props.optimalTilingFeatures & features) == features;
-    }
-
-    bool CreateImage(VkImageUsageFlags const& usage, VkImageCreateFlags const& flags) {
+    // m_extent / m_mip_levels / m_layers in m_format, optimal tiling, device memory
+    bool DefineImage(VkImageUsageFlags const& usage, VkImageCreateFlags const& flags) {
         VkImageCreateInfo image_info{};
         image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         image_info.flags = flags;
@@ -569,7 +506,28 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return vmaCreateImage(m_allocator, &image_info, &alloc_info, &m_image, &m_allocation, nullptr) == VK_SUCCESS;
     }
 
-    bool CreateView(VkDevice device, VkImageViewType const& type, VkImageAspectFlags const& aspect) {
+    // A host-visible, persistently mapped transfer source of size bytes -- the caller destroys it after the submit
+    bool DefineStaging(VkDeviceSize const& size, VkBuffer& buffer, VmaAllocation& allocation, void*& mapped) {
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = size;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo alloc_info{};
+        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(m_allocator, &buffer_info, &alloc_info, &buffer, &allocation, &info) != VK_SUCCESS) return false;
+
+        mapped = info.pMappedData;
+
+        return true;
+    }
+
+    // Every level and layer of the image
+    bool DefineView(VkDevice device, VkImageViewType const& type, VkImageAspectFlags const& aspect) {
         VkImageViewCreateInfo view_info{};
         view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         view_info.image = m_image;
@@ -580,7 +538,8 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return vkCreateImageView(device, &view_info, nullptr, &m_view) == VK_SUCCESS;
     }
 
-    bool CreateSamplerObject(VkDevice device) {
+    // From m_sampler_desc: anisotropy only where the device has it (clamped to its limit), compare only on a Depth texture, every mip level
+    bool DefineSampler(VkDevice device) {
         VkPhysicalDevice physical{VK_NULL_HANDLE};
         m_device->GetPhysicalDevice(&physical);
 
@@ -613,9 +572,45 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return vkCreateSampler(device, &sampler_info, nullptr, &m_sampler) == VK_SUCCESS;
     }
 
-    void Barrier(VkCommandBuffer cmd, VkImageAspectFlags const& aspect, std::uint32_t const& base_mip, std::uint32_t const& mip_count,
-                 VkImageLayout const& from, VkImageLayout const& to, VkAccessFlags const& src_access, VkAccessFlags const& dst_access,
-                 VkPipelineStageFlags const& src_stage, VkPipelineStageFlags const& dst_stage) {
+    // =========================================================================================================================================
+    // recording -- one-time command buffers
+    // =========================================================================================================================================
+
+    // Each level blitted from the one above, which then moves to SHADER_READ_ONLY; the last level moves at the end
+    void RecordMips(VkCommandBuffer cmd) {
+        std::int32_t w = static_cast<std::int32_t>(m_extent.width);
+        std::int32_t h = static_cast<std::int32_t>(m_extent.height);
+
+        for (std::uint32_t level = 1; level < m_mip_levels; level++) {
+            RecordBarrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+            std::int32_t const next_w = std::max(w / 2, 1);
+            std::int32_t const next_h = std::max(h / 2, 1);
+
+            VkImageBlit blit{};
+            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, m_layers};
+            blit.srcOffsets[1] = {w, h, 1};
+            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, m_layers};
+            blit.dstOffsets[1] = {next_w, next_h, 1};
+
+            vkCmdBlitImage(cmd, m_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+
+            RecordBarrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLED_STAGES);
+
+            w = next_w;
+            h = next_h;
+        }
+
+        RecordBarrier(cmd, VK_IMAGE_ASPECT_COLOR_BIT, m_mip_levels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                      VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLED_STAGES);
+    }
+
+    // One layout transition over levels [base_mip, base_mip + mip_count) of every layer
+    void RecordBarrier(VkCommandBuffer cmd, VkImageAspectFlags const& aspect, std::uint32_t const& base_mip, std::uint32_t const& mip_count,
+                       VkImageLayout const& from, VkImageLayout const& to, VkAccessFlags const& src_access, VkAccessFlags const& dst_access,
+                       VkPipelineStageFlags const& src_stage, VkPipelineStageFlags const& dst_stage) {
         VkImageMemoryBarrier barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.oldLayout = from;
@@ -630,28 +625,29 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
     }
 
-    static bool BeginOneTime(VkDevice device, VkCommandPool pool, VkCommandBuffer* cmd) {
+    static bool BeginOneTimeCommands(VkDevice device, VkCommandPool pool, VkCommandBuffer& cmd) {
         VkCommandBufferAllocateInfo alloc_info{};
         alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         alloc_info.commandPool = pool;
         alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         alloc_info.commandBufferCount = 1;
 
-        if (vkAllocateCommandBuffers(device, &alloc_info, cmd) != VK_SUCCESS) return false;
+        if (vkAllocateCommandBuffers(device, &alloc_info, &cmd) != VK_SUCCESS) return false;
 
         VkCommandBufferBeginInfo begin_info{};
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-        if (vkBeginCommandBuffer(*cmd, &begin_info) != VK_SUCCESS) {
-            vkFreeCommandBuffers(device, pool, 1, cmd);
+        if (vkBeginCommandBuffer(cmd, &begin_info) != VK_SUCCESS) {
+            vkFreeCommandBuffers(device, pool, 1, &cmd);
             return false;
         }
 
         return true;
     }
 
-    static bool EndOneTime(VkDevice device, VkCommandPool pool, VkQueue queue, VkCommandBuffer cmd) {
+    // Ends, submits and waits for the queue to go idle; the command buffer is freed either way
+    static bool SubmitOneTimeCommands(VkDevice device, VkCommandPool pool, VkQueue queue, VkCommandBuffer cmd) {
         bool ok = vkEndCommandBuffer(cmd) == VK_SUCCESS;
 
         if (ok) {
@@ -660,8 +656,7 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
             submit_info.commandBufferCount = 1;
             submit_info.pCommandBuffers = &cmd;
 
-            ok = vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE) == VK_SUCCESS;
-            if (ok) vkQueueWaitIdle(queue);
+            ok = vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE) == VK_SUCCESS && vkQueueWaitIdle(queue) == VK_SUCCESS;
         }
 
         vkFreeCommandBuffers(device, pool, 1, &cmd);
@@ -669,7 +664,47 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
         return ok;
     }
 
-    void Destroy(VkDevice device) {
+    // =========================================================================================================================================
+    // helpers
+    // =========================================================================================================================================
+
+    bool Ready() const { return m_device && m_allocator != VK_NULL_HANDLE; }
+
+    // true when every bit in features is supported for m_format with optimal tiling
+    bool HasFormatFeatures(VkFormatFeatureFlags const& features) const {
+        VkPhysicalDevice physical{VK_NULL_HANDLE};
+        m_device->GetPhysicalDevice(&physical);
+
+        VkFormatProperties props{};
+        vkGetPhysicalDeviceFormatProperties(physical, m_format, &props);
+
+        return (props.optimalTilingFeatures & features) == features;
+    }
+
+    // Bytes per texel of the formats uploads accept -- 0 for any other
+    static std::uint32_t BytesPerPixel(VkFormat const& format) {
+        switch (format) {
+            case VK_FORMAT_R8_UNORM:
+                return 1;
+            case VK_FORMAT_R8G8_UNORM:
+                return 2;
+            case VK_FORMAT_R8G8B8A8_SRGB:
+            case VK_FORMAT_R8G8B8A8_UNORM:
+            case VK_FORMAT_B8G8R8A8_SRGB:
+            case VK_FORMAT_B8G8R8A8_UNORM:
+            case VK_FORMAT_R32_SFLOAT:
+                return 4;
+            case VK_FORMAT_R16G16B16A16_SFLOAT:
+                return 8;
+            case VK_FORMAT_R32G32B32A32_SFLOAT:
+                return 16;
+            default:
+                return 0;
+        }
+    }
+
+    // Sampler, view and image -- nothing may still be reading them
+    void ReleaseImage(VkDevice device) {
         if (m_sampler != VK_NULL_HANDLE) vkDestroySampler(device, m_sampler, nullptr);
         if (m_view != VK_NULL_HANDLE) vkDestroyImageView(device, m_view, nullptr);
         if (m_image != VK_NULL_HANDLE) vmaDestroyImage(m_allocator, m_image, m_allocation);
@@ -682,19 +717,25 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
     }
 
    private:
-    std::shared_ptr<IIr77PVDevice> m_device;
+    // sampled images can be read by fragment and compute shaders alike
+    static constexpr VkPipelineStageFlags SAMPLED_STAGES{VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT};
+
+    // wiring
+    std::shared_ptr<IIr77PVDevice> m_device{};
 
     VmaAllocator m_allocator{VK_NULL_HANDLE};
 
+    // configuration -- SetKind / SetFormat / SetSampler
     Ir77PVTextureKind m_kind{Ir77PVTextureKind::Color};
 
     VkFormat m_format{VK_FORMAT_R8G8B8A8_SRGB};
 
     Ir77PVSamplerDesc m_sampler_desc{};
 
+    // the image -- Create*
     VkExtent2D m_extent{};
 
-    std::uint32_t m_layers{1};
+    std::uint32_t m_layers{1};  // 6 for a cube
 
     std::uint32_t m_mip_levels{1};
 
@@ -706,6 +747,6 @@ class Ir77PVTexture : public Ir77Enlisted, public IIr77PVTexture, public std::en
 
     VkSampler m_sampler{VK_NULL_HANDLE};
 
-    VkImageLayout m_read_layout{VK_IMAGE_LAYOUT_UNDEFINED};
+    VkImageLayout m_read_layout{VK_IMAGE_LAYOUT_UNDEFINED};  // what GetImageInfo reports -- UNDEFINED until created
 };
 }  // namespace NSIr77PeregrineV

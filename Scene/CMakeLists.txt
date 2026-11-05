@@ -16,6 +16,7 @@ target_include_directories(Ir77Scene PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/dictionary
     ${CMAKE_CURRENT_SOURCE_DIR}/interface
     ${CMAKE_CURRENT_SOURCE_DIR}/runtime
+    ${CMAKE_CURRENT_SOURCE_DIR}/services
     ${CMAKE_CURRENT_SOURCE_DIR}/server
 )
 
@@ -102,3 +103,6 @@ target_link_libraries(Ir77Scene PRIVATE SDL3::SDL3)
 target_link_libraries(Ir77Scene PUBLIC Ir77RT)
 
 target_link_libraries(Ir77Scene PUBLIC PeregrineV)
+
+# the fields module -- the frame draws its field
+target_link_libraries(Ir77Scene PUBLIC Ir77Fields)

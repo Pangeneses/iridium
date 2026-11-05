@@ -13,7 +13,7 @@
 #include "IIr77PVSwapchain.hpp"
 #include "IIr77PVDescriptorSet.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 

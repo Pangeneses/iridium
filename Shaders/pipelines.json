@@ -166,6 +166,115 @@
       "depth_bias": false,
       "flip_back_faces": false,
       "user": []
+    },
+    "outline.static": {
+      "vertex": "outline.vert",
+      "fragment": "outline.frag",
+      "pass": "main",
+      "blend": "opaque",
+      "cull": "front",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["flags", "color"]
+    },
+    "outline.skinned": {
+      "vertex": "outline_skinned.vert",
+      "fragment": "outline.frag",
+      "pass": "main",
+      "blend": "opaque",
+      "cull": "front",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["flags", "color"]
+    },
+    "outline.mesh": {
+      "task": "mesh.task",
+      "mesh": "outline.mesh",
+      "fragment": "outline.frag",
+      "pass": "main",
+      "blend": "opaque",
+      "cull": "front",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["flags", "color"]
+    },
+    "outline.mask.static": {
+      "vertex": "outline.vert",
+      "fragment": "outline.frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["flags", "color"]
+    },
+    "outline.mask.skinned": {
+      "vertex": "outline_skinned.vert",
+      "fragment": "outline.frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": true,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["flags", "color"]
+    },
+    "edit.faces": {
+      "vertex": "edit_faces.vert",
+      "fragment": "edit.frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["points", "faces", "flags", "mode"]
+    },
+    "edit.edges": {
+      "vertex": "edit_edges.vert",
+      "fragment": "edit.frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["points", "edges", "flags", "mode"]
+    },
+    "edit.points": {
+      "vertex": "edit_points.vert",
+      "fragment": "edit.frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "none",
+      "depth_test": true,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["points", "edges", "flags", "mode"]
+    },
+    "edit.gizmo": {
+      "vertex": "gizmo.vert",
+      "fragment": "edit.frag",
+      "pass": "main",
+      "blend": "alpha",
+      "cull": "none",
+      "depth_test": false,
+      "depth_write": false,
+      "depth_bias": false,
+      "flip_back_faces": false,
+      "user": ["mode", "hot"]
     }
   }
 }

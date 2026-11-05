@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -212,11 +212,9 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
         if (m_windows.size() != windows || m_frame_slots.size() != windows || m_frame_buffers.size() != windows)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: windows, swapchains, frame slots and frame buffers must match one per window.");
 
-        if (!m_device || !m_layout || !m_descriptor_set)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: device, bindless layout or table not set.");
+        if (!m_device || !m_layout || !m_descriptor_set) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: device, bindless layout or table not set.");
 
-        if (m_render_passes.count(Ir77PVRenderPassKind::Main) == 0)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: main render pass not set.");
+        if (m_render_passes.count(Ir77PVRenderPassKind::Main) == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: main render pass not set.");
 
         if (m_material_table == BINDLESS_NO_SLOT) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPaint: material table slot not set.");
 
@@ -458,7 +456,7 @@ class Ir77PVPaint : public Ir77Enlisted, public IIr77PVPaint, public std::enable
 
         if (m_acceleration) {
             m_acceleration->GetTopLevelSlot(values.tlas);
-            m_acceleration->GetObjectSlot(values.ray_objects);
+            m_acceleration->GetObjectTableSlot(values.ray_objects);
         }
 
         for (std::uint32_t view = 0; view < MAX_VIEWS; view++) {

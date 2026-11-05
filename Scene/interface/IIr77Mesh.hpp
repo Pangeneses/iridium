@@ -11,7 +11,9 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "../PeregrineV/types//Ir77PVTypes.hpp"
+#include "../PeregrineV/types//Ir77Types.hpp"
+
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -48,6 +50,15 @@ typedef struct IIr77Mesh : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> GetSkinnedMeshRanges(std::vector<Ir77MeshRange>& mesh_ranges) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetSkinnedRangeMaterials(std::vector<std::uint32_t>& materials) = 0;
+
+    // Where every vertex came from in the file -- per range (GetMeshRanges' order), its glTF mesh / primitive and that primitive's file vertex
+    // count; per vertex (GetVertexBuffer's order), its file vertex within the primitive
+    virtual std::shared_ptr<IIr77Return const> GetVertexOrigins(bool const& skinned, std::vector<Ir77MeshOrigin>& ranges, std::vector<std::uint32_t>& origins) = 0;
+
+    // An edit -- every vertex's position, normal and tangent from vertices (GetVertexBuffer's order and count; UVs, joints and weights stay)
+    virtual std::shared_ptr<IIr77Return const> UpdateVertices(std::vector<Ir77PVVertex> const& vertices) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> UpdateSkinnedVertices(std::vector<Ir77PVVertexSkinned> const& vertices) = 0;
 
     virtual ~IIr77Mesh() = default;
 }* pIIr77Mesh;

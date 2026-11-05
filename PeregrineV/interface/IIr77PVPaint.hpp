@@ -23,7 +23,7 @@
 #include "IIr77PVOverlay.hpp"
 #include "IIr77PVAcceleration.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
@@ -65,7 +65,8 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> SetFrameSlots(std::vector<std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT>> const& frame_slots) = 0;
 
     // [window][slot] -- the frame-level buffers SetFrameData writes into
-    virtual std::shared_ptr<IIr77Return const> SetFrameBuffers(std::vector<std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>>> const& frame_buffers) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetFrameBuffers(
+        std::vector<std::map<Ir77PVBufferSlot, std::shared_ptr<IIr77PVBuffer>>> const& frame_buffers) = 0;
 
     // One per window, in window order -- optional; empty = no overlay drawn
     virtual std::shared_ptr<IIr77Return const> SetOverlays(std::vector<std::shared_ptr<IIr77PVOverlay>> const& overlays) = 0;
@@ -86,8 +87,8 @@ typedef struct IIr77PVPaint : virtual public IIr77Enlisted {
     // ---- per frame --------------------------------------------------------------------------------------------------------------------------
 
     // Latest contents of a frame-level buffer (camera, lights, instances ...) -- re-applied every frame to every frame-in-flight copy
-    virtual std::shared_ptr<IIr77Return const> SetFrameData(std::size_t const& window, Ir77PVBufferSlot const& slot, void const* data,
-                                                            VkDeviceSize const& size, VkDeviceSize const& offset = 0) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetFrameData(std::size_t const& window, Ir77PVBufferSlot const& slot, void const* data, VkDeviceSize const& size,
+                                                            VkDeviceSize const& offset = 0) = 0;
 
     // Replaces one view's draw list for a pass in a window. Persists until replaced.
     virtual std::shared_ptr<IIr77Return const> SetDraws(std::size_t const& window, std::uint32_t const& view, Ir77PVPass const& pass,

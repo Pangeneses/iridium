@@ -14,7 +14,7 @@
 #include "IIr77PVDescriptorSet.hpp"
 #include "IIr77PVBuffer.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
@@ -46,11 +46,13 @@ typedef struct IIr77PVTransfer : virtual public IIr77Enlisted {
     virtual std::shared_ptr<IIr77Return const> Upload(std::vector<Ir77PVUploadEntry> const& entries, bool const& wait = true) = 0;
 
     // Device-local, one copy -- filled by Upload. Kept in the buffer list the graveyard releases from.
-    virtual std::shared_ptr<IIr77Return const> CreateStaticBuffer(VkBufferUsageFlags const& usage, VkDeviceSize const& size, std::shared_ptr<IIr77PVBuffer>& buffer) = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateStaticBuffer(VkBufferUsageFlags const& usage, VkDeviceSize const& size,
+                                                                  std::shared_ptr<IIr77PVBuffer>& buffer) = 0;
 
     // Host-written every frame -- one copy per frame in flight, persistently mapped. Write with Update(frame, ...). Kept in the buffer list
     // the graveyard releases from.
-    virtual std::shared_ptr<IIr77Return const> CreateDynamicBuffer(VkBufferUsageFlags const& usage, VkDeviceSize const& size, std::shared_ptr<IIr77PVBuffer>& buffer) = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateDynamicBuffer(VkBufferUsageFlags const& usage, VkDeviceSize const& size,
+                                                                   std::shared_ptr<IIr77PVBuffer>& buffer) = 0;
 
     // Everything an owner lets go of in one step -- buffers, textures, bindless slots, released() -- held until MAX_FRAMES_IN_FLIGHT + 1 Ticks
     // have passed, then released together. The only way anything is freed at runtime. Empty entries are skipped.
@@ -66,13 +68,15 @@ typedef struct IIr77PVTransfer : virtual public IIr77Enlisted {
     // ---- storage buffers -- one copy shared by every frame in flight (set 0 binding 1) -------------------------------------------------------
 
     // size bytes, filled from data (zeros when data is null). Blocking upload. buffer_id for Get / Upload / Destroy; slot for the shaders.
-    virtual std::shared_ptr<IIr77Return const> CreateStorageBuffer(VkDeviceSize const& size, void const* data, std::uint32_t& buffer_id, std::uint32_t& slot) = 0;
+    virtual std::shared_ptr<IIr77Return const> CreateStorageBuffer(VkDeviceSize const& size, void const* data, std::uint32_t& buffer_id,
+                                                                   std::uint32_t& slot) = 0;
 
     // The buffer itself -- for item.indirect / dispatch.indirect
     virtual std::shared_ptr<IIr77Return const> GetStorageBuffer(std::uint32_t const& buffer_id, std::shared_ptr<IIr77PVBuffer>& buffer) = 0;
 
     // CPU rewrite of [offset, offset + size) -- resets, spawn parameters. The copy runs in submission order ahead of later frames.
-    virtual std::shared_ptr<IIr77Return const> UploadStorageBuffer(std::uint32_t const& buffer_id, void const* data, VkDeviceSize const& size, VkDeviceSize const& offset, bool const& wait) = 0;
+    virtual std::shared_ptr<IIr77Return const> UploadStorageBuffer(std::uint32_t const& buffer_id, void const* data, VkDeviceSize const& size,
+                                                                   VkDeviceSize const& offset, bool const& wait) = 0;
 
     // The buffer and its slot into one grave -- both freed once no frame in flight can read them. Remove the draws / dispatches using it first.
     virtual std::shared_ptr<IIr77Return const> DestroyStorageBuffer(std::uint32_t const& buffer_id) = 0;

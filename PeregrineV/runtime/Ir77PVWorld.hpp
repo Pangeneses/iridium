@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -43,97 +43,28 @@ namespace NSIr77PeregrineV {
 // =============================================================================================================================================
 // Ir77PVWorld -- what gets drawn. Takes assets whole and frames whole, and does everything between them and the peers that draw.
 //
-//   startup:   Ir77PVInit wires it -- SetTransfer / SetMaterials / SetGeometry / SetPipelineCache / SetPaint / [SetAcceleration] -> CreateWorld
-//   load:      LoadAsset(bundle) -- textures and materials (Materials), BLEND primitives split off into their own compacted block, the opaque
-//              ones sorted into material runs, each command's material row going up with it (Geometry), the static stream on the mesh or vertex path,
-//              the skinned stream and its compute-skinned copy (the posed stream), BLASes with MASK alpha rows (Acceleration)
-//   per frame: SubmitFrame(frame) -- models[], bone bases + palettes, lights, shadow matrices and each window's cameras (Paint frame data),
-//              skinning then the frame's dispatches, every view's opaque / shadow / sorted transparent draws, each window's pass list when its
-//              view areas change, the TLAS transforms and which assets are in the rays
+//   startup:   Ir77PVInit wires it -- SetTransfer / SetMaterials / SetGeometry / SetPipelineCache / SetPaint / [SetAcceleration] /
+//              SetDeviceName -> CreateDefaultMaterial
+//   load:      LoadAsset(bundle) -> UploadAsset: UploadAssetMaterials (textures and materials -- Materials) -> UploadAssetStreams (BLEND
+//              primitives split off into their own compacted block, the opaque ones sorted into material runs, each command's material row
+//              going up with it -- Geometry; the static stream on the mesh or vertex path, the skinned stream and its compute-skinned copy, the
+//              posed stream) -> BuildAssetRays (BLASes with MASK alpha rows -- Acceleration)
+//   per frame: SubmitFrame(frame) -> WriteFrameAssets (models[], bones, which assets are in the rays) -> MakeFrameDispatches (skinning, then
+//              the frame's own) -> PackLights -> the draws (culled or not) -> SubmitWindow per window (frame data, pass list when its view
+//              areas change, every view's opaque / shadow / sorted transparent draws)
+//   spawn:     SetInstanceCount(asset, first_instance, count) -- a mesh's live instances, inside the slots it was loaded with
+//   unload:    UnloadAsset -- BLASes, blocks and tables freed, its ranges back
 //
 // GPU culling: with a "cull.compute" pipeline in the manifest, the opaque and shadow geometry on the vertex path is grouped into cull bins --
 // one per pipeline and vertex stream, opaque and shadow apart -- remade whenever the assets in the frame change. Every view draws each opaque
 // bin's culled list with one indirect-count draw, the shadow pass each shadow bin's (view 0's); static geometry is frustum-tested, animated
 // (posed / skinned) geometry passes untested. The mesh path keeps its own task-shader culling; transparent objects stay sorted on the CPU.
 // Without the pipeline, every asset draws unculled as before.
-//   unload:    UnloadAsset -- BLASes, blocks and tables freed, its ranges back
 //
 // Every asset gets its own range of models[] slots and joint matrices (first fit), so a scene is any number of files. LoadAsset moves the
 // bundle's instance slots there; SubmitFrame writes each asset's transforms and bones into its ranges.
 // =============================================================================================================================================
 class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable_shared_from_this<Ir77PVWorld> {
-   private:
-    // one cull bin as World made it -- what draws its lists
-    struct Ir77PVWorldBin {
-        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};
-        bool skinned{false};  // the skinned vertex / index pools
-        bool shadow{false};   // a shadow pass bin -- view 0's list, once per shadow tile
-    };
-
-    // one transparent object -- a single indirect command, sorted by camera distance every frame
-    struct Ir77PVWorldBlend {
-        std::uint32_t material_id{0};
-        std::uint32_t command{0};  // in the asset's blend block, or in its skinned block when skinned
-        std::uint32_t slot{0};     // models[] slot -- its translation is the sort position
-        bool skinned{false};
-    };
-
-    // one loaded asset -- what it put on the device and where it sits in models[] and the joint matrices
-    struct Ir77PVWorldAsset {
-        std::string name{};
-
-        std::uint32_t instance_base{0};
-        std::uint32_t instance_count{0};
-        std::uint32_t bone_base{0};
-        std::uint32_t bone_count{0};
-        std::vector<std::uint32_t> bone_bases{};  // per instance, into the asset's own bones
-
-        Ir77PVPipelineHandle pipeline{IR77PV_NO_PIPELINE};  // static opaque
-
-        std::vector<std::uint32_t> texture_ids{};  // [bundle texture] -> Materials id; IR77PV_NO_TEXTURE where the upload failed
-
-        std::vector<std::uint32_t> material_ids{};  // [bundle material] -> Materials id
-
-        // static opaque -- vertex path (UploadBlock) or mesh path (UploadMeshlets)
-        bool has_static{false};
-        bool mesh_path{false};
-        std::uint32_t static_id{0};
-        std::uint32_t static_count{0};
-
-        // static transparent -- its own compacted vertex-path block
-        bool has_blend{false};
-        std::uint32_t blend_id{0};
-
-        // skinned -- opaque commands, then the transparent ones
-        bool has_skinned{false};
-        std::uint32_t skinned_id{0};
-        std::uint32_t skinned_opaque_count{0};
-
-        // compute skinning -- the skinned opaque geometry posed by skin.comp every frame, drawn as static
-        bool has_posed{false};
-        std::uint32_t posed_id{0};
-        std::uint32_t posed_count{0};
-        std::uint32_t posed_vertices{0};
-        std::uint32_t jobs_buffer{0};
-        std::uint32_t jobs_slot{BINDLESS_NO_SLOT};  // uvec2 per posed vertex: source vertex, models[] slot
-        std::uint32_t skin_source{BINDLESS_NO_SLOT};
-        std::uint32_t skin_destination{BINDLESS_NO_SLOT};
-        Ir77PVPipelineHandle skin_compute{IR77PV_NO_PIPELINE};
-
-        std::vector<Ir77PVWorldBlend> blends{};
-
-        // rays -- the BLASes of each stream, and whether they are in the TLAS now
-        std::vector<glm::uvec2> objects{};
-        bool in_rays{true};
-    };
-
-    // one transparent object's place in a window's back-to-front order
-    struct Ir77PVWorldSort {
-        float distance{0.0f};
-        std::uint32_t asset{0};
-        std::size_t blend{0};
-    };
-
    public:
     Ir77PVWorld() {
         try {
@@ -228,11 +159,17 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The grey default material -- primitives without one, and every procedural draw. device = the GPU's name, for the asset reports.
-    std::shared_ptr<IIr77Return const> CreateWorld(std::string const& device) {
-        if (!m_materials) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVWorld: SetMaterials not called.");
+    // The GPU's name -- for the asset reports (LoadAsset's report.device)
+    std::shared_ptr<IIr77Return const> SetDeviceName(std::string const& device_name) {
+        m_device_name = device_name;
 
-        m_device = device;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The grey default material -- primitives without one, and the placeholder material of procedural and multi-command draw items. After
+    // SetMaterials.
+    std::shared_ptr<IIr77Return const> CreateDefaultMaterial() {
+        if (!m_materials) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVWorld: SetMaterials not called.");
 
         Ir77PVMaterialConstants constants{};
         constants.base_color = {0.8f, 0.8f, 0.8f, 1.0f};
@@ -267,7 +204,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         if (!AllocateRange(m_bone_ranges, asset.bone_count, WORLD_BONE_CAPACITY, asset.bone_base)) {
             asset.bone_count = 0;  // nothing taken -- only the instance range goes back
             ReleaseAsset(asset);
-            return Ir77RETURN<Ir77OutOfRange>(this, "Ir77PVWorld: " + bundle.name + " -- no room for " + std::to_string(asset.bone_count) +
+            return Ir77RETURN<Ir77OutOfRange>(this, "Ir77PVWorld: " + bundle.name + " -- no room for " + std::to_string(bundle.bone_count) +
                                                         " more joint matrices (" + std::to_string(WORLD_BONE_CAPACITY) + " in all).");
         }
 
@@ -283,7 +220,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
         ResizeFrameData();
 
-        report.device = m_device;
+        report.device_name = m_device_name;
         report.ray_query = static_cast<bool>(m_acceleration);
         report.instance_base = m_assets.at(asset_id).instance_base;
 
@@ -315,16 +252,104 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVWorld: asset " + std::to_string(asset_id) + " unloaded.");
     }
 
+    // A mesh's live instances -- the one whose instance range starts at first_instance (asset-local, the bundle's first_instance). The asset was
+    // loaded with that range's instance_count as its capacity: models[] slots, cull places and TLAS entries for all of them. count of them draw
+    // (the first count -- [first_instance, first_instance + count)) and are in the rays; the rest stay reserved, hidden. Every stream of the asset
+    // follows: static (either path), blend, skinned, posed. count past the capacity fails. Takes effect over the next frames in flight (Tick).
+    std::shared_ptr<IIr77Return const> SetInstanceCount(std::uint32_t const& asset_id, std::uint32_t const& first_instance, std::uint32_t const& count) {
+        auto const found = m_assets.find(asset_id);
+        if (found == m_assets.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVWorld: unknown asset.");
+
+        Ir77PVWorldAsset const& asset = found->second;
+
+        auto const range = asset.instance_ranges.find(first_instance);
+        if (range == asset.instance_ranges.end())
+            return Ir77RETURN<Ir77NotConfigured>(this,
+                                                 "Ir77PVWorld: " + asset.name + " has no instance range starting at " + std::to_string(first_instance) + ".");
+
+        std::uint32_t const reserved = range->second;
+        if (count > reserved)
+            return Ir77RETURN<Ir77OutOfRange>(
+                this, "Ir77PVWorld: " + asset.name + " -- " + std::to_string(count) + " instances, loaded with room for " + std::to_string(reserved) + ".");
+
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::uint32_t const first_slot = asset.instance_base + first_instance;
+
+        if (asset.has_static) {
+            if (Failed(asset.mesh_path ? m_geometry->SetMeshletInstanceRange(asset.static_id, first_slot, reserved, count)
+                                       : m_geometry->SetInstanceRange(asset.static_id, first_slot, reserved, count),
+                       result))
+                return result;
+        }
+
+        if (asset.has_blend && Failed(m_geometry->SetInstanceRange(asset.blend_id, first_slot, reserved, count), result)) return result;
+        if (asset.has_skinned && Failed(m_geometry->SetInstanceRange(asset.skinned_id, first_slot, reserved, count), result)) return result;
+        if (asset.has_posed && Failed(m_geometry->SetInstanceRange(asset.posed_id, first_slot, reserved, count), result)) return result;
+
+        if (m_acceleration) {
+            m_acceleration->SetSlotsLive(first_slot, count, true);
+            m_acceleration->SetSlotsLive(first_slot + count, reserved - count, false);
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // An edit -- the asset's vertices rewritten from the bundle's streams as they are now (the same order and counts LoadAsset had):
+    // [static_range.x, + static_range.y) of vertices, [skinned_range.x, + skinned_range.y) of vertices_skinned. Every stream they went to
+    // follows: static (either path), its BLEND copies, skinned (posed again by skin.comp every frame). The first edit unbounds the static
+    // commands for the cull pass and rebuilds the static BLASes to refit every frame. Not waited on -- in order ahead of the next frames.
+    std::shared_ptr<IIr77Return const> UpdateAssetVertices(std::uint32_t const& asset_id, std::vector<Ir77PVVertex> const& vertices,
+                                                           std::vector<Ir77PVVertexSkinned> const& vertices_skinned, glm::uvec2 const& static_range,
+                                                           glm::uvec2 const& skinned_range) {
+        auto const found = m_assets.find(asset_id);
+        if (found == m_assets.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVWorld: unknown asset.");
+
+        Ir77PVWorldAsset& asset = found->second;
+
+        if (static_cast<std::size_t>(static_range.x) + static_range.y > vertices.size() ||
+            static_cast<std::size_t>(skinned_range.x) + skinned_range.y > vertices_skinned.size())
+            return Ir77RETURN<Ir77OutOfRange>(this, "Ir77PVWorld: " + asset.name + " -- edit range past the streams given.");
+
+        std::shared_ptr<IIr77Return const> result{};
+
+        if (!asset.edited && Failed(BeginAssetEdit(asset), result)) return result;
+
+        if (static_range.y > 0) {
+            if (asset.has_static) {
+                Ir77PVVertex const* const data = vertices.data() + static_range.x;
+
+                if (Failed(asset.mesh_path ? m_geometry->UpdateMeshletVertices(asset.static_id, static_range.x, static_range.y, data)
+                                           : m_geometry->UpdateBlockVertices(asset.static_id, false, static_range.x, static_range.y, data),
+                           result))
+                    return result;
+            }
+
+            // the BLEND primitives' compacted copies -- each span the edit overlaps
+            for (Ir77PVWorldSpan const& span : asset.blend_spans) {
+                std::uint32_t const low = std::max(span.source, static_range.x);
+                std::uint32_t const high = std::min(span.source + span.count, static_range.x + static_range.y);
+                if (!asset.has_blend || low >= high) continue;
+
+                if (Failed(m_geometry->UpdateBlockVertices(asset.blend_id, false, span.destination + (low - span.source), high - low, vertices.data() + low), result))
+                    return result;
+            }
+        }
+
+        if (skinned_range.y > 0 && asset.has_skinned &&
+            Failed(m_geometry->UpdateBlockVertices(asset.skinned_id, true, skinned_range.x, skinned_range.y, vertices_skinned.data() + skinned_range.x), result))
+            return result;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
     // -------------------------------------------------------------------------------------------------------------------------------------
     // per frame
     // -------------------------------------------------------------------------------------------------------------------------------------
 
-    // The frame -> Paint and Acceleration:
-    //   1. models[] and the bones from each asset in the frame; assets left out drop out of the rays
-    //   2. skinning, then the frame's own dispatches -- once a frame
-    //   3. per window: cameras, models[], lights, shadow matrices, bones; the pass list when its view areas changed; per view the opaque
-    //      draws (the same for every view), the shadow draws (view 0 -- the one shadow pass), then the transparent objects back to front from
-    //      that view's eye; the frame's own draws after the assets' in each list
+    // The frame -> Paint and Acceleration: WriteFrameAssets (models[], bones, the rays), MakeFrameDispatches (skinning, then the frame's own --
+    // once a frame), PackLights, the assets' opaque and shadow draws (culled per view, or one list), then SubmitWindow for each window.
+    // report = the last window's counts.
     std::shared_ptr<IIr77Return const> SubmitFrame(Ir77PVFrame const& frame, Ir77PVFrameReport& report) {
         report = Ir77PVFrameReport{};
 
@@ -343,69 +368,15 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         m_windows = frame.windows.size();
         m_window_areas.resize(m_windows);
 
-        // 1.
-        m_present.clear();
+        WriteFrameAssets(frame);
 
-        for (Ir77PVFrameAsset const& entry : frame.assets) {
-            auto const found = m_assets.find(entry.asset);
-            if (found == m_assets.end()) continue;
+        m_paint->SetFrameDispatches(MakeFrameDispatches(frame));
 
-            Ir77PVWorldAsset const& asset = found->second;
-            m_present.push_back(entry.asset);
-
-            std::size_t const transforms = std::min<std::size_t>(entry.transforms.size(), asset.instance_count);
-            std::copy_n(entry.transforms.begin(), transforms, m_models.begin() + asset.instance_base);
-
-            std::size_t const bones = std::min<std::size_t>(entry.bones.size(), asset.bone_count);
-            if (bones > 0)
-                std::memcpy(m_bones_packed.data() + BONE_BASE_BYTES + static_cast<std::size_t>(asset.bone_base) * sizeof(glm::mat4), entry.bones.data(),
-                            bones * sizeof(glm::mat4));
-        }
-
-        std::sort(m_present.begin(), m_present.end());
-        m_present.erase(std::unique(m_present.begin(), m_present.end()), m_present.end());
-
-        if (m_acceleration) {
-            for (auto& [id, asset] : m_assets) {
-                bool const present = std::binary_search(m_present.begin(), m_present.end(), id);
-                if (present == asset.in_rays) continue;
-
-                for (glm::uvec2 const& objects : asset.objects) m_acceleration->SetObjectsVisible(objects, present);
-                asset.in_rays = present;
-            }
-
-            m_acceleration->SetInstanceTransforms(m_models);
-        }
-
-        // 2.
-        std::vector<Ir77PVDispatch> dispatches{};
-
-        for (std::uint32_t const id : m_present) {
-            Ir77PVWorldAsset const& asset = m_assets.at(id);
-            if (!asset.has_posed) continue;
-
-            Ir77PVDispatch skin{};
-            skin.pipeline = asset.skin_compute;
-            skin.push.user = {asset.jobs_slot, asset.skin_source, asset.skin_destination, asset.posed_vertices, 0u, 0u, 0u, 0u};
-            skin.groups = SkinGroups(asset.posed_vertices);
-            dispatches.push_back(skin);
-        }
-
-        dispatches.insert(dispatches.end(), frame.dispatches.begin(), frame.dispatches.end());
-
-        m_paint->SetFrameDispatches(dispatches);
-
-        // 3. -- lights: header + Ir77PVLight[], as set 0 binding 1 expects
-        Ir77PVLightsHeader header{};
-        header.count = static_cast<std::uint32_t>(frame.lights.size());
-
-        m_lights_packed.resize(sizeof(header) + frame.lights.size() * sizeof(Ir77PVLight));
-        std::memcpy(m_lights_packed.data(), &header, sizeof(header));
-        if (!frame.lights.empty()) std::memcpy(m_lights_packed.data() + sizeof(header), frame.lights.data(), frame.lights.size() * sizeof(Ir77PVLight));
+        PackLights(frame);
 
         std::uint32_t const shadow_count = static_cast<std::uint32_t>(std::min<std::size_t>(frame.shadow_matrices.size(), MAX_SHADOW_LIGHTS));
 
-        // GPU culling -- the bins again when the assets in the frame changed; then one culled draw per bin per view
+        // GPU culling -- the bins again when the assets in the frame changed
         if (m_cull_dirty || m_present != m_cull_present) {
             if (Failed(BuildCullBins(), result)) return result;
 
@@ -413,71 +384,25 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             m_cull_dirty = false;
         }
 
+        // the assets' draws -- the same for every window: per view when culled (each view its own culled lists), one list otherwise
         std::uint32_t views{1};
         for (Ir77PVFrameWindow const& window : frame.windows) views = std::max(views, static_cast<std::uint32_t>(window.cameras.size()));
 
-        std::vector<Ir77PVDrawItem> opaque{};
-        std::vector<std::vector<Ir77PVDrawItem>> culled_opaque{};  // [view] -- when culling
+        std::vector<std::vector<Ir77PVDrawItem>> opaque{};  // [view]
         std::vector<Ir77PVDrawItem> shadow{};
 
         if (m_culled) {
-            if (Failed(MakeCulledDraws(shadow_count, views, culled_opaque, shadow), result)) return result;
+            if (Failed(MakeCulledDraws(shadow_count, views, opaque, shadow), result)) return result;
         } else {
-            if (Failed(MakeOpaqueDraws(shadow_count, opaque, shadow), result)) return result;
+            opaque.assign(1, {});
+            if (Failed(MakeOpaqueDraws(shadow_count, opaque[0], shadow), result)) return result;
         }
 
-        for (std::size_t w = 0; w < frame.windows.size(); w++) {
-            Ir77PVFrameWindow const& window = frame.windows[w];
-            std::uint32_t const window_views = static_cast<std::uint32_t>(window.cameras.size());
-            std::vector<glm::vec4> const areas = window.areas.empty() ? GridAreas(window_views) : window.areas;
+        // the selection's outlines -- never culled (an outlined asset is what you're looking at), the same in every view
+        MakeOutlineDraws(m_outline_draws, m_outline_blend_draws);
 
-            if (areas != m_window_areas[w]) {
-                if (Failed(m_paint->SetPassList(w, MakePassList(areas)), result)) return result;
-
-                m_paint->ClearDraws(w);  // the window_views it no longer has
-                m_window_areas[w] = areas;
-            }
-
-            VkClearColorValue clear{};
-            std::memcpy(clear.float32, &window.clear_color, sizeof(clear.float32));
-            if (Failed(m_paint->SetClearColor(w, clear), result)) return result;
-
-            // one camera per view, VIEW_STRIDE apart -- where each view's frame table points
-            m_cameras_packed.assign(static_cast<std::size_t>(VIEW_STRIDE) * window_views, 0);
-            for (std::uint32_t v = 0; v < window_views; v++)
-                std::memcpy(m_cameras_packed.data() + static_cast<std::size_t>(VIEW_STRIDE) * v, &window.cameras[v], sizeof(Ir77PVCamera));
-
-            m_paint->SetFrameData(w, Ir77PVBufferSlot::Camera, m_cameras_packed.data(), m_cameras_packed.size());
-            m_paint->SetFrameData(w, Ir77PVBufferSlot::Lights, m_lights_packed.data(), m_lights_packed.size());
-
-            if (!m_models.empty()) m_paint->SetFrameData(w, Ir77PVBufferSlot::Instances, m_models.data(), m_models.size() * sizeof(glm::mat4));
-            if (shadow_count > 0) m_paint->SetFrameData(w, Ir77PVBufferSlot::ShadowMatrices, frame.shadow_matrices.data(), shadow_count * sizeof(glm::mat4));
-            if (m_bone_high > 0) m_paint->SetFrameData(w, Ir77PVBufferSlot::Bones, m_bones_packed.data(), m_bones_packed.size());
-
-            std::vector<Ir77PVDrawItem> window_shadow = shadow;
-            window_shadow.insert(window_shadow.end(), window.shadow.begin(), window.shadow.end());
-
-            m_paint->SetDraws(w, 0, Ir77PVPass::Shadow, window_shadow);
-
-            report.opaque_items = 0;
-            report.shadow_items = static_cast<std::uint32_t>(window_shadow.size());
-            report.transparent_items = 0;
-
-            for (std::uint32_t v = 0; v < window_views; v++) {
-                std::vector<Ir77PVDrawItem> view_opaque = m_culled ? culled_opaque[v] : opaque;
-                view_opaque.insert(view_opaque.end(), window.opaque.begin(), window.opaque.end());
-
-                std::vector<Ir77PVDrawItem> view_transparent{};
-                if (Failed(MakeTransparentDraws(window.cameras[v], view_transparent), result)) return result;
-                view_transparent.insert(view_transparent.end(), window.transparent.begin(), window.transparent.end());
-
-                m_paint->SetDraws(w, v, Ir77PVPass::Opaque, view_opaque);
-                m_paint->SetDraws(w, v, Ir77PVPass::Transparent, view_transparent);
-
-                report.opaque_items = static_cast<std::uint32_t>(view_opaque.size());
-                report.transparent_items += static_cast<std::uint32_t>(view_transparent.size());
-            }
-        }
+        for (std::size_t w = 0; w < frame.windows.size(); w++)
+            if (Failed(SubmitWindow(w, frame, opaque, shadow, shadow_count, report), result)) return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -494,7 +419,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
     // load steps
     // -------------------------------------------------------------------------------------------------------------------------------------
 
-    // Textures, materials, the streams and their material tables, the BLASes -- in that order. Fills asset as it goes, so a failure leaves
+    // Textures and materials, the streams and their material tables, the BLASes -- in that order. Fills asset as it goes, so a failure leaves
     // exactly what ReleaseAsset has to free.
     std::shared_ptr<IIr77Return const> UploadAsset(Ir77PVAssetBundle const& bundle, Ir77PVWorldAsset& asset, Ir77PVAssetReport& report) {
         std::shared_ptr<IIr77Return const> result{};
@@ -502,7 +427,49 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         asset.pipeline = bundle.pipeline;
         if (asset.pipeline == IR77PV_NO_PIPELINE && Failed(m_pipeline_cache->FindPipeline(Ir77PVPipelineKind::Static, asset.pipeline), result)) return result;
 
-        // textures -- bundle index -> Materials id; IR77PV_NO_TEXTURE where the upload failed (the placeholder stands in)
+        // every mesh's instance range -- what SetInstanceCount addresses (both streams of a mesh share it)
+        for (auto const* primitives : {&bundle.primitives, &bundle.primitives_skinned})
+            for (Ir77PVAssetPrimitive const& primitive : *primitives)
+                if (primitive.range.instance_count > 0) asset.instance_ranges[primitive.range.first_instance] = primitive.range.instance_count;
+
+        if (Failed(UploadAssetMaterials(bundle, asset), result)) return result;
+
+        std::vector<std::uint32_t> static_materials{};  // bundle material per static command
+        std::vector<std::uint32_t> posed_materials{};   // bundle material per posed command
+        if (Failed(UploadAssetStreams(bundle, asset, report, static_materials, posed_materials), result)) return result;
+
+        if (m_acceleration && Failed(BuildAssetRays(bundle, asset, static_materials, posed_materials), result)) return result;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The first edit of an asset -- its static commands never culled (their spheres no longer hold), its static BLASes (vertex path) rebuilt to
+    // refit every frame, so the rays follow the edit. The mesh path's BLASes stay as built.
+    std::shared_ptr<IIr77Return const> BeginAssetEdit(Ir77PVWorldAsset& asset) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        if (asset.has_static && !asset.mesh_path && Failed(m_geometry->UnboundBlock(asset.static_id), result)) return result;
+
+        if (m_acceleration && asset.has_static && !asset.mesh_path && asset.static_objects < asset.objects.size()) {
+            glm::uvec2& objects = asset.objects[asset.static_objects];
+
+            if (Failed(m_acceleration->ReleaseObjects(objects), result)) return result;
+            objects = glm::uvec2(0u);
+
+            if (Failed(m_acceleration->BuildBlockObjects(asset.static_id, true, asset.static_alpha, objects), result)) return result;
+            if (!asset.in_rays) m_acceleration->SetObjectsVisible(objects, false);
+        }
+
+        asset.edited = true;
+
+        return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVWorld: " + asset.name + " -- editing (unculled, rays refit every frame).");
+    }
+
+    // Textures -- bundle index -> Materials id in asset.texture_ids, IR77PV_NO_TEXTURE where the upload failed (the placeholder stands in).
+    // Materials -- one batch, bundle index -> Materials id in asset.material_ids.
+    std::shared_ptr<IIr77Return const> UploadAssetMaterials(Ir77PVAssetBundle const& bundle, Ir77PVWorldAsset& asset) {
+        std::shared_ptr<IIr77Return const> result{};
+
         std::vector<std::uint32_t>& texture_ids = asset.texture_ids;
         texture_ids.assign(bundle.textures.size(), IR77PV_NO_TEXTURE);
 
@@ -515,33 +482,45 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
                 texture_ids[t] = IR77PV_NO_TEXTURE;
         }
 
-        // materials -- one batch, bundle index -> Materials id
+        if (bundle.materials.empty()) return Ir77RETURN<Ir77OperationSucceeded>();
+
         auto const texture_id = [&](std::uint32_t const& index) { return index < texture_ids.size() ? texture_ids[index] : IR77PV_NO_TEXTURE; };
 
-        if (!bundle.materials.empty()) {
-            std::vector<Ir77PVMaterialConstants> constants(bundle.materials.size());
-            std::vector<Ir77PVMaterialTextures> textures(bundle.materials.size());
+        std::vector<Ir77PVMaterialConstants> constants(bundle.materials.size());
+        std::vector<Ir77PVMaterialTextures> textures(bundle.materials.size());
 
-            for (std::size_t m = 0; m < bundle.materials.size(); m++) {
-                constants[m] = bundle.materials[m].constants;
+        for (std::size_t m = 0; m < bundle.materials.size(); m++) {
+            constants[m] = bundle.materials[m].constants;
 
-                Ir77PVMaterialTextures const& in = bundle.materials[m].textures;
-                textures[m] = {texture_id(in.albedo), texture_id(in.normal), texture_id(in.orm), texture_id(in.emissive), texture_id(in.ao)};
-            }
-
-            if (Failed(m_materials->UploadMaterials(constants, textures, asset.material_ids), result)) return result;
+            Ir77PVMaterialTextures const& in = bundle.materials[m].textures;
+            textures[m] = {texture_id(in.albedo), texture_id(in.normal), texture_id(in.orm), texture_id(in.emissive), texture_id(in.ao)};
         }
+
+        if (Failed(m_materials->UploadMaterials(constants, textures, asset.material_ids), result)) return result;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The streams -> Geometry, each command with its material row:
+    //   static opaque     -- commands sorted into material runs; mesh path when bundle.use_mesh and the meshlets go up, vertex path otherwise
+    //   static BLEND      -- compacted into its own small vertex-path block (the mesh path has no Transparent pipeline), one command each
+    //   skinned           -- vertex path only: opaque runs, then one command per transparent object (SkinnedTransparent)
+    //   posed             -- the skinned opaque commands' compute-skinned copy (UploadPosedStream)
+    // static_materials / posed_materials = the bundle material of every static / posed command -- the BLASes' alpha rows.
+    std::shared_ptr<IIr77Return const> UploadAssetStreams(Ir77PVAssetBundle const& bundle, Ir77PVWorldAsset& asset, Ir77PVAssetReport& report,
+                                                          std::vector<std::uint32_t>& static_materials, std::vector<std::uint32_t>& posed_materials) {
+        std::shared_ptr<IIr77Return const> result{};
 
         auto const material_id = [&](std::uint32_t const& index) { return MaterialId(asset, index); };
         auto const blend = [&](std::uint32_t const& index) { return index < bundle.materials.size() && bundle.materials[index].blend; };
-        auto const mask = [&](std::uint32_t const& index) { return index < bundle.materials.size() && bundle.materials[index].mask; };
 
-        // primitives -> commands sorted by material (opaque) or one each (BLEND), first_instance moved into the asset's models[] range.
-        // commands get each command's bundle material in the same order -- the stream's material table.
+        // a primitive's command, first_instance moved into the asset's models[] range
         auto const command = [&](Ir77MeshRange const& r) {
             return VkDrawIndexedIndirectCommand{r.index_count, r.instance_count, r.index_offset, r.vertex_offset, r.first_instance + asset.instance_base};
         };
 
+        // the opaque primitives as commands sorted by material, each command's bundle material beside it (the stream's material table);
+        // returns the number of material runs
         auto const opaque_runs = [&](std::vector<Ir77PVAssetPrimitive> const& primitives, std::vector<VkDrawIndexedIndirectCommand>& commands,
                                      std::vector<std::uint32_t>& materials) {
             std::vector<std::size_t> order{};
@@ -563,15 +542,14 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             return runs;
         };
 
-        // ---- static opaque -- vertex path or mesh shading ----
+        // ---- static opaque ----
         Ir77PVBlockUpload upload{};
         upload.vertices = bundle.vertices;
         upload.indices = bundle.indices;
 
-        std::vector<std::uint32_t> static_materials{};
         report.opaque_runs = opaque_runs(bundle.primitives, upload.indirect_commands, static_materials);
 
-        // ---- static transparent -- compacted into its own small vertex-path block (the mesh path has no Transparent pipeline) ----
+        // ---- static BLEND ----
         Ir77PVBlockUpload blend_upload{};
         std::vector<std::uint32_t> blend_materials{};
 
@@ -590,16 +568,16 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
                 VkDrawIndexedIndirectCommand{r.index_count, r.instance_count, static_cast<std::uint32_t>(blend_upload.indices.size()),
                                              static_cast<std::int32_t>(blend_upload.vertices.size()), r.first_instance + asset.instance_base});
 
+            asset.blend_spans.push_back({static_cast<std::uint32_t>(r.vertex_offset), highest + 1, static_cast<std::uint32_t>(blend_upload.vertices.size())});
+
             blend_upload.indices.insert(blend_upload.indices.end(), bundle.indices.begin() + r.index_offset,
                                         bundle.indices.begin() + r.index_offset + r.index_count);
             blend_upload.vertices.insert(blend_upload.vertices.end(), bundle.vertices.begin() + r.vertex_offset,
                                          bundle.vertices.begin() + r.vertex_offset + highest + 1);
         }
 
-        // ---- skinned -- vertex path only: opaque runs, then one command per transparent object (SkinnedTransparent) ----
+        // ---- skinned ----
         Ir77PVBlockUpload skinned_upload{};
-        std::vector<std::uint32_t> posed_materials{};  // bundle material per posed command -- its BLASes' alpha rows
-
         skinned_upload.vertices_skinned = bundle.vertices_skinned;
         skinned_upload.indices_skinned = bundle.indices_skinned;
 
@@ -649,6 +627,8 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             asset.has_static = true;
         }
 
+        report.mesh_path = asset.mesh_path;
+
         if (!blend_upload.indirect_commands.empty()) {
             if (Failed(m_geometry->UploadBlock(blend_upload, asset.blend_id, true), result)) return result;
 
@@ -663,11 +643,16 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
             if (Failed(UploadPosedStream(skinned_upload, skinned_materials, asset, posed_materials), result)) return result;
         }
 
-        report.mesh_path = asset.mesh_path;
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
 
-        // ---- rays -- one BLAS per object of the static stream (either path) and of the posed stream (refit every frame). MASK materials go
-        // in alpha-tested: the material row per command, BINDLESS_NO_SLOT for everything opaque. Transparent objects stay out. ----
-        if (!m_acceleration) return Ir77RETURN<Ir77OperationSucceeded>();
+    // Rays -- one BLAS per object of the static stream (either path) and of the posed stream (refit every frame). MASK materials go in
+    // alpha-tested: the material row per command, BINDLESS_NO_SLOT for everything opaque. Transparent objects stay out.
+    std::shared_ptr<IIr77Return const> BuildAssetRays(Ir77PVAssetBundle const& bundle, Ir77PVWorldAsset& asset,
+                                                      std::vector<std::uint32_t> const& static_materials, std::vector<std::uint32_t> const& posed_materials) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        auto const mask = [&](std::uint32_t const& index) { return index < bundle.materials.size() && bundle.materials[index].mask; };
 
         auto const alpha_rows = [&](std::vector<std::uint32_t> const& materials, std::vector<std::uint32_t>& rows) {
             rows.assign(materials.size(), BINDLESS_NO_SLOT);
@@ -676,7 +661,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
                 if (!mask(materials[c])) continue;
 
                 Ir77PVMaterialData material{};
-                if (m_materials->GetMaterial(material_id(materials[c]), material)->ID() == GUIDIr77OperationSucceeded) rows[c] = material.row;
+                if (m_materials->GetMaterial(MaterialId(asset, materials[c]), material)->ID() == GUIDIr77OperationSucceeded) rows[c] = material.row;
             }
         };
 
@@ -686,18 +671,20 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         if (asset.has_static) {
             alpha_rows(static_materials, rows);
 
-            if (Failed(asset.mesh_path ? m_acceleration->BuildMeshlets(asset.static_id, rows, objects)
-                                       : m_acceleration->BuildBlock(asset.static_id, false, rows, objects),
+            if (Failed(asset.mesh_path ? m_acceleration->BuildMeshletObjects(asset.static_id, rows, objects)
+                                       : m_acceleration->BuildBlockObjects(asset.static_id, false, rows, objects),
                        result))
                 return result;
 
+            asset.static_objects = asset.objects.size();
+            asset.static_alpha = rows;
             asset.objects.push_back(objects);
         }
 
         if (asset.has_posed) {
             alpha_rows(posed_materials, rows);
 
-            if (Failed(m_acceleration->BuildBlock(asset.posed_id, true, rows, objects), result)) return result;
+            if (Failed(m_acceleration->BuildBlockObjects(asset.posed_id, true, rows, objects), result)) return result;
 
             asset.objects.push_back(objects);
         }
@@ -716,8 +703,13 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         posed_materials.clear();
         if (asset.skinned_opaque_count == 0) return Ir77RETURN<Ir77OperationSucceeded>();
 
-        if (m_pipeline_cache->FindPipeline(std::string{"skin.compute"}, asset.skin_compute)->ID() != GUIDIr77OperationSucceeded)
+        // a handle is issued for any name -- only resolving it says whether skin.compute exists
+        std::shared_ptr<IIr77PVPipelineCPT> skin{};
+        if (m_pipeline_cache->FindPipeline(std::string{"skin.compute"}, asset.skin_compute)->ID() != GUIDIr77OperationSucceeded ||
+            m_pipeline_cache->GetComputePipeline(asset.skin_compute, skin)->ID() != GUIDIr77OperationSucceeded) {
+            asset.skin_compute = IR77PV_NO_PIPELINE;
             return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVWorld: no skin.compute pipeline -- skinned geometry stays on the Skinned pipeline.");
+        }
 
         Ir77PVBlockUpload posed{};
         std::vector<glm::uvec2> jobs{};  // per posed vertex: source vertex, models[] slot
@@ -810,6 +802,9 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         for (std::uint32_t const texture : asset.texture_ids)
             if (texture != IR77PV_NO_TEXTURE) m_materials->DestroyTexture(texture);
 
+        // a later asset in these slots starts with every instance live
+        if (m_acceleration && asset.instance_count > 0) m_acceleration->SetSlotsLive(asset.instance_base, asset.instance_count, true);
+
         if (asset.instance_count > 0) m_instance_ranges.erase(asset.instance_base);
         if (asset.bone_count > 0) m_bone_ranges.erase(asset.bone_base);
 
@@ -846,7 +841,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         m_models.resize(models, glm::mat4(1.0f));
 
         // bone_base[] then the palettes -- the layout skinned.vert and skin.comp read at set 0 binding 4. The bases only change here.
-        m_bones_packed.assign(m_bone_high > 0 ? BONE_BASE_BYTES + static_cast<std::size_t>(m_bone_high) * sizeof(glm::mat4) : 0, 0);
+        m_bones_packed.assign(m_bone_high > 0 ? WORLD_BONE_BASE_BYTES + static_cast<std::size_t>(m_bone_high) * sizeof(glm::mat4) : 0, 0);
         if (m_bone_high == 0) return;
 
         std::uint32_t* const bases = reinterpret_cast<std::uint32_t*>(m_bones_packed.data());
@@ -858,6 +853,138 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
     // -------------------------------------------------------------------------------------------------------------------------------------
     // frame steps
     // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // Each asset in the frame: its transforms into models[], its bones into the palette, its id into m_present (sorted, once each). Assets in
+    // or out of the frame go in or out of the rays; the TLAS gets models[].
+    void WriteFrameAssets(Ir77PVFrame const& frame) {
+        m_present.clear();
+        m_outlines.clear();
+
+        for (Ir77PVFrameAsset const& entry : frame.assets) {
+            auto const found = m_assets.find(entry.asset);
+            if (found == m_assets.end()) continue;
+
+            Ir77PVWorldAsset const& asset = found->second;
+            m_present.push_back(entry.asset);
+            if (entry.outline.a > 0.0f) m_outlines.emplace_back(entry.asset, entry.outline);
+
+            std::size_t const transforms = std::min<std::size_t>(entry.transforms.size(), asset.instance_count);
+            std::copy_n(entry.transforms.begin(), transforms, m_models.begin() + asset.instance_base);
+
+            std::size_t const bones = std::min<std::size_t>(entry.bones.size(), asset.bone_count);
+            if (bones > 0)
+                std::memcpy(m_bones_packed.data() + WORLD_BONE_BASE_BYTES + static_cast<std::size_t>(asset.bone_base) * sizeof(glm::mat4), entry.bones.data(),
+                            bones * sizeof(glm::mat4));
+        }
+
+        std::sort(m_present.begin(), m_present.end());
+        m_present.erase(std::unique(m_present.begin(), m_present.end()), m_present.end());
+
+        if (!m_acceleration) return;
+
+        for (auto& [id, asset] : m_assets) {
+            bool const present = std::binary_search(m_present.begin(), m_present.end(), id);
+            if (present == asset.in_rays) continue;
+
+            for (glm::uvec2 const& objects : asset.objects) m_acceleration->SetObjectsVisible(objects, present);
+            asset.in_rays = present;
+        }
+
+        m_acceleration->SetInstanceTransforms(m_models);
+    }
+
+    // The frame's compute, once a frame: each present asset's skinning (skin.comp over its posed vertices), then the frame's own dispatches
+    std::vector<Ir77PVDispatch> MakeFrameDispatches(Ir77PVFrame const& frame) const {
+        std::vector<Ir77PVDispatch> dispatches{};
+
+        for (std::uint32_t const id : m_present) {
+            Ir77PVWorldAsset const& asset = m_assets.at(id);
+            if (!asset.has_posed) continue;
+
+            Ir77PVDispatch skin{};
+            skin.pipeline = asset.skin_compute;
+            skin.push.user = {asset.jobs_slot, asset.skin_source, asset.skin_destination, asset.posed_vertices, 0u, 0u, 0u, 0u};
+            skin.groups = SkinGroups(asset.posed_vertices);
+            dispatches.push_back(skin);
+        }
+
+        dispatches.insert(dispatches.end(), frame.dispatches.begin(), frame.dispatches.end());
+
+        return dispatches;
+    }
+
+    // The lights as set 0 binding 1 reads them -- the header (count), then Ir77PVLight[]
+    void PackLights(Ir77PVFrame const& frame) {
+        Ir77PVLightsHeader header{};
+        header.count = static_cast<std::uint32_t>(frame.lights.size());
+
+        m_lights_packed.resize(sizeof(header) + frame.lights.size() * sizeof(Ir77PVLight));
+        std::memcpy(m_lights_packed.data(), &header, sizeof(header));
+        if (!frame.lights.empty()) std::memcpy(m_lights_packed.data() + sizeof(header), frame.lights.data(), frame.lights.size() * sizeof(Ir77PVLight));
+    }
+
+    // One window -> Paint: its pass list when its view areas changed, the clear color, its frame data (cameras VIEW_STRIDE apart, lights,
+    // models[], shadow matrices, bones), the shadow list (the assets' then the window's own), and per view the opaque list (the assets' --
+    // opaque[view] when culled, opaque[0] otherwise -- then the window's own) and the transparent objects back to front from that view's eye.
+    // report = this window's counts (the last window's win).
+    std::shared_ptr<IIr77Return const> SubmitWindow(std::size_t const w, Ir77PVFrame const& frame, std::vector<std::vector<Ir77PVDrawItem>> const& opaque,
+                                                    std::vector<Ir77PVDrawItem> const& shadow, std::uint32_t const shadow_count, Ir77PVFrameReport& report) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        Ir77PVFrameWindow const& window = frame.windows[w];
+        std::uint32_t const views = static_cast<std::uint32_t>(window.cameras.size());
+        std::vector<glm::vec4> const areas = window.areas.empty() ? GridAreas(views) : window.areas;
+
+        if (areas != m_window_areas[w]) {
+            if (Failed(m_paint->SetPassList(w, MakePassList(areas)), result)) return result;
+
+            m_paint->ClearDraws(w);  // the views it no longer has
+            m_window_areas[w] = areas;
+        }
+
+        VkClearColorValue clear{};
+        std::memcpy(clear.float32, &window.clear_color, sizeof(clear.float32));
+        if (Failed(m_paint->SetClearColor(w, clear), result)) return result;
+
+        // one camera per view, VIEW_STRIDE apart -- where each view's frame table points
+        m_cameras_packed.assign(static_cast<std::size_t>(VIEW_STRIDE) * views, 0);
+        for (std::uint32_t v = 0; v < views; v++)
+            std::memcpy(m_cameras_packed.data() + static_cast<std::size_t>(VIEW_STRIDE) * v, &window.cameras[v], sizeof(Ir77PVCamera));
+
+        m_paint->SetFrameData(w, Ir77PVBufferSlot::Camera, m_cameras_packed.data(), m_cameras_packed.size());
+        m_paint->SetFrameData(w, Ir77PVBufferSlot::Lights, m_lights_packed.data(), m_lights_packed.size());
+
+        if (!m_models.empty()) m_paint->SetFrameData(w, Ir77PVBufferSlot::Instances, m_models.data(), m_models.size() * sizeof(glm::mat4));
+        if (shadow_count > 0) m_paint->SetFrameData(w, Ir77PVBufferSlot::ShadowMatrices, frame.shadow_matrices.data(), shadow_count * sizeof(glm::mat4));
+        if (m_bone_high > 0) m_paint->SetFrameData(w, Ir77PVBufferSlot::Bones, m_bones_packed.data(), m_bones_packed.size());
+
+        std::vector<Ir77PVDrawItem> window_shadow = shadow;
+        window_shadow.insert(window_shadow.end(), window.shadow.begin(), window.shadow.end());
+
+        m_paint->SetDraws(w, 0, Ir77PVPass::Shadow, window_shadow);
+
+        report = Ir77PVFrameReport{};
+        report.shadow_items = static_cast<std::uint32_t>(window_shadow.size());
+
+        for (std::uint32_t v = 0; v < views; v++) {
+            std::vector<Ir77PVDrawItem> view_opaque = opaque[opaque.size() > 1 ? v : 0];
+            view_opaque.insert(view_opaque.end(), m_outline_draws.begin(), m_outline_draws.end());  // after the models they outline
+            view_opaque.insert(view_opaque.end(), window.opaque.begin(), window.opaque.end());
+
+            std::vector<Ir77PVDrawItem> view_transparent{};
+            if (Failed(MakeTransparentDraws(window.cameras[v], view_transparent), result)) return result;
+            view_transparent.insert(view_transparent.end(), m_outline_blend_draws.begin(), m_outline_blend_draws.end());  // after every surface
+            view_transparent.insert(view_transparent.end(), window.transparent.begin(), window.transparent.end());
+
+            m_paint->SetDraws(w, v, Ir77PVPass::Opaque, view_opaque);
+            m_paint->SetDraws(w, v, Ir77PVPass::Transparent, view_transparent);
+
+            report.opaque_items += static_cast<std::uint32_t>(view_opaque.size());
+            report.transparent_items += static_cast<std::uint32_t>(view_transparent.size());
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
 
     // Every asset in the frame: one opaque draw per stream (each command finds its material in Geometry's command material table -- the item
     // carries it: pc.user[4] = table, pc.user[5] = first command in the pool, gl_DrawID = the command within the draw), and per shadow tile the same streams
@@ -933,6 +1060,98 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
         }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Each outlined asset's streams again through the outline pipelines. items (the opaque list, after the assets'): static / posed through
+    // outline.static, vertex-skinned through outline.skinned, the mesh path through outline.mesh (keeping its back-facing meshlets).
+    // blend_items (the transparent list, after every surface): each BLEND surface's mask (outline.mask.*), then their shells. pc.user[5] = the
+    // colour, RGBA8. A kind with no pipeline in the manifest, or a stream a draw can't be made for, is left out -- an outline is never worth
+    // failing a frame over.
+    void MakeOutlineDraws(std::vector<Ir77PVDrawItem>& items, std::vector<Ir77PVDrawItem>& blend_items) {
+        items.clear();
+        blend_items.clear();
+        if (m_outlines.empty()) return;
+
+        Ir77PVPipelineHandle const static_pipeline = OutlinePipeline(OUTLINE_STATIC_PIPELINE, m_outline_static);
+        Ir77PVPipelineHandle const skinned_pipeline = OutlinePipeline(OUTLINE_SKINNED_PIPELINE, m_outline_skinned);
+        Ir77PVPipelineHandle const mesh_pipeline = OutlinePipeline(OUTLINE_MESH_PIPELINE, m_outline_mesh);
+        Ir77PVPipelineHandle const mask_static_pipeline = OutlinePipeline(OUTLINE_MASK_STATIC_PIPELINE, m_outline_mask_static);
+        Ir77PVPipelineHandle const mask_skinned_pipeline = OutlinePipeline(OUTLINE_MASK_SKINNED_PIPELINE, m_outline_mask_skinned);
+
+        std::vector<Ir77PVDrawItem> blend_shells{};
+
+        for (auto const& [id, colour] : m_outlines) {
+            auto const found = m_assets.find(id);
+            if (found == m_assets.end()) continue;
+
+            Ir77PVWorldAsset const& asset = found->second;
+
+            glm::uvec4 const c{glm::clamp(colour, 0.0f, 1.0f) * 255.0f + 0.5f};
+            std::uint32_t const packed = c.r | (c.g << 8) | (c.b << 16) | (c.a << 24);  // packUnorm4x8's order -- r in the low byte
+
+            // both sides, whatever the material says
+            auto const add = [&](std::vector<Ir77PVDrawItem>& list, Ir77PVDrawItem& item, std::uint32_t const flags) {
+                item.double_sided = false;
+                item.back_faces = false;
+                item.user = {flags, packed, 0u, 0u};
+                list.push_back(item);
+            };
+
+            Ir77PVDrawItem item{};
+
+            if (asset.has_static && asset.mesh_path) {
+                if (mesh_pipeline != IR77PV_NO_PIPELINE &&
+                    m_geometry->MakeMeshletDrawItem(0, mesh_pipeline, asset.static_id, m_default_material, 0, asset.static_count, item)->ID() ==
+                        GUIDIr77OperationSucceeded)
+                    add(items, item, OUTLINE_KEEP_BACK_MESHLETS);
+            } else if (asset.has_static && static_pipeline != IR77PV_NO_PIPELINE) {
+                if (m_geometry->MakeIndirectDrawItem(0, static_pipeline, asset.static_id, m_default_material, 0, asset.static_count, false, item)->ID() ==
+                    GUIDIr77OperationSucceeded)
+                    add(items, item, 0u);
+            }
+
+            if (asset.has_posed) {
+                if (static_pipeline != IR77PV_NO_PIPELINE &&
+                    m_geometry->MakeIndirectDrawItem(0, static_pipeline, asset.posed_id, m_default_material, 0, asset.posed_count, false, item)->ID() ==
+                        GUIDIr77OperationSucceeded)
+                    add(items, item, 0u);
+            } else if (asset.skinned_opaque_count > 0 && skinned_pipeline != IR77PV_NO_PIPELINE) {
+                if (m_geometry->MakeIndirectDrawItem(0, skinned_pipeline, asset.skinned_id, m_default_material, 0, asset.skinned_opaque_count, true, item)
+                        ->ID() == GUIDIr77OperationSucceeded)
+                    add(items, item, 0u);
+            }
+
+            // BLEND surfaces -- static ones in the blend block, skinned ones in the skinned block past its opaque commands
+            for (Ir77PVWorldBlend const& draw : asset.blends) {
+                std::uint32_t const block = draw.skinned ? asset.skinned_id : asset.blend_id;
+                Ir77PVPipelineHandle const mask = draw.skinned ? mask_skinned_pipeline : mask_static_pipeline;
+                Ir77PVPipelineHandle const shell = draw.skinned ? skinned_pipeline : static_pipeline;
+                if (mask == IR77PV_NO_PIPELINE || shell == IR77PV_NO_PIPELINE) continue;
+
+                if (m_geometry->MakeIndirectDrawItem(0, mask, block, draw.material_id, draw.command, 1, draw.skinned, item)->ID() == GUIDIr77OperationSucceeded)
+                    add(blend_items, item, OUTLINE_MASK);
+
+                if (m_geometry->MakeIndirectDrawItem(0, shell, block, draw.material_id, draw.command, 1, draw.skinned, item)->ID() == GUIDIr77OperationSucceeded)
+                    add(blend_shells, item, 0u);
+            }
+        }
+
+        // every mask before any shell -- one surface's shell mustn't show through another's
+        blend_items.insert(blend_items.end(), blend_shells.begin(), blend_shells.end());
+    }
+
+    // An outline pipeline's handle, looked up once -- NO_PIPELINE when the manifest hasn't got it (FindPipeline issues a handle for any
+    // name, so the manifest entry is what says it's there)
+    Ir77PVPipelineHandle OutlinePipeline(char const* const name, Ir77PVOutlinePipeline& cached) {
+        if (cached.looked) return cached.handle;
+        cached.looked = true;
+
+        Ir77PVPipelineDesc desc{};
+        if (m_pipeline_cache->DescribeNamed(name, desc)->ID() != GUIDIr77OperationSucceeded ||
+            m_pipeline_cache->FindPipeline(std::string{name}, cached.handle)->ID() != GUIDIr77OperationSucceeded)
+            cached.handle = IR77PV_NO_PIPELINE;
+
+        return cached.handle;
     }
 
     // The cull bins for the assets in the frame -- one per (pipeline, vertex stream), opaque and shadow apart. Static geometry is frustum-tested;
@@ -1159,7 +1378,7 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
     std::shared_ptr<IIr77PVAcceleration> m_acceleration{};  // ray-query devices only
 
-    std::string m_device{};
+    std::string m_device_name{};
 
     std::uint32_t m_default_material{0};
 
@@ -1181,6 +1400,20 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
 
     std::vector<std::uint32_t> m_present{};  // the assets in this frame, sorted
 
+    // the frame's outlined assets and their colours, and their draws (every view's opaque list, after the assets')
+    std::vector<std::pair<std::uint32_t, glm::vec4>> m_outlines{};
+
+    std::vector<Ir77PVDrawItem> m_outline_draws{};
+
+    std::vector<Ir77PVDrawItem> m_outline_blend_draws{};  // the BLEND surfaces' masks then shells -- every view's transparent list, after the surfaces
+
+    // the outline pipelines, looked up on first use
+    Ir77PVOutlinePipeline m_outline_static{};
+    Ir77PVOutlinePipeline m_outline_skinned{};
+    Ir77PVOutlinePipeline m_outline_mesh{};
+    Ir77PVOutlinePipeline m_outline_mask_static{};
+    Ir77PVOutlinePipeline m_outline_mask_skinned{};
+
     // GPU culling
     bool m_culled{false};  // the bins are live and the cull pass runs -- false: no cull.compute, draw unculled
 
@@ -1199,7 +1432,5 @@ class Ir77PVWorld : public Ir77Enlisted, public IIr77PVWorld, public std::enable
     std::vector<std::uint8_t> m_bones_packed{};  // bone_base[WORLD_INSTANCE_CAPACITY] + palettes, as set 0 binding 4 expects
 
     std::vector<std::uint8_t> m_lights_packed{};  // Ir77PVLightsHeader + Ir77PVLight[], as set 0 binding 1 expects
-
-    static constexpr std::size_t BONE_BASE_BYTES{WORLD_INSTANCE_CAPACITY * sizeof(std::uint32_t)};
 };
 }  // namespace NSIr77PeregrineV

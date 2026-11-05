@@ -38,6 +38,7 @@
 // the using-directives below would make a bare Ir77Server ambiguous
 #include "../Windows/server/Ir77Server.hpp"
 #include "../PeregrineV/server/Ir77Server.hpp"
+#include "../Fields/server/Ir77Server.hpp"
 #include "../Scene/server/Ir77Server.hpp"
 
 #include "./types/Ir77Config.hpp"
@@ -129,6 +130,14 @@ class iridium {
         m_sinks["scene"] = [this](std::string json) { m_scene->Sink(std::move(json)); };
 
         m_scene->SetRenderer(m_peregrine);
+
+        // the fields module -- its own pipe; the scene draws it into the frame (direct link)
+        m_fields = std::make_shared<NSIr77Fields::Ir77Server>();
+        m_fields->SetPost([this](std::string json) { Post(std::move(json)); });
+        m_sinks["fields"] = [this](std::string json) { m_fields->Sink(std::move(json)); };
+
+        Require(m_fields->SetRenderer(m_peregrine), "Fields renderer.");
+        Require(m_scene->SetField(m_fields), "Scene fields.");
 
         // projects -- the folders under "projects"; the landing page lists them and opens one (project.open), which points the scene at it and
         // starts its database
@@ -238,6 +247,10 @@ class iridium {
         // the scene first -- it holds PeregrineV's server and must not call into it once the renderer is destroyed
         m_sinks.erase("scene");
         m_scene.reset();
+
+        // the fields after the scene (the scene holds it) -- before the renderer, whose server it holds
+        m_sinks.erase("fields");
+        m_fields.reset();
 
         if (m_peregrine) DispatchOperation("peregrinev", "renderer.destroy");  // a failure is in the return log; shutdown carries on
         m_peregrine.reset();
@@ -453,8 +466,8 @@ class iridium {
         std::string_view name_view{};
         std::string_view path_view{};
         std::string_view kind_view{};
-        if (root["from"].get(from_view) != simdjson::SUCCESS) from_view = {};          // no "from" -> no reply
-        if (root["op"].get(op_view) != simdjson::SUCCESS) op_view = {};                // no "op" -> "no op ''"
+        if (root["from"].get(from_view) != simdjson::SUCCESS) from_view = {};                   // no "from" -> no reply
+        if (root["op"].get(op_view) != simdjson::SUCCESS) op_view = {};                         // no "op" -> "no op ''"
         if (root.at_pointer("/args/name").get(name_view) != simdjson::SUCCESS) name_view = {};  // ops without a name
         if (root.at_pointer("/args/path").get(path_view) != simdjson::SUCCESS) path_view = {};  // project.open by folder
         if (root.at_pointer("/args/kind").get(kind_view) != simdjson::SUCCESS) kind_view = {};  // project.pick: folder / glb
@@ -607,6 +620,7 @@ class iridium {
             Ir77Json project = Ir77Json::Object();
             project["path"] = folder.string();
             Post(Message("scene", "scene.project", project));
+            Post(Message("fields", "field.project", project));
             Post(Message("scene", "scene.create", EmptySceneArgs()));
 
             data["name"] = m_project;
@@ -623,6 +637,7 @@ class iridium {
             project["path"] = "";
             Post(Message("scene", "scene.create", EmptySceneArgs()));
             Post(Message("scene", "scene.project", project));
+            Post(Message("fields", "field.project", project));
             return true;
         }
 
@@ -632,8 +647,9 @@ class iridium {
 
     // a folder name under "projects" -- letters, digits, space, _ . - ; never a path
     bool ValidProjectName(std::string const& name, std::string& error) const {
-        bool const ok = !name.empty() && name != "." && name != ".." && name.size() <= 64 &&
-                        std::all_of(name.begin(), name.end(), [](char const c) { return std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '_' || c == '.' || c == '-'; });
+        bool const ok = !name.empty() && name != "." && name != ".." && name.size() <= 64 && std::all_of(name.begin(), name.end(), [](char const c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '_' || c == '.' || c == '-';
+        });
 
         if (!ok) error = "a project name is letters, digits, spaces, _ . - (1 to 64)";
         return ok;
@@ -763,6 +779,8 @@ class iridium {
 
     // scene
     std::shared_ptr<NSIr77Scene::Ir77Server> m_scene{};  // the scene module
+
+    std::shared_ptr<NSIr77Fields::Ir77Server> m_fields{};  // the fields module -- the scene draws it into the frame
 
     bool m_upload_error_logged{false};
 

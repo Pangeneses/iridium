@@ -10,7 +10,7 @@
 //                                       b = its barycentrics
 //
 // The alpha test reads the hit triangle straight out of its object's vertex / index buffers by GPU address (IR77_FRAME.ray_objects names the
-// table, Ir77PVRayObject in Ir77PVTypes.hpp), and its material row through pc.materials -- the material table every lit draw carries.
+// table, Ir77PVRayObject in Ir77Types.hpp), and its material row through pc.materials -- the material table every lit draw carries.
 // =============================================================================================================================================
 #ifndef IR77_RAYTRACE_GLSL
 #define IR77_RAYTRACE_GLSL
@@ -27,7 +27,7 @@ layout(set = 0, binding = IR77_BINDING_ACCELERATION) uniform accelerationStructu
 #define IR77_HAS_TLAS (IR77_FRAME.tlas != 0xFFFFFFFFu)
 #define IR77_TLAS ir77_acceleration_structures[nonuniformEXT(IR77_FRAME.tlas)]
 
-// One BLAS -- must match Ir77PVRayObject in Ir77PVTypes.hpp. Addresses low / high.
+// One BLAS -- must match Ir77PVRayObject in Ir77Types.hpp. Addresses low / high.
 struct Ir77RayObject {
     uvec2 vertex_address;
     uvec2 index_address;

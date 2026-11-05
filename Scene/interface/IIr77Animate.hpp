@@ -15,13 +15,17 @@
 #include "IIr77Pose.hpp"
 #include "IIr77View.hpp"
 #include "IIr77Lighting.hpp"
-#include "IIr77Field.hpp"
 
 #include "../types/Ir77Stats.hpp"
+#include "../types/Ir77Types.hpp"
 
-#include "../../PeregrineV/types/Ir77PVTypes.hpp"
+#include "../../PeregrineV/types/Ir77Types.hpp"
 
 namespace NSIr77PeregrineV {
+class Ir77Server;
+}
+
+namespace NSIr77Fields {
 class Ir77Server;
 }
 
@@ -30,16 +34,19 @@ using namespace NSIr77PeregrineV;
 
 namespace NSIr77Scene {
 
-// The scene module's work -- owns and wires the entities (one Pose each), View, Lighting and Field; hands the renderer each file as one asset
+// The scene module's work -- owns and wires the entities (one Pose each), View and Lighting, and draws the fields module into its frame; hands the renderer each file as one asset
 // and each frame as one frame.
 //   SetRenderer / SetViewSize / SetPipeline -> CreateScene -> [ImportEntity / RemoveEntity / SetEntityTransform, AddLight / SetLight /
 //   RemoveLight] -> per frame: Update(dt) -> CreateFrame(seconds)
 typedef struct IIr77Animate : virtual public IIr77Enlisted {
     IIr77Animate() = default;
 
-    // The renderer's server -- where the scene's asset goes (CreateScene) and each frame goes (CreateFrame). Field gets it too (its
-    // program, buffers and draw items). Its forwarding methods are the only way into PeregrineV.
+    // The renderer's server -- where the scene's asset goes (CreateScene) and each frame goes (CreateFrame). Its forwarding methods are the
+    // only way into PeregrineV.
     virtual std::shared_ptr<IIr77Return const> SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) = 0;
+
+    // The fields module's server -- CreateFrame asks it for its dispatches, draws and box. Optional: without it the frame has no field.
+    virtual std::shared_ptr<IIr77Return const> SetField(std::shared_ptr<NSIr77Fields::Ir77Server> const& fields) = 0;
 
     // The windows CreateFrame fills, and their size -- the cameras' aspect. Any time; the next frame uses it.
     virtual std::shared_ptr<IIr77Return const> SetViewSize(std::size_t const& windows, int const& width, int const& height) = 0;
@@ -108,9 +115,90 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
     // An entity's Pose -- its clips and nodes
     virtual std::shared_ptr<IIr77Return const> GetPose(std::uint32_t const& entity, std::shared_ptr<IIr77Pose>& pose) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetView(std::shared_ptr<IIr77View>& view) = 0;
+    // The model in edit mode -- it stops playing and rests in its rest pose, then its vertices and edges are drawn over it from the next
+    // frame. EDIT_NO_ENTITY leaves edit mode, and the model plays what it played before, from the start.
+    virtual std::shared_ptr<IIr77Return const> SetEditEntity(std::uint32_t const& entity) = 0;
 
-    virtual std::shared_ptr<IIr77Return const> GetField(std::shared_ptr<IIr77Field>& field) = 0;
+    // The model drawn with the selection's outline (SELECT_OUTLINE_COLOR) from the next frame -- EDIT_NO_ENTITY: none
+    virtual std::shared_ptr<IIr77Return const> SetOutlineEntity(std::uint32_t const& entity) = 0;
+
+    // entity = the model in edit mode (EDIT_NO_ENTITY = none); points / edges = what its cage holds
+    virtual std::shared_ptr<IIr77Return const> GetEditEntity(std::uint32_t& entity, std::uint32_t& points, std::uint32_t& edges) const = 0;
+
+    // The clips the model in edit mode was playing (held until it leaves) -- empty when nothing is in edit mode
+    virtual std::shared_ptr<IIr77Return const> GetEditClips(std::vector<Ir77EditClip>& clips) const = 0;
+
+    // What a click in edit mode selects -- vertex / edge / face
+    virtual std::shared_ptr<IIr77Return const> SetEditMode(Ir77EditMode const& mode) = 0;
+
+    // A click in edit mode -- x, y fractions of window 0 from its top left; the nearest visible element under it, by the mode. extend: toggle
+    // it in the selection; otherwise it replaces the selection, and a miss clears it.
+    virtual std::shared_ptr<IIr77Return const> EditPick(float const& x, float const& y, bool const& extend, bool& hit) = 0;
+
+    // A box drag in edit mode -- (x0, y0) to (x1, y1), fractions of window 0, through the view it started in; extend adds, otherwise replaces
+    virtual std::shared_ptr<IIr77Return const> EditBoxSelect(float const& x0, float const& y0, float const& x1, float const& y1, bool const& extend,
+                                                             std::uint32_t& selected) = 0;
+
+    // Every vertex of the model in edit mode (true) or none
+    virtual std::shared_ptr<IIr77Return const> EditSelectAll(bool const& select) = 0;
+
+    // The edit mode's mode and how many vertices are selected
+    virtual std::shared_ptr<IIr77Return const> GetEditSelection(Ir77EditMode& mode, std::uint32_t& selected) const = 0;
+
+
+    // The cursor at x, y now -> the selection moved, free or along one world axis; delta = the move, world space
+    virtual std::shared_ptr<IIr77Return const> EditGrabMove(float const& x, float const& y, Ir77EditAxis const& axis, glm::vec3& delta) = 0;
+
+    // confirm: the move stays; otherwise it goes back
+    virtual std::shared_ptr<IIr77Return const> EditGrabEnd(bool const& confirm) = 0;
+
+    // What the gizmo does -- translate / rotate / scale; hot = the handle lit (hovered or held), GIZMO_NONE: none
+    virtual std::shared_ptr<IIr77Return const> SetGizmoMode(Ir77GizmoMode const& mode) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetGizmo(Ir77GizmoMode& mode, std::uint32_t& hot) const = 0;
+
+    // ---- object mode's gizmo -- the active entity's whole transform. Animate draws it and answers the drag; what moves is the caller's.
+
+    // shown at world (the active entity's world matrix: its pivot, and its own axes for a scale) from the next frame; hidden: none
+    virtual std::shared_ptr<IIr77Return const> SetObjectGizmo(bool const& shown, glm::mat4 const& world) = 0;
+
+    // x, y fractions of window 0 -- the handle under the cursor lights up (GIZMO_NONE: none)
+    virtual std::shared_ptr<IIr77Return const> ObjectGizmoHover(float const& x, float const& y, std::uint32_t& handle) = 0;
+
+    // a press on a handle starts a drag -- GIZMO_NONE: none, nothing starts
+    virtual std::shared_ptr<IIr77Return const> ObjectGizmoPress(float const& x, float const& y, std::uint32_t& handle) = 0;
+
+    // the drag since the press, one world matrix about its pivot; changed = not the identity
+    virtual std::shared_ptr<IIr77Return const> ObjectGizmoDrag(float const& x, float const& y, glm::mat4& world, bool& changed) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> ObjectGizmoEnd() = 0;
+
+    // The cursor over the viewport -- the gizmo handle under it lights up; handle = it (GIZMO_NONE: none)
+    virtual std::shared_ptr<IIr77Return const> EditGizmoHover(float const& x, float const& y, std::uint32_t& handle) = 0;
+
+    // A press on a gizmo handle starts a transform of the selection (driven by EditGrabMove / EditGrabEnd); handle = GIZMO_NONE: not on one
+    virtual std::shared_ptr<IIr77Return const> EditGizmoPress(float const& x, float const& y, std::uint32_t& handle) = 0;
+
+    // grabbing = a grab is under way; modified = the model in edit mode has a confirmed edit
+    virtual std::shared_ptr<IIr77Return const> GetEditGrab(bool& grabbing, bool& modified) const = 0;
+
+    // the last confirmed edit of the model in edit mode back / again; done = false: nothing there
+    virtual std::shared_ptr<IIr77Return const> EditUndo(bool& done) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> EditRedo(bool& done) = 0;
+
+    // how many steps undo and redo can go
+    virtual std::shared_ptr<IIr77Return const> GetEditHistory(std::uint32_t& undo, std::uint32_t& redo) const = 0;
+
+    // Every model with an edit its file doesn't hold yet -> its .glb rewritten (other entities on the file take the edit too). written = the
+    // files written; errors = one line each for those that weren't.
+    virtual std::shared_ptr<IIr77Return const> CommitEdits(std::vector<std::string>& written, std::vector<std::string>& errors) = 0;
+
+    // The model under a point of window 0 -- x, y fractions of the window from its top left, through the view there, as the last frame drew
+    // it. Nothing hit -> EDIT_NO_ENTITY.
+    virtual std::shared_ptr<IIr77Return const> PickEntity(float const& x, float const& y, std::uint32_t& entity) = 0;
+
+    virtual std::shared_ptr<IIr77Return const> GetView(std::shared_ptr<IIr77View>& view) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetLighting(std::shared_ptr<IIr77Lighting>& lighting) = 0;
 

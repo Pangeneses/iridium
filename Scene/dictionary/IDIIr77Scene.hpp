@@ -23,15 +23,14 @@ namespace NSIr77Scene {
 // ---- collection ---------------------------------------------------------------------------------------------------------------------------------
 inline Ir77GUID GUIDIIr77Scene{(static_cast<unsigned __int128>(0xFF3BBC89C52846C6) << 64) | 0xB7ABC31A43D1E78D};
 
-// ---- server -------------------------------------------------------------------------------------------------------------------------------------
-inline Ir77GUID GUIDIIr77Server{(static_cast<unsigned __int128>(0x96E5B37600A04548) << 64) | 0x94D2234479629D4D};
-
 // ---- runtime -- Animate coordinates its peers ---------------------------------------------------------------------------------------------------
 inline Ir77GUID GUIDIIr77Animate{(static_cast<unsigned __int128>(0xDDCC1637E91D4094) << 64) | 0x8FF28A0358B7731E};
 inline Ir77GUID GUIDIIr77Pose{(static_cast<unsigned __int128>(0x308F2E5EBF9F4F59) << 64) | 0xBC93710E13FB13DF};
 inline Ir77GUID GUIDIIr77View{(static_cast<unsigned __int128>(0xF932E0D060D54E7F) << 64) | 0xB3845F2DBB828B49};
 inline Ir77GUID GUIDIIr77Lighting{(static_cast<unsigned __int128>(0x78D08C0AC3324EFE) << 64) | 0x931E67E715BE0977};
-inline Ir77GUID GUIDIIr77Field{(static_cast<unsigned __int128>(0x1022E4384ABA49F8) << 64) | 0xAA273901BDB12A9F};
+inline Ir77GUID GUIDIIr77Graph{(static_cast<unsigned __int128>(0x3982CB189CD5CBC7) << 64) | 0xB03ECF3F5C97B911};
+inline Ir77GUID GUIDIIr77Edit{(static_cast<unsigned __int128>(0xBCAC0A48A1A45E0D) << 64) | 0xB4EBF5AEE460F751};
+inline Ir77GUID GUIDIIr77Gizmo{(static_cast<unsigned __int128>(0xB361D26C514BB0F1) << 64) | 0xADBA9EE1FC4EF9E3};
 
 // ---- glTF loader --------------------------------------------------------------------------------------------------------------------------------
 inline Ir77GUID GUIDIIr77Mesh{(static_cast<unsigned __int128>(0x559950D115614816) << 64) | 0x8B5D9A80F77061BF};
@@ -117,11 +116,11 @@ class IDIIr77Scene : public Ir77Enlisted, public IIr77Dictionary, public std::en
 
     // same order as the declarations above
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDIIr77Scene", &GUIDIIr77Scene},         {"GUIDIIr77Server", &GUIDIIr77Server},     {"GUIDIIr77Animate", &GUIDIIr77Animate},
-        {"GUIDIIr77Pose", &GUIDIIr77Pose},           {"GUIDIIr77View", &GUIDIIr77View},         {"GUIDIIr77Lighting", &GUIDIIr77Lighting},
-        {"GUIDIIr77Field", &GUIDIIr77Field},         {"GUIDIIr77Mesh", &GUIDIIr77Mesh},         {"GUIDIIr77Light", &GUIDIIr77Light},
-        {"GUIDIIr77Camera", &GUIDIIr77Camera},       {"GUIDIIr77Material", &GUIDIIr77Material}, {"GUIDIIr77Texture", &GUIDIIr77Texture},
-        {"GUIDIIr77Animation", &GUIDIIr77Animation},
+        {"GUIDIIr77Scene", &GUIDIIr77Scene},     {"GUIDIIr77Animate", &GUIDIIr77Animate},     {"GUIDIIr77Pose", &GUIDIIr77Pose},
+        {"GUIDIIr77View", &GUIDIIr77View},       {"GUIDIIr77Lighting", &GUIDIIr77Lighting},   {"GUIDIIr77Mesh", &GUIDIIr77Mesh},
+        {"GUIDIIr77Light", &GUIDIIr77Light},     {"GUIDIIr77Camera", &GUIDIIr77Camera},       {"GUIDIIr77Material", &GUIDIIr77Material},
+        {"GUIDIIr77Texture", &GUIDIIr77Texture}, {"GUIDIIr77Animation", &GUIDIIr77Animation}, {"GUIDIIr77Edit", &GUIDIIr77Edit},
+        {"GUIDIIr77Graph", &GUIDIIr77Graph},     {"GUIDIIr77Gizmo", &GUIDIIr77Gizmo},
     };
 };
 

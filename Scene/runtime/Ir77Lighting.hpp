@@ -27,7 +27,7 @@
 
 #include "../interface/IIr77Lighting.hpp"
 
-#include "../../PeregrineV/types/Ir77PVTypes.hpp"
+#include "../../PeregrineV/types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -37,7 +37,7 @@ namespace NSIr77Scene {
 // =============================================================================================================================================
 // Ir77Lighting -- the scene's lights and their shadows. Converts the file's lights to engine units (a default sun when there are none), picks
 // the shadow casters and builds their matrices over the scene's bounds (plus the field's while it is up). Never sees the renderer: Animate
-// hands the frame it fills to PeregrineV. Owned by Ir77Animate; Ir77Field reports its box here.
+// hands the frame it fills to PeregrineV. Owned by Ir77Animate; Animate passes it the fields module's box.
 //
 //   scene:     SetBounds -> CreateLights
 //   field:     SetFieldBounds -- the sun's box grows / shrinks with the field

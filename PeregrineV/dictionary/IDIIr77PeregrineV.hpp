@@ -23,8 +23,6 @@ namespace NSIr77PeregrineV {
 // Server Interfaces
 inline Ir77GUID GUIDIIr77PeregrineV{(static_cast<unsigned __int128>(0xA67D31AC1DDF4A7E) << 64) | 0xB628CE2A9641A8A2};
 
-inline Ir77GUID GUIDIIr77Server{(static_cast<unsigned __int128>(0x562C35C1E5AD4A9D) << 64) | 0x9823BEA12AD51C26};
-
 inline Ir77GUID GUIDIIr77PVInit{(static_cast<unsigned __int128>(0xB50E92E5971B4B7D) << 64) | 0x9EDAA232CC7A49F2};
 inline Ir77GUID GUIDIIr77PVInstance{(static_cast<unsigned __int128>(0xB1136C9B855A803E) << 64) | 0x7A5E662149F03242};
 inline Ir77GUID GUIDIIr77PVDevice{(static_cast<unsigned __int128>(0xE29226960D283AA0) << 64) | 0x55C041024DC6C909};
@@ -124,7 +122,6 @@ class IDIIr77PeregrineV : public Ir77Enlisted, public IIr77Dictionary, public st
     std::map<std::string, IIr77GUID const*> m_index{
         // Root
         {"GUIDIIr77PeregrineV", &GUIDIIr77PeregrineV},
-        {"GUIDIIr77Server", &GUIDIIr77Server},
 
         // Core Vulkan Objects
         {"GUIDIIr77PVInstance", &GUIDIIr77PVInstance},

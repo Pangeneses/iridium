@@ -12,7 +12,7 @@
 
 #include "IIr77Camera.hpp"
 
-#include "../../PeregrineV/types/Ir77PVTypes.hpp"
+#include "../../PeregrineV/types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;

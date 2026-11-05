@@ -25,7 +25,7 @@
 
 layout(local_size_x = 64) in;
 
-// must match GEOMETRY_CULL_CAPACITY / GEOMETRY_CULL_BINS in Ir77PVTypes.hpp
+// must match GEOMETRY_CULL_CAPACITY / GEOMETRY_CULL_BINS in Ir77Types.hpp
 const uint CULL_CAPACITY = 65536u;
 const uint CULL_BINS = 64u;
 

@@ -67,7 +67,7 @@
 #include "../runtime/Ir77PVPaint.hpp"
 #include "../runtime/Ir77PVCEF.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
@@ -267,7 +267,8 @@ class Ir77PVInit : public Ir77Enlisted, public IIr77PVInit, public std::enable_s
         m_world->SetPipelineCache(m_pipeline_caches.at(device_id));
         m_world->SetPaint(m_paint);
         if (m_acceleration) m_world->SetAcceleration(m_acceleration);
-        if (Failed(m_world->CreateWorld(device_name), result)) return result;
+        m_world->SetDeviceName(device_name);
+        if (Failed(m_world->CreateDefaultMaterial(), result)) return result;
 
         return Ir77RETURN<Ir77OperationSucceeded>(this, "Ir77PVInit: renderer created.");
     }

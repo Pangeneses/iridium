@@ -44,7 +44,7 @@ layout(set = 0, binding = IR77_BINDING_TEXTURES) uniform sampler2D ir77_textures
 //   imageStore(ir77_rgba8_images[nonuniformEXT(pc.user[0])], pixel, colour);
 #define IR77_STORAGE_IMAGE(Name, Format) layout(set = 0, binding = IR77_BINDING_STORAGE_IMAGES, Format) uniform image2D Name[]
 
-// Must match Ir77PVPushConstants in Ir77PVTypes.hpp byte for byte -- 128 bytes, every stage
+// Must match Ir77PVPushConstants in Ir77Types.hpp byte for byte -- 128 bytes, every stage
 layout(push_constant) uniform Ir77PushConstants {
     mat4 model;      // object transform for direct draws (instanced draws read the instance table instead)
     uint frame;      // buffer slot: this frame's globals (camera, lights, time)
@@ -59,7 +59,7 @@ layout(push_constant) uniform Ir77PushConstants {
 }
 pc;
 
-// ---- shared tables (Ir77PVTypes.hpp: Ir77PVFrameTable, Ir77PVMaterialRow) -------------------------------------------------------------------
+// ---- shared tables (Ir77Types.hpp: Ir77PVFrameTable, Ir77PVMaterialRow) -------------------------------------------------------------------
 
 // pc.frame -> this window's frame table for this frame: slots of the camera / lights / ... buffers and of the env / shadow textures
 struct Ir77FrameTable {
@@ -91,7 +91,7 @@ struct Ir77MaterialRow {
 IR77_BUFFER(ir77_materials, Ir77MaterialRow);
 #define IR77_MATERIAL ir77_materials[pc.materials].data[pc.material]
 
-// ---- frame data (Ir77PVTypes.hpp: Ir77PVCamera, Ir77PVLightsHeader + Ir77PVLight, instance mat4s, bone bases + palettes) ---------------------
+// ---- frame data (Ir77Types.hpp: Ir77PVCamera, Ir77PVLightsHeader + Ir77PVLight, instance mat4s, bone bases + palettes) ---------------------
 
 struct Ir77Camera {
     mat4 view;
@@ -110,7 +110,7 @@ layout(set = 0, binding = IR77_BINDING_TEXTURES) uniform sampler2DShadow ir77_sh
 // one view-projection per shadow-casting light (Ir77Light.shadow) -- pc.user[0] in the Shadow pass
 IR77_BUFFER(ir77_shadow_matrices, mat4);
 
-// the shadow map is an atlas of IR77_SHADOW_ATLAS_SIDE x IR77_SHADOW_ATLAS_SIDE tiles, tile i at (i % side, i / side) -- Ir77PVTypes.hpp SHADOW_ATLAS_SIDE
+// the shadow map is an atlas of IR77_SHADOW_ATLAS_SIDE x IR77_SHADOW_ATLAS_SIDE tiles, tile i at (i % side, i / side) -- Ir77Types.hpp SHADOW_ATLAS_SIDE
 #define IR77_SHADOW_ATLAS_SIDE 2u
 #define IR77_SHADOW_MATRIX(i) ir77_shadow_matrices[IR77_FRAME.shadow_matrices].data[i]
 

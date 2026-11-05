@@ -35,7 +35,7 @@
 
 #include "../runtime/Ir77PVInit.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
@@ -49,7 +49,7 @@ namespace NSIr77PeregrineV {
 //   pipe:        Sink(json) in, the post function out (SetPost) -- setup, teardown, queries and reloads are ops
 //   direct link: what can't travel as JSON or runs every frame --
 //                  setup / loop:       SetWindows, Tick, Draw
-//                  world:              LoadAsset, UnloadAsset, SubmitFrame
+//                  world:              LoadAsset, UnloadAsset, UpdateAssetVertices, SubmitFrame
 //                  overlay:            UploadOverlay, IsOverlayResizing
 //                  runtime resources:  CompileShader, ReloadShader, FindPipeline, Create / Upload / DestroyStorageBuffer, CreateCanvas,
 //                                      MakeProceduralDrawItem, Create / SetVisible / Release SurfaceAcceleration
@@ -91,7 +91,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     }
 
     std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIIr77Server>(uid);
+        seat_shared_uuid<&GUIDIIr77PeregrineV>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -110,7 +110,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == GUIDIIr77Server)
+        else if (iid == GUIDIIr77PeregrineV)
             obj = std::shared_ptr<Ir77Server>(shared_from_this(), static_cast<Ir77Server*>(this));
 
         else
@@ -153,6 +153,20 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (Failed(m_init->GetWorld(world), result)) return result;
 
         return world->UnloadAsset(asset_id);
+    }
+
+    // An edit -- a loaded asset's vertices rewritten from its bundle streams as they are now (LoadAsset's order and counts): [static_range.x,
+    // + .y) of vertices, [skinned_range.x, + .y) of vertices_skinned. Every stream they went to follows; the asset is never culled and its rays
+    // refit every frame from its first edit on. Not waited on -- in order ahead of the next frames.
+    std::shared_ptr<IIr77Return const> UpdateAssetVertices(std::uint32_t const& asset_id, std::vector<Ir77PVVertex> const& vertices,
+                                                           std::vector<Ir77PVVertexSkinned> const& vertices_skinned, glm::uvec2 const& static_range,
+                                                           glm::uvec2 const& skinned_range) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        std::shared_ptr<IIr77PVWorld> world{};
+        if (Failed(m_init->GetWorld(world), result)) return result;
+
+        return world->UpdateAssetVertices(asset_id, vertices, vertices_skinned, static_range, skinned_range);
     }
 
     // Once a frame, between Tick and Draw: cameras, lights, each asset's transforms and bones, the frame's own dispatches and draws.
@@ -300,7 +314,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (Failed(GetStorageBuffer(vertex_buffer, vertex), result)) return result;
         if (Failed(GetStorageBuffer(index_buffer, index), result)) return result;
 
-        return acceleration->CreateSurface(vertex, vertex_stride, vertex_count, index, triangle_count, surface);
+        return acceleration->CreateRaySurface(vertex, vertex_stride, vertex_count, index, triangle_count, surface);
     }
 
     // In the rays or not, from the next frame
@@ -312,7 +326,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         std::shared_ptr<IIr77PVAcceleration> acceleration{};
         if (Failed(m_init->GetAcceleration(acceleration), result)) return result;
 
-        return acceleration->SetSurfaceVisible(surface, visible);
+        return acceleration->SetRaySurfaceVisible(surface, visible);
     }
 
     // Out of the rays for good (waits for the device) -- before destroying its storage buffers
@@ -324,7 +338,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         std::shared_ptr<IIr77PVAcceleration> acceleration{};
         if (Failed(m_init->GetAcceleration(acceleration), result)) return result;
 
-        return acceleration->ReleaseSurface(surface);
+        return acceleration->ReleaseRaySurface(surface);
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------

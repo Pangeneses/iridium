@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -213,8 +213,8 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
     // -------------------------------------------------------------------------------------------------------------------------------------
    private:
     std::shared_ptr<IIr77Return const> DefineDynamicState() {
-        m_dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT,          VK_DYNAMIC_STATE_SCISSOR,           VK_DYNAMIC_STATE_CULL_MODE,
-                            VK_DYNAMIC_STATE_FRONT_FACE,        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        m_dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT,        VK_DYNAMIC_STATE_SCISSOR,           VK_DYNAMIC_STATE_CULL_MODE,
+                            VK_DYNAMIC_STATE_FRONT_FACE,      VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
                             VK_DYNAMIC_STATE_DEPTH_COMPARE_OP};
 
         m_dynamic_state_info = VkPipelineDynamicStateCreateInfo{};
@@ -246,27 +246,26 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
             locations = reflection.inputs;
         }
 
-        bool const skinned{std::find_if(locations.begin(), locations.end(), [](std::uint32_t const l) {
-                               return l == VERTEX_LOCATION_JOINTS || l == VERTEX_LOCATION_WEIGHTS;
-                           }) != locations.end()};
+        bool const skinned{std::find_if(locations.begin(), locations.end(),
+                                        [](std::uint32_t const l) { return l == VERTEX_LOCATION_JOINTS || l == VERTEX_LOCATION_WEIGHTS; }) != locations.end()};
 
         m_binding_description.stride = skinned ? sizeof(Ir77PVVertexSkinned) : sizeof(Ir77PVVertex);
 
         for (auto const location : locations) {
             switch (location) {
                 case VERTEX_LOCATION_POSITION:
-                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32_SFLOAT,
-                                                                 skinned ? offsetof(Ir77PVVertexSkinned, position) : offsetof(Ir77PVVertex, position)));
+                    m_attribute_descriptions.push_back(
+                        Attribute(location, VK_FORMAT_R32G32B32_SFLOAT, skinned ? offsetof(Ir77PVVertexSkinned, position) : offsetof(Ir77PVVertex, position)));
                     break;
 
                 case VERTEX_LOCATION_NORMAL:
-                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32_SFLOAT,
-                                                                 skinned ? offsetof(Ir77PVVertexSkinned, normal) : offsetof(Ir77PVVertex, normal)));
+                    m_attribute_descriptions.push_back(
+                        Attribute(location, VK_FORMAT_R32G32B32_SFLOAT, skinned ? offsetof(Ir77PVVertexSkinned, normal) : offsetof(Ir77PVVertex, normal)));
                     break;
 
                 case VERTEX_LOCATION_UV:
-                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32_SFLOAT,
-                                                                 skinned ? offsetof(Ir77PVVertexSkinned, uv) : offsetof(Ir77PVVertex, uv)));
+                    m_attribute_descriptions.push_back(
+                        Attribute(location, VK_FORMAT_R32G32_SFLOAT, skinned ? offsetof(Ir77PVVertexSkinned, uv) : offsetof(Ir77PVVertex, uv)));
                     break;
 
                 case VERTEX_LOCATION_JOINTS:
@@ -278,8 +277,8 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
                     break;
 
                 case VERTEX_LOCATION_TANGENT:
-                    m_attribute_descriptions.push_back(Attribute(location, VK_FORMAT_R32G32B32A32_SFLOAT,
-                                                                 skinned ? offsetof(Ir77PVVertexSkinned, tangent) : offsetof(Ir77PVVertex, tangent)));
+                    m_attribute_descriptions.push_back(
+                        Attribute(location, VK_FORMAT_R32G32B32A32_SFLOAT, skinned ? offsetof(Ir77PVVertexSkinned, tangent) : offsetof(Ir77PVVertex, tangent)));
                     break;
 
                 default:
@@ -423,8 +422,7 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
         if (!m_desc.IsMesh() && m_desc.vertex == IR77PV_NO_SHADER)
             return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: the description has no vertex or mesh stage.");
 
-        if (!m_desc.IsMesh() && m_desc.task != IR77PV_NO_SHADER)
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: a task stage needs a mesh stage.");
+        if (!m_desc.IsMesh() && m_desc.task != IR77PV_NO_SHADER) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: a task stage needs a mesh stage.");
 
         auto result = DefineStageInterface();
         if (result->ID() != GUIDIr77OperationSucceeded) return result;
@@ -479,8 +477,8 @@ class Ir77PVPipeline : public Ir77Enlisted, public IIr77PVPipeline, public std::
 
         for (auto const location : consumer.inputs)
             if (!std::binary_search(producer.outputs.begin(), producer.outputs.end(), location))
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipeline: the fragment shader reads location " + std::to_string(location) +
-                                                               ", which the vertex / mesh shader doesn't write.");
+                return Ir77RETURN<Ir77NotConfigured>(
+                    this, "Ir77PVPipeline: the fragment shader reads location " + std::to_string(location) + ", which the vertex / mesh shader doesn't write.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }

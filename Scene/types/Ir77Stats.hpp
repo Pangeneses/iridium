@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "../PeregrineV/types/Ir77PVTypes.hpp"  // Ir77PVLight -- same include iridium.hpp uses
+#include "../PeregrineV/types/Ir77Types.hpp"  // Ir77PVLight -- same include iridium.hpp uses
 
 namespace NSIr77Scene {
 

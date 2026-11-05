@@ -14,7 +14,7 @@
 #include "IIr77PVAcceleration.hpp"
 #include "IIr77PVPaint.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
@@ -22,7 +22,7 @@ namespace NSIr77PeregrineV {
 
 // What gets drawn: assets (LoadAsset -- textures, materials, geometry, BLASes, each in its own range of models[] and joint matrices) and,
 // every frame, the frame (SubmitFrame -- cameras, lights, transforms, bones -> frame data, skinning, draw lists, TLAS transforms).
-//   Ir77PVInit wires it: SetTransfer / SetMaterials / SetGeometry / SetPipelineCache / SetPaint / [SetAcceleration] -> CreateWorld
+//   Ir77PVInit wires it: SetTransfer / SetMaterials / SetGeometry / SetPipelineCache / SetPaint / [SetAcceleration] -> CreateDefaultMaterial
 struct IIr77PVWorld : virtual public IIr77Enlisted {
     IIr77PVWorld() = default;
 
@@ -42,8 +42,11 @@ struct IIr77PVWorld : virtual public IIr77Enlisted {
     // Ray-query devices only -- assets get BLASes, the TLAS follows models[]
     virtual std::shared_ptr<IIr77Return const> SetAcceleration(std::shared_ptr<IIr77PVAcceleration> acceleration) = 0;
 
-    // The grey default material -- primitives without one, and every procedural draw. device = the GPU's name, for the asset reports.
-    virtual std::shared_ptr<IIr77Return const> CreateWorld(std::string const& device) = 0;
+    // The GPU's name -- for the asset reports
+    virtual std::shared_ptr<IIr77Return const> SetDeviceName(std::string const& device_name) = 0;
+
+    // The grey default material -- primitives without one, and the placeholder material of procedural and multi-command draw items
+    virtual std::shared_ptr<IIr77Return const> CreateDefaultMaterial() = 0;
 
     // ---- assets ------------------------------------------------------------------------------------------------------------------------------
 
@@ -52,6 +55,17 @@ struct IIr77PVWorld : virtual public IIr77Enlisted {
 
     // Its geometry, tables and BLASes freed, its models[] and joint ranges back for the next asset. Its draws go with the next SubmitFrame.
     virtual std::shared_ptr<IIr77Return const> UnloadAsset(std::uint32_t const& asset_id) = 0;
+
+    // An edit -- the asset's vertices rewritten from the bundle's streams as they are now (LoadAsset's order and counts): [static_range.x,
+    // + .y) of vertices, [skinned_range.x, + .y) of vertices_skinned, into every stream they went to. Not waited on.
+    virtual std::shared_ptr<IIr77Return const> UpdateAssetVertices(std::uint32_t const& asset_id, std::vector<Ir77PVVertex> const& vertices,
+                                                                   std::vector<Ir77PVVertexSkinned> const& vertices_skinned, glm::uvec2 const& static_range,
+                                                                   glm::uvec2 const& skinned_range) = 0;
+
+    // A mesh's live instances -- the instance range starting at first_instance (asset-local). The capacity is that range's instance_count at
+    // load; count of them draw and are in the rays, the rest stay reserved and hidden. Past the capacity fails.
+    virtual std::shared_ptr<IIr77Return const> SetInstanceCount(std::uint32_t const& asset_id, std::uint32_t const& first_instance,
+                                                                std::uint32_t const& count) = 0;
 
     // ---- per frame ---------------------------------------------------------------------------------------------------------------------------
 

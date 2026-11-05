@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <stdexcept>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -20,13 +22,30 @@
 #endif
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
+
+#include "../dictionary/IDIIr77Scene.hpp"
+#include "../dictionary/IDIr77Scene.hpp"
+
+#include "../../Ir77RT/types/Ir77Types.hpp"
+
+#include "../../Ir77RT/interface/IIr77Enlisted.hpp"
+#include "../../Ir77RT/interface/IIr77Return.hpp"
+
+#include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
+#include "../../Ir77RT/runtime/Ir77Return.hpp"
+
 #include "../interface/IIr77Animate.hpp"
-#include "../types/Ir77Graph.hpp"
+#include "../interface/IIr77Graph.hpp"
+
+#include "../types/Ir77Types.hpp"
+
+using namespace NSIr77RT;
 
 namespace NSIr77Scene {
 
 // =============================================================================================================================================
-// Ir77Graph -- the scene graph's working copy (types/Ir77Graph.hpp). The scene server owns it; Animate does the drawing: a model entity is an
+// Ir77Graph -- the scene graph's working copy (types/Ir77Types.hpp). The scene server owns it; Animate does the drawing: a model entity is an
 // Animate entity, a light entity a world light. Every change here lands on Animate at once -- world transforms composed down the tree,
 // visibility too -- so what's drawn is always the graph. Saving and loading are the UI's (it reads Dump, it replays Add).
 //
@@ -35,20 +54,81 @@ namespace NSIr77Scene {
 //   Move(id, parent, order)      re-parent / re-order -- never under itself
 //   Set(entity)                  name, transform, visibility, payload -- the whole core and payload replaced
 //   Clear()                      empty -- the scene server calls it with scene.create (Animate's runtime ids start over)
-// Errors come back as a message (error) and false.
+// Errors come back as a message (error) and an Ir77NotConfigured return.
 // =============================================================================================================================================
-class Ir77Graph {
+class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_shared_from_this<Ir77Graph> {
    public:
-    Ir77Graph() : m_random{std::random_device{}()} {}
+    Ir77Graph() : m_random{std::random_device{}()} {
+        try {
+            m_enlisted_uuid.Generate();
+        } catch (std::invalid_argument a) {
+            throw a;
+        }
 
-    void SetAnimate(std::shared_ptr<IIr77Animate> const& animate) { m_animate = animate; }
+        m_enlisted = std::chrono::system_clock::now();
+    }
 
-    void Clear() { m_entities.clear(); }
+   public:
+    std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIr77Graph>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> CollectionUuid(std::shared_ptr<IIr77GUID const>& uid) const {
+        seat_shared_uuid<&GUIDIr77Scene>(uid);
+
+        if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    Ir77GUID QueryInterface(Ir77GUID iid, std::shared_ptr<void>& obj) {
+        if (iid == GUIDIIr77Enlisted)
+            obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
+
+        else if (iid == GUIDIIr77Graph)
+            obj = std::shared_ptr<IIr77Graph>(shared_from_this(), static_cast<IIr77Graph*>(this));
+
+        else if (iid == GUIDIr77Graph)
+            obj = std::shared_ptr<Ir77Graph>(shared_from_this(), static_cast<Ir77Graph*>(this));
+
+        else
+            return GUIDQueryFailed;
+
+        return GUIDQuerySucceeded;
+    }
+
+   public:
+    std::shared_ptr<IIr77Return const> SetAnimate(std::shared_ptr<IIr77Animate> const& animate) {
+        m_animate = animate;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    std::shared_ptr<IIr77Return const> Clear() {
+        m_entities.clear();
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
 
     // A new entity. A model loads path (the scene server resolved it); a light becomes a world light. order 0 on a new entity = after its
     // siblings.
-    bool Add(Ir77GraphEntity entity, std::string const& path, bool const use_mesh, std::string& id, std::string& error) {
+    std::shared_ptr<IIr77Return const> Add(Ir77GraphEntity const& added, std::string const& path, bool const& use_mesh, std::string& id,
+                                           std::string& error) {
         if (!m_animate) return Fail("no Animate", error);
+
+        Ir77GraphEntity entity = added;
 
         if (entity.id.empty()) {
             entity.id = NewId();
@@ -86,11 +166,11 @@ class Ir77Graph {
         m_entities.emplace(id, std::move(entity));
 
         Apply(id);
-        return true;
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // It and everything under it -- children first
-    bool Remove(std::string const& id, std::string& error) {
+    std::shared_ptr<IIr77Return const> Remove(std::string const& id, std::string& error) {
         if (!m_entities.count(id)) return Fail("no entity " + id, error);
 
         std::vector<std::string> doomed{};
@@ -107,11 +187,11 @@ class Ir77Graph {
             m_entities.erase(*it);
         }
 
-        return true;
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // parent '' = the scene root; order 0 = after the new siblings
-    bool Move(std::string const& id, std::string const& parent, std::uint32_t const order, std::string& error) {
+    std::shared_ptr<IIr77Return const> Move(std::string const& id, std::string const& parent, std::uint32_t const& order, std::string& error) {
         auto const found = m_entities.find(id);
         if (found == m_entities.end()) return Fail("no entity " + id, error);
         if (!parent.empty() && !m_entities.count(parent)) return Fail("no parent " + parent, error);
@@ -124,11 +204,11 @@ class Ir77Graph {
         found->second.order = order == 0 ? NextOrder(parent) : order;
 
         Apply(id);
-        return true;
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // Core and payload from changed -- id, kind and parent stay (Move re-parents); a light's settings go to its world light
-    bool Set(Ir77GraphEntity const& changed, std::string& error) {
+    std::shared_ptr<IIr77Return const> Set(Ir77GraphEntity const& changed, std::string& error) {
         auto const found = m_entities.find(changed.id);
         if (found == m_entities.end()) return Fail("no entity " + changed.id, error);
 
@@ -143,20 +223,20 @@ class Ir77Graph {
         entity.camera = changed.camera;
 
         Apply(entity.id);
-        return true;
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    bool Get(std::string const& id, Ir77GraphEntity& entity) const {
+    std::shared_ptr<IIr77Return const> Get(std::string const& id, Ir77GraphEntity& entity) const {
         auto const found = m_entities.find(id);
-        if (found == m_entities.end()) return false;
+        if (found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this);  // quiet -- asking is how callers test for an entity
 
         entity = found->second;
-        return true;
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // Every entity, parents before children, siblings in order -- what a dump writes and a load replays
-    std::vector<Ir77GraphEntity const*> Ordered() const {
-        std::vector<Ir77GraphEntity const*> ordered{};
+    std::shared_ptr<IIr77Return const> Ordered(std::vector<Ir77GraphEntity const*>& ordered) const {
+        ordered.clear();
 
         std::function<void(std::string const&)> walk = [&](std::string const& parent) {
             for (Ir77GraphEntity const* child : Children(parent)) {
@@ -166,19 +246,45 @@ class Ir77Graph {
         };
 
         walk("");
-        return ordered;
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // The model entity behind an Animate entity -- '' when none
-    std::string FindModel(std::uint32_t const runtime) const {
-        for (auto const& [id, entity] : m_entities)
-            if (entity.kind == Ir77GraphKind::Model && entity.runtime == runtime) return id;
+    std::shared_ptr<IIr77Return const> FindModel(std::uint32_t const& runtime, std::string& id) const {
+        id.clear();
 
-        return {};
+        for (auto const& [key, entity] : m_entities)
+            if (entity.kind == Ir77GraphKind::Model && entity.runtime == runtime) {
+                id = key;
+                break;
+            }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // Where it sits in the world -- its parents' transforms, then its own
-    glm::mat4 World(std::string const& id) const {
+    std::shared_ptr<IIr77Return const> World(std::string const& id, glm::mat4& world) const {
+        if (!m_entities.count(id)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Graph: no entity " + id);
+
+        world = WorldOf(id);
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // Shown only when it and every parent are
+    std::shared_ptr<IIr77Return const> Shown(std::string const& id, bool& shown) const {
+        if (!m_entities.count(id)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Graph: no entity " + id);
+
+        shown = ShownOf(id);
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    static bool ValidId(std::string const& id) {
+        return id.size() == GRAPH_ID_LENGTH && std::all_of(id.begin(), id.end(), [](char const c) { return std::isxdigit(static_cast<unsigned char>(c)); });
+    }
+
+   private:
+    // the walks behind World / Shown -- id is known to exist
+    glm::mat4 WorldOf(std::string const& id) const {
         glm::mat4 world{1.0f};
 
         for (std::string at = id; !at.empty();) {
@@ -190,8 +296,7 @@ class Ir77Graph {
         return world;
     }
 
-    // Shown only when it and every parent are
-    bool Shown(std::string const& id) const {
+    bool ShownOf(std::string const& id) const {
         for (std::string at = id; !at.empty();) {
             Ir77GraphEntity const& entity = m_entities.at(at);
             if (!entity.visible) return false;
@@ -201,11 +306,6 @@ class Ir77Graph {
         return true;
     }
 
-    static bool ValidId(std::string const& id) {
-        return id.size() == GRAPH_ID_LENGTH && std::all_of(id.begin(), id.end(), [](char const c) { return std::isxdigit(static_cast<unsigned char>(c)); });
-    }
-
-   private:
     // it and everything under it onto Animate -- world transforms and visibility
     void Apply(std::string const& id) {
         std::vector<std::string> subtree{};
@@ -218,9 +318,9 @@ class Ir77Graph {
             glm::vec3 t{0.0f};
             glm::quat r{1.0f, 0.0f, 0.0f, 0.0f};
             glm::vec3 s{1.0f};
-            Decompose(World(at), t, r, s);
+            Decompose(WorldOf(at), t, r, s);
 
-            bool const shown = Shown(at);
+            bool const shown = ShownOf(at);
 
             if (entity.kind == Ir77GraphKind::Model) {
                 m_animate->SetEntityTransform(entity.runtime, t, r, s);
@@ -284,9 +384,9 @@ class Ir77Graph {
         r = glm::normalize(r);
     }
 
-    static bool Fail(std::string const& message, std::string& error) {
+    std::shared_ptr<IIr77Return const> Fail(std::string const& message, std::string& error) const {
         error = message;
-        return false;
+        return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Graph: " + message);
     }
 
     std::shared_ptr<IIr77Animate> m_animate{};

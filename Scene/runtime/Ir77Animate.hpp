@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <limits>
 #include <map>
@@ -43,19 +45,27 @@
 #include "../interface/IIr77Pose.hpp"
 #include "../interface/IIr77View.hpp"
 #include "../interface/IIr77Lighting.hpp"
-#include "../interface/IIr77Field.hpp"
+#include "../interface/IIr77Edit.hpp"
+#include "../interface/IIr77Gizmo.hpp"
 #include "../interface/IIr77Animate.hpp"
 
 #include "./Ir77Pose.hpp"
 #include "./Ir77View.hpp"
 #include "./Ir77Lighting.hpp"
-#include "./Ir77Field.hpp"
+#include "./Ir77Edit.hpp"
+#include "./Ir77Gizmo.hpp"
+#include "./Ir77Skinning.hpp"
+
+#include "../services/Ir77Flatten.hpp"
 
 #include "../types/Ir77Stats.hpp"
-#include "../types/Ir77Field.hpp"
+#include "../types/Ir77Types.hpp"
 
 // the direct link -- Scene -> PeregrineV's server, one way: Scene calls it, PeregrineV never sees Scene
 #include "../../PeregrineV/server/Ir77Server.hpp"
+
+// the fields module -- Scene -> Fields, one way: the frame asks it for its dispatches, draws and box
+#include "../../Fields/server/Ir77Server.hpp"
 
 using namespace NSIr77RT;
 using namespace NSIr77PeregrineV;
@@ -64,10 +74,10 @@ namespace NSIr77Scene {
 
 // =============================================================================================================================================
 // Ir77Animate -- the scene module's work, owned by its server (Ir77Server) and reached only through it. The lifetime controller for the
-// scene's peers -- the entities (one Pose each: a file, its node tree and animation), View (the cameras), Lighting (lights and shadows) and
-// Field (the compute visual) -- which it creates and wires; and the one place that talks to all of them at once:
+// scene's peers -- the entities (one Pose each: a file, its node tree and animation), View (the cameras) and Lighting (lights and
+// shadows) -- which it creates and wires; and the one place that talks to all of them at once (plus the fields module, when set):
 //
-//   setup:     SetRenderer / SetViewSize -> CreateScene(path, use_mesh, lights, cameras) -- every entity and light goes, the
+//   setup:     SetRenderer / SetField / SetViewSize -> CreateScene(path, use_mesh, lights, cameras) -- every entity and light goes, the
 //              file becomes entity 0: Pose parses, the file goes to the renderer as one asset bundle (LoadAsset), its lights become world
 //              lights, View takes its cameras and frames it
 //   entities:  ImportEntity(path, lights) -> its id / RemoveEntity / SetEntityTransform -- any number of files, each its own asset in the
@@ -76,8 +86,8 @@ namespace NSIr77Scene {
 //              where the file had it -- it doesn't follow the entity). Lighting gets them all, shadow casters over every entity where it sits,
 //              on every change
 //   per frame: Update(dt) -> CreateFrame(seconds) -- one Ir77PVFrame: cameras (View), every entity's transforms and bones (its Pose), lights
-//              and shadow matrices (Lighting), the field's dispatches and draws (Field) -> SubmitFrame
-//   the UI:    the scene server reaches the peers through GetPose(entity) / GetView / GetField for its ops
+//              and shadow matrices (Lighting), the field's dispatches and draws (the fields server) -> SubmitFrame
+//   the UI:    the scene server reaches the peers through GetPose(entity) / GetView for its ops
 //
 // The renderer makes the draws, the material tables, the skinning and the acceleration structures -- the scene only says what is there.
 // =============================================================================================================================================
@@ -96,6 +106,8 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         std::vector<glm::mat4> transforms{};  // its instances, in its own slot order
         std::vector<glm::mat4> bones{};       // its joint palettes, back to back
         bool visible{true};                   // false -- left out of the frame (SetEntityVisible)
+        std::uint32_t instance_base{0};       // its first models[] slot -- where LoadAsset put it (the edit cage is placed through it)
+        bool geometry_dirty{false};           // an edit its file doesn't hold yet -- CommitEdits writes it
     };
 
     // one world light -- what it is (type, color, intensity in glTF units: lux / candela, range, cones) and where it sits; it shines down its
@@ -118,12 +130,12 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         m_enlisted = std::chrono::system_clock::now();
 
-        // the peers -- they never see Animate; the field reports its box to Lighting and reads its shadow count. Entities come with the scene.
+        // the peers -- they never see Animate. Entities come with the scene.
         m_view = std::static_pointer_cast<IIr77View>(std::make_shared<Ir77View>());
         m_lighting = std::static_pointer_cast<IIr77Lighting>(std::make_shared<Ir77Lighting>());
-        m_field = std::static_pointer_cast<IIr77Field>(std::make_shared<Ir77Field>());
-
-        m_field->SetLighting(m_lighting);
+        m_edit = std::static_pointer_cast<IIr77Edit>(std::make_shared<Ir77Edit>());
+        m_gizmo = std::static_pointer_cast<IIr77Gizmo>(std::make_shared<Ir77Gizmo>());
+        m_edit->SetGizmo(m_gizmo);  // edit mode and object mode share one gizmo -- one mode, one draw
     }
 
    public:
@@ -168,12 +180,18 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
    public:
-    // The renderer's server -- where the scene's asset goes (CreateScene) and each frame goes (CreateFrame). Field gets it too (its
-    // program, buffers and draw items). Its forwarding methods are the only way into PeregrineV.
+    // The renderer's server -- where the scene's asset goes (CreateScene) and each frame goes (CreateFrame). Its forwarding methods are the
+    // only way into PeregrineV.
     std::shared_ptr<IIr77Return const> SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) {
         m_renderer = renderer;
 
-        m_field->SetRenderer(renderer);
+        m_gizmo->SetRenderer(renderer);
+        return m_edit->SetRenderer(renderer);
+    }
+
+    // The fields module's server -- CreateFrame asks it for its dispatches, draws and box. Optional: without it the frame has no field.
+    std::shared_ptr<IIr77Return const> SetField(std::shared_ptr<NSIr77Fields::Ir77Server> const& fields) {
+        m_fields = fields;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -222,7 +240,9 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         std::shared_ptr<IIr77Return const> result{};
 
-        // the scene before goes first -- its draws stop with the next frame
+        // the scene before goes first -- its draws stop with the next frame; the ids start over, so edit mode and the outline go with it
+        SetEditEntity(EDIT_NO_ENTITY);
+        m_outline_entity = EDIT_NO_ENTITY;
         for (auto const& [id, entity] : m_entities) m_renderer->UnloadAsset(entity.asset);
 
         m_entities.clear();
@@ -262,7 +282,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         m_stats = Ir77SceneStats{};
         m_stats.path = path;
-        m_stats.gpu = report.device;
+        m_stats.gpu = report.device_name;
         m_stats.render_path = std::string{report.mesh_path ? "mesh shading indirect" : "vertex indirect"} + (report.ray_query ? ", ray queries" : "");
 
         pose->GetAssetCounts(m_stats.nodes, m_stats.meshes, m_stats.materials, m_stats.textures, m_stats.cameras, m_stats.skins, m_stats.bones, m_stats.clips);
@@ -320,6 +340,9 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     std::shared_ptr<IIr77Return const> RemoveEntity(std::uint32_t const& entity) {
         auto const found = m_entities.find(entity);
         if (found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such entity.");
+
+        if (entity == m_edit_entity) SetEditEntity(EDIT_NO_ENTITY);
+        if (entity == m_outline_entity) m_outline_entity = EDIT_NO_ENTITY;
 
         m_renderer->UnloadAsset(found->second.asset);
         m_entities.erase(found);
@@ -474,13 +497,21 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
             asset.asset = entity.asset;
             asset.transforms = entity.transforms;
             asset.bones = entity.bones;
+            asset.outline = id == m_outline_entity ? SELECT_OUTLINE_COLOR : glm::vec4(0.0f);
         }
 
         // compute -- the field's (the renderer runs the entities' skinning ahead of it)
         m_frame.dispatches.clear();
-        m_field->AppendDispatches(m_frame.dispatches, dt);
+        if (m_fields) m_fields->AppendDispatches(m_frame.dispatches, dt);
+
+        // the field's box -- to Lighting only when it changed (SetFieldBounds rebuilds the shadow casters)
+        UpdateFieldBounds();
 
         m_lighting->WriteFrame(m_frame);
+
+        // the field's shadow draws -- one per shadow tile
+        std::uint32_t shadows{0};
+        m_lighting->GetShadowCount(shadows);
 
         // every window -- one camera per view (each a file camera rebuilt with this aspect, or that view's controlled camera), and the field's draws
         m_frame.windows.assign(m_view_windows, Ir77PVFrameWindow{});
@@ -500,11 +531,22 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
             m_view->WriteCameras(aspect, window.cameras, window.areas);
             for (Ir77PVCamera& camera : window.cameras) camera.time = glm::vec4(seconds, dt, static_cast<float>(m_frame_number), 0.0f);
 
-            m_field->AppendDraws(w, Ir77PVPass::Opaque, window.opaque);
-            m_field->AppendDraws(w, Ir77PVPass::Shadow, window.shadow);
-            m_field->AppendDraws(w, Ir77PVPass::Transparent, window.transparent);
+            if (m_fields) {
+                m_fields->AppendDraws(w, Ir77PVPass::Opaque, shadows, window.opaque);
+                m_fields->AppendDraws(w, Ir77PVPass::Shadow, shadows, window.shadow);
+                m_fields->AppendDraws(w, Ir77PVPass::Transparent, shadows, window.transparent);
+            }
 
             AppendGrid(w, window.opaque);
+
+            // the edit cage -- in the transparent list, after the model's own transparent draws: tested against the opaque depth (the model's
+            // solid faces, the grid), never blended under an alpha surface
+            if (EditShown()) {
+                m_edit->AppendDraws(w, window.transparent);
+                m_edit->AppendGizmo(w, m_entities.at(m_edit_entity).transforms, window.transparent);  // last -- on top of everything
+            } else if (m_object_gizmo_shown) {
+                m_gizmo->Append(w, ObjectPlacement(), window.transparent);  // the active entity's, object mode -- last, on top
+            }
         }
 
         Ir77PVFrameReport report{};
@@ -515,6 +557,295 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         m_last_seconds = seconds;
         m_frame_number++;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The model drawn with the selection's outline from the next frame -- EDIT_NO_ENTITY: none. An id that isn't a model here: none.
+    std::shared_ptr<IIr77Return const> SetOutlineEntity(std::uint32_t const& entity) {
+        m_outline_entity = m_entities.count(entity) > 0 ? entity : EDIT_NO_ENTITY;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // ---- edit mode -------------------------------------------------------------------------------------------------------------------------
+
+    // The model in edit mode -- it stops playing and rests in its rest pose (its clips are held, ResumeEditClips plays them again when it
+    // leaves), then its cage (vertices and edges) is built in that pose and drawn over it from the next frame. EDIT_NO_ENTITY leaves edit mode.
+    // A model with no triangles goes into edit mode with an empty cage. The model already in edit mode -> nothing changes.
+    std::shared_ptr<IIr77Return const> SetEditEntity(std::uint32_t const& entity) {
+        if (entity == m_edit_entity && entity != EDIT_NO_ENTITY) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        NoteEditModified();
+        ResumeEditClips();
+        m_edit_entity = EDIT_NO_ENTITY;
+
+        if (entity == EDIT_NO_ENTITY) return m_edit->ReleaseCage();
+
+        auto const found = m_entities.find(entity);
+        if (found == m_entities.end()) {
+            m_edit->ReleaseCage();
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such entity.");
+        }
+
+        Ir77AnimateEntity& placed = found->second;
+        std::shared_ptr<IIr77Return const> result{};
+
+        // what it plays, held -- then nothing, and the rest pose now rather than on the next Update
+        HoldClips(placed.pose, m_edit_clips);
+        placed.pose->StopAllAnimations();
+        if (Failed(placed.pose->Update(0.0f), result)) return result;
+
+        placed.pose->WriteInstanceTransforms(placed.transforms);
+        placed.pose->WriteBoneMatrices(placed.bones);
+
+        std::vector<std::uint32_t> bone_bases{};
+        placed.pose->WriteInstanceBoneBases(bone_bases, placed.transforms.size());
+
+        std::shared_ptr<IIr77Mesh> meshes{};
+        placed.pose->GetMeshes(meshes);
+
+        m_edit_entity = entity;
+
+        std::shared_ptr<IIr77Material> materials{};
+        placed.pose->GetMaterials(materials);
+
+        if (Failed(m_edit->CreateCage(meshes, materials, placed.asset, placed.instance_base, placed.bones, bone_bases), result)) {
+            SetEditEntity(EDIT_NO_ENTITY);  // its clips back
+            return result;
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<IIr77Return const> GetEditEntity(std::uint32_t& entity, std::uint32_t& points, std::uint32_t& edges) const {
+        entity = m_edit_entity;
+
+        return m_edit->GetCageCounts(points, edges);
+    }
+
+    // The clips the model in edit mode was playing -- what it plays again when it leaves; empty when nothing is in edit mode
+    std::shared_ptr<IIr77Return const> GetEditClips(std::vector<Ir77EditClip>& clips) const {
+        clips = m_edit_entity == EDIT_NO_ENTITY ? std::vector<Ir77EditClip>{} : m_edit_clips;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The model under a point of window 0 -- x, y fractions of the window, from its top left. The view whose area holds the point (the last
+    // one, it draws on top) casts a ray from its camera as the last frame drew it; every shown model's static triangles where they sat in that
+    // frame; the nearest hit. Nothing hit -> EDIT_NO_ENTITY.
+    std::shared_ptr<IIr77Return const> PickEntity(float const& x, float const& y, std::uint32_t& entity) {
+        entity = EDIT_NO_ENTITY;
+
+        Ir77EditView view{};
+        if (!ViewAt(x, y, view)) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        float nearest = std::numeric_limits<float>::max();
+
+        for (auto const& [id, placed] : m_entities) {
+            if (!placed.visible) continue;
+
+            float distance{0.0f};
+            if (PickTriangles(placed, view.origin, view.ray, distance) && distance < nearest) {
+                nearest = distance;
+                entity = id;
+            }
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // What a click in edit mode selects -- vertex / edge / face
+    std::shared_ptr<IIr77Return const> SetEditMode(Ir77EditMode const& mode) {
+        if (m_edit_entity == EDIT_NO_ENTITY) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+
+        return m_edit->SetMode(mode);
+    }
+
+    // A click in edit mode -- x, y fractions of window 0 from its top left. The nearest visible vertex / edge / face of the model in edit mode
+    // under it, through the view there, as the last frame drew it. extend: toggle it in the selection; otherwise it replaces the selection, and
+    // a miss clears it.
+    std::shared_ptr<IIr77Return const> EditPick(float const& x, float const& y, bool const& extend, bool& hit) {
+        hit = false;
+
+        auto const found = m_entities.find(m_edit_entity);
+        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+
+        Ir77EditView view{};
+        if (!ViewAt(x, y, view)) return Ir77RETURN<Ir77OperationSucceeded>();  // outside every view -- nothing changes
+
+        return m_edit->Pick(view, found->second.transforms, extend, hit);
+    }
+
+    // A box drag in edit mode -- from (x0, y0) to (x1, y1), fractions of window 0; the view the drag started in. Every visible element inside
+    // it, by the mode; extend adds them, otherwise they replace the selection. selected = the elements taken.
+    std::shared_ptr<IIr77Return const> EditBoxSelect(float const& x0, float const& y0, float const& x1, float const& y1, bool const& extend,
+                                                     std::uint32_t& selected) {
+        selected = 0;
+
+        auto const found = m_entities.find(m_edit_entity);
+        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+
+        std::size_t view_index{0};
+        Ir77EditView start{};
+        Ir77EditView end{};
+        if (!ViewIndexAt(x0, y0, view_index) || !ViewRay(view_index, x0, y0, start) || !ViewRay(view_index, x1, y1, end))
+            return Ir77RETURN<Ir77OperationSucceeded>();
+
+        return m_edit->BoxSelect(start, start.cursor, end.cursor, found->second.transforms, extend, selected);
+    }
+
+    // Every vertex of the model in edit mode (true) or none
+    std::shared_ptr<IIr77Return const> EditSelectAll(bool const& select) {
+        if (m_edit_entity == EDIT_NO_ENTITY) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+
+        return m_edit->SelectAll(select);
+    }
+
+    // The edit mode's mode and how many vertices are selected
+    std::shared_ptr<IIr77Return const> GetEditSelection(Ir77EditMode& mode, std::uint32_t& selected) const { return m_edit->GetSelection(mode, selected); }
+
+    // The cursor at x, y now -> the selection moved (axis: free on the plane facing the camera, or along one world axis). delta = the move,
+    // world space.
+    std::shared_ptr<IIr77Return const> EditGrabMove(float const& x, float const& y, Ir77EditAxis const& axis, glm::vec3& delta) {
+        delta = glm::vec3(0.0f);
+
+        Ir77EditView view{};
+        if (!ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: the grab's view is gone.");
+
+        return m_edit->MoveGrab(view, axis, delta);
+    }
+
+    // confirm: the move stays (a save writes it into the model's file); otherwise it goes back
+    std::shared_ptr<IIr77Return const> EditGrabEnd(bool const& confirm) { return m_edit->EndGrab(confirm); }
+
+    // What the gizmo does -- translate / rotate / scale
+    std::shared_ptr<IIr77Return const> SetGizmoMode(Ir77GizmoMode const& mode) { return m_edit->SetGizmoMode(mode); }
+
+    std::shared_ptr<IIr77Return const> GetGizmo(Ir77GizmoMode& mode, std::uint32_t& hot) const { return m_gizmo->GetMode(mode, hot); }
+
+    // ---- object mode's gizmo -- the active entity's whole transform -----------------------------------------------------------------------
+
+    // shown at world (the active entity's world matrix: its pivot, and its own axes for a scale) from the next frame; hidden: none
+    std::shared_ptr<IIr77Return const> SetObjectGizmo(bool const& shown, glm::mat4 const& world) {
+        m_object_gizmo_shown = shown;
+        m_object_world = world;
+
+        if (!shown) m_gizmo->ClearHot();
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // the cursor (x, y fractions of window 0) -- the handle under it lights up; handle = it (GIZMO_NONE: none)
+    std::shared_ptr<IIr77Return const> ObjectGizmoHover(float const& x, float const& y, std::uint32_t& handle) {
+        handle = GIZMO_NONE;
+        if (!m_object_gizmo_shown) return m_gizmo->ClearHot();
+
+        Ir77EditView view{};
+        if (!ViewAt(x, y, view)) return m_gizmo->ClearHot();
+
+        return m_gizmo->Hover(view, ObjectPlacement(), handle);
+    }
+
+    // a press on a handle starts a drag in the view it's in -- handle = the one pressed (GIZMO_NONE: none, the press is a pick)
+    std::shared_ptr<IIr77Return const> ObjectGizmoPress(float const& x, float const& y, std::uint32_t& handle) {
+        handle = GIZMO_NONE;
+        if (!m_object_gizmo_shown) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        Ir77EditView view{};
+        if (!ViewIndexAt(x, y, m_grab_view) || !ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        return m_gizmo->Press(view, ObjectPlacement(), handle);
+    }
+
+    // the cursor now -> the drag as one world matrix about the pivot pressed at, since the press; changed = not the identity
+    std::shared_ptr<IIr77Return const> ObjectGizmoDrag(float const& x, float const& y, glm::mat4& world, bool& changed) {
+        world = glm::mat4(1.0f);
+        changed = false;
+
+        Ir77EditView view{};
+        if (!ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: the drag's view is gone.");
+
+        return m_gizmo->Drag(view, world, changed);
+    }
+
+    std::shared_ptr<IIr77Return const> ObjectGizmoEnd() { return m_gizmo->End(); }
+
+    // The cursor over the viewport (x, y fractions of window 0) -- the gizmo handle under it lights up. handle = it (GIZMO_NONE: none).
+    std::shared_ptr<IIr77Return const> EditGizmoHover(float const& x, float const& y, std::uint32_t& handle) {
+        handle = GIZMO_NONE;
+
+        auto const found = m_entities.find(m_edit_entity);
+        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+
+        Ir77EditView view{};
+        if (!ViewAt(x, y, view)) return m_edit->ClearGizmoHot();
+
+        return m_edit->HoverGizmo(view, found->second.transforms, handle);
+    }
+
+    // A press (x, y fractions of window 0): on a gizmo handle it starts a transform of the selection -- a grab the moves and EditGrabEnd drive,
+    // in the view it started in. handle = the one pressed (GIZMO_NONE: none -- the press is the viewport's, a pick).
+    std::shared_ptr<IIr77Return const> EditGizmoPress(float const& x, float const& y, std::uint32_t& handle) {
+        handle = GIZMO_NONE;
+
+        auto const found = m_entities.find(m_edit_entity);
+        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+
+        Ir77EditView view{};
+        if (!ViewIndexAt(x, y, m_grab_view) || !ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        return m_edit->PressGizmo(view, found->second.transforms, handle);
+    }
+
+    // grabbing = a grab is under way; modified = the model in edit mode has a confirmed edit
+    std::shared_ptr<IIr77Return const> GetEditGrab(bool& grabbing, bool& modified) const { return m_edit->GetGrab(grabbing, modified); }
+
+    // the last confirmed edit of the model in edit mode back / again; done = false: nothing there
+    std::shared_ptr<IIr77Return const> EditUndo(bool& done) {
+        done = false;
+        if (m_edit_entity == EDIT_NO_ENTITY) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+
+        return m_edit->Undo(done);
+    }
+
+    std::shared_ptr<IIr77Return const> EditRedo(bool& done) {
+        done = false;
+        if (m_edit_entity == EDIT_NO_ENTITY) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+
+        return m_edit->Redo(done);
+    }
+
+    std::shared_ptr<IIr77Return const> GetEditHistory(std::uint32_t& undo, std::uint32_t& redo) const { return m_edit->GetHistory(undo, redo); }
+
+    // Every model with an edit its file doesn't hold yet -> its .glb rewritten with the edited positions and normals (temp file, then rename
+    // -- a failed write leaves the old file whole). Other entities on the same file take the edit too. written = the files written; errors =
+    // one line each for the ones that weren't.
+    std::shared_ptr<IIr77Return const> CommitEdits(std::vector<std::string>& written, std::vector<std::string>& errors) {
+        written.clear();
+        errors.clear();
+
+        NoteEditModified();
+
+        for (auto& [id, placed] : m_entities) {
+            if (!placed.geometry_dirty) continue;
+
+            std::string error{};
+            if (!WriteModel(placed, error)) {
+                errors.push_back(placed.path + ": " + error);
+                continue;
+            }
+
+            placed.geometry_dirty = false;
+            written.push_back(placed.path);
+
+            ShareGeometry(id);
+        }
+
+        auto const edited = m_entities.find(m_edit_entity);
+        if (edited != m_entities.end() && !edited->second.geometry_dirty) m_edit->MarkSaved();
+
+        if (!errors.empty()) return Ir77RETURN<Ir77OperationFailed>(this, "[WARN] Ir77Animate: " + std::to_string(errors.size()) + " model(s) not written.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -533,12 +864,6 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     std::shared_ptr<IIr77Return const> GetView(std::shared_ptr<IIr77View>& view) {
         view = m_view;
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    std::shared_ptr<IIr77Return const> GetField(std::shared_ptr<IIr77Field>& field) {
-        field = m_field;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -589,6 +914,350 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
    private:
+    // The field's box -> Lighting, only when it moved or the field came up / went down -- SetFieldBounds rebuilds the shadow casters. No
+    // fields server: nothing to cover.
+    void UpdateFieldBounds() {
+        bool active{false};
+        glm::vec3 low{0.0f};
+        glm::vec3 high{0.0f};
+
+        if (m_fields) m_fields->GetBounds(active, low, high);
+
+        if (active == m_field_active && (!active || (low == m_field_low && high == m_field_high))) return;
+
+        m_field_active = active;
+        m_field_low = low;
+        m_field_high = high;
+
+        m_lighting->SetFieldBounds(active, low, high);
+    }
+
+    // the model in edit mode has a confirmed edit -> its file owes it
+    void NoteEditModified() {
+        auto const found = m_entities.find(m_edit_entity);
+        if (found == m_entities.end()) return;
+
+        bool grabbing{false};
+        bool modified{false};
+        m_edit->GetGrab(grabbing, modified);
+
+        if (modified) found->second.geometry_dirty = true;
+    }
+
+    // One model's mesh -> its file: per file primitive, every stream vertex written back to the file vertex it came from
+    bool WriteModel(Ir77AnimateEntity const& placed, std::string& error) const {
+        std::shared_ptr<IIr77Mesh> meshes{};
+        placed.pose->GetMeshes(meshes);
+        if (!meshes) {
+            error = "no meshes";
+            return false;
+        }
+
+        std::map<std::pair<std::size_t, std::size_t>, Ir77FlattenOverride> overrides{};
+
+        // one stream's ranges into the overrides -- position(v) / normal(v) of its v-th vertex
+        auto const stream = [&](bool const skinned, std::vector<Ir77MeshRange> const& ranges, std::vector<std::uint32_t> const& counts,
+                                auto const& position, auto const& normal) {
+            std::vector<Ir77MeshOrigin> origins{};
+            std::vector<std::uint32_t> files{};
+            meshes->GetVertexOrigins(skinned, origins, files);
+
+            for (std::size_t r = 0; r < ranges.size() && r < origins.size() && r < counts.size(); r++) {
+                Ir77MeshOrigin const& origin = origins[r];
+                Ir77FlattenOverride& edit = overrides[{origin.mesh, origin.primitive}];
+
+                if (edit.positions.empty()) {
+                    edit.positions.assign(origin.vertex_count, glm::vec3(0.0f));
+                    edit.normals.assign(origin.vertex_count, glm::vec3(0.0f, 1.0f, 0.0f));
+                    edit.set.assign(origin.vertex_count, 0);
+                }
+
+                std::size_t const first = static_cast<std::size_t>(std::max(ranges[r].vertex_offset, 0));
+                for (std::size_t v = first; v < first + counts[r] && v < files.size(); v++) {
+                    std::uint32_t const file = files[v];
+                    if (file >= origin.vertex_count) continue;
+
+                    edit.positions[file] = position(v);
+                    edit.normals[file] = normal(v);
+                    edit.set[file] = 1;
+                }
+            }
+        };
+
+        std::vector<Ir77PVVertex> vertices{};
+        std::vector<Ir77MeshRange> ranges{};
+        meshes->GetVertexBuffer(vertices);
+        meshes->GetMeshRanges(ranges);
+
+        std::vector<Ir77PVVertexSkinned> vertices_skinned{};
+        std::vector<Ir77MeshRange> ranges_skinned{};
+        meshes->GetSkinnedVertexBuffer(vertices_skinned);
+        meshes->GetSkinnedMeshRanges(ranges_skinned);
+
+        // a range's vertex count -- up to the next range's start, or the stream's end
+        auto const counts = [](std::vector<Ir77MeshRange> const& rs, std::size_t const total) {
+            std::vector<std::uint32_t> out(rs.size(), 0);
+            for (std::size_t r = 0; r < rs.size(); r++) {
+                std::size_t const start = static_cast<std::size_t>(std::max(rs[r].vertex_offset, 0));
+                std::size_t const end = r + 1 < rs.size() ? static_cast<std::size_t>(std::max(rs[r + 1].vertex_offset, 0)) : total;
+                out[r] = static_cast<std::uint32_t>(end > start ? end - start : 0);
+            }
+            return out;
+        };
+
+        stream(false, ranges, counts(ranges, vertices.size()), [&](std::size_t const v) { return vertices[v].position; },
+               [&](std::size_t const v) { return vertices[v].normal; });
+        stream(true, ranges_skinned, counts(ranges_skinned, vertices_skinned.size()), [&](std::size_t const v) { return vertices_skinned[v].position; },
+               [&](std::size_t const v) { return vertices_skinned[v].normal; });
+
+        // the file again, with the edits in
+        std::filesystem::path const file{placed.path};
+
+        Ir77Flatten flatten{};
+        std::vector<std::byte> glb{};
+        if (!flatten.Rewrite(file.string(), file.stem().string(), overrides, glb, error)) return false;
+
+        std::filesystem::path temp = file;
+        temp += ".tmp";
+
+        {
+            std::ofstream out{temp, std::ios::binary | std::ios::trunc};
+            out.write(reinterpret_cast<char const*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+            out.flush();
+
+            if (!out) {
+                error = "couldn't write " + temp.string();
+                return false;
+            }
+        }
+
+        std::error_code ec{};
+        std::filesystem::rename(temp, file, ec);
+        if (ec) {
+            error = "couldn't replace " + file.string() + ": " + ec.message();
+            return false;
+        }
+
+        return true;
+    }
+
+    // the entities on the same file as entity -- its edited vertices, in their meshes and the renderer
+    void ShareGeometry(std::uint32_t const entity) {
+        Ir77AnimateEntity const& source = m_entities.at(entity);
+
+        std::shared_ptr<IIr77Mesh> meshes{};
+        source.pose->GetMeshes(meshes);
+        if (!meshes) return;
+
+        std::vector<Ir77PVVertex> vertices{};
+        std::vector<Ir77PVVertexSkinned> vertices_skinned{};
+        meshes->GetVertexBuffer(vertices);
+        meshes->GetSkinnedVertexBuffer(vertices_skinned);
+
+        for (auto& [id, placed] : m_entities) {
+            if (id == entity || placed.path != source.path) continue;
+
+            std::shared_ptr<IIr77Mesh> other{};
+            placed.pose->GetMeshes(other);
+            if (!other) continue;
+
+            if (other->UpdateVertices(vertices)->ID() != GUIDIr77OperationSucceeded) continue;  // a different count -- not the same load
+            if (!vertices_skinned.empty()) other->UpdateSkinnedVertices(vertices_skinned);
+
+            m_renderer->UpdateAssetVertices(placed.asset, vertices, vertices_skinned, glm::uvec2(0u, static_cast<std::uint32_t>(vertices.size())),
+                                            glm::uvec2(0u, static_cast<std::uint32_t>(vertices_skinned.size())));
+        }
+    }
+
+    // A pose's players -> clips (each clip once, the speed and loop it plays with)
+    static void HoldClips(std::shared_ptr<IIr77Pose> const& pose, std::vector<Ir77EditClip>& clips) {
+        clips.clear();
+
+        std::uint32_t players{0};
+        pose->GetPlayerCount(players);
+
+        for (std::uint32_t p = 0; p < players; p++) {
+            Ir77EditClip held{};
+            float time{0.0f};
+            float duration{0.0f};
+            if (pose->GetPlayer(p, held.clip, time, duration, held.speed, held.loop)->ID() == GUIDIr77OperationSucceeded) clips.push_back(held);
+        }
+    }
+
+    // The model leaving edit mode plays what it played before, from the start -- one that's gone (removed, a new scene) has nothing to play
+    void ResumeEditClips() {
+        auto const found = m_entities.find(m_edit_entity);
+
+        if (m_edit_entity != EDIT_NO_ENTITY && found != m_entities.end())
+            for (Ir77EditClip const& held : m_edit_clips) found->second.pose->PlayAnimation(held.clip, held.loop, held.speed);
+
+        m_edit_clips.clear();
+    }
+
+    // The view of window 0 under x, y (fractions from its top left -- the last view whose area holds it, it draws on top), as the last frame
+    // drew it: its camera, the cursor and the view's size in pixels, the ray under the cursor. false: outside every view, or no frame yet.
+    bool ViewAt(float const x, float const y, Ir77EditView& out) const {
+        std::size_t view{0};
+        return ViewIndexAt(x, y, view) && ViewRay(view, x, y, out);
+    }
+
+    // which view of window 0 holds x, y -- the last one, it draws on top
+    bool ViewIndexAt(float const x, float const y, std::size_t& view) const {
+        if (m_frame.windows.empty()) return false;
+
+        Ir77PVFrameWindow const& window = m_frame.windows[0];
+
+        view = window.cameras.size();
+        for (std::size_t v = 0; v < window.cameras.size() && v < window.areas.size(); v++) {
+            glm::vec4 const& area = window.areas[v];
+            if (x >= area.x && x < area.x + area.z && y >= area.y && y < area.y + area.w) view = v;
+        }
+
+        return view < window.cameras.size();
+    }
+
+    // one view's ray under x, y -- the point may lie outside the view (a grab dragged past its edge keeps its view)
+    bool ViewRay(std::size_t const view, float const x, float const y, Ir77EditView& out) const {
+        if (m_frame.windows.empty()) return false;
+
+        Ir77PVFrameWindow const& window = m_frame.windows[0];
+        if (view >= window.cameras.size() || view >= window.areas.size()) return false;
+
+        glm::vec4 const& area = window.areas[view];
+        glm::vec2 const local{(x - area.x) / area.z, (y - area.y) / area.w};  // 0..1 across the view, from its top left
+        glm::vec2 const ndc = local * 2.0f - 1.0f;                            // Vulkan clip space is Y-down too
+
+        // reversed-Z: the near plane is 1; 0.5 is still in front of the camera when the far plane is at infinity
+        glm::mat4 const& view_proj = window.cameras[view].view_proj;
+        glm::mat4 const inverse = glm::inverse(view_proj);
+        glm::vec4 const near = inverse * glm::vec4(ndc, 1.0f, 1.0f);
+        glm::vec4 const deep = inverse * glm::vec4(ndc, 0.5f, 1.0f);
+
+        if (std::abs(near.w) < 1e-12f || std::abs(deep.w) < 1e-12f) return false;
+
+        out.view = window.cameras[view].view;
+        out.proj = window.cameras[view].proj;
+        out.view_proj = view_proj;
+        out.size = glm::vec2(area.z * static_cast<float>(std::max(m_view_width, 1)), area.w * static_cast<float>(std::max(m_view_height, 1)));
+        out.cursor = local * out.size;
+        out.origin = glm::vec3(near) / near.w;
+        out.ray = glm::normalize(glm::vec3(deep) / deep.w - out.origin);
+
+        return true;
+    }
+
+    // In edit mode on a model that is in the frame
+    // object mode's gizmo placement -- at the entity's origin; world axes for a move or a turn, its own for a scale
+    glm::mat4 ObjectPlacement() const {
+        Ir77GizmoMode mode{Ir77GizmoMode::Translate};
+        std::uint32_t hot{GIZMO_NONE};
+        m_gizmo->GetMode(mode, hot);
+
+        glm::mat4 placement = mode == Ir77GizmoMode::Scale ? m_object_world : glm::mat4(1.0f);
+        placement[3] = glm::vec4(glm::vec3(m_object_world[3]), 1.0f);
+        return placement;
+    }
+
+    bool EditShown() const {
+        if (m_edit_entity == EDIT_NO_ENTITY) return false;
+
+        auto const found = m_entities.find(m_edit_entity);
+        return found != m_entities.end() && found->second.visible;
+    }
+
+    // One entity's triangles against a ray, world space, where its instances sat this frame -- skinned ones posed by the palette it drew with.
+    // The nearest hit's distance along the ray. Both faces count (Moller-Trumbore, no culling): a click on a back face still picks the model.
+    bool PickTriangles(Ir77AnimateEntity const& placed, glm::vec3 const& origin, glm::vec3 const& ray, float& distance) const {
+        std::shared_ptr<IIr77Mesh> meshes{};
+        placed.pose->GetMeshes(meshes);
+        if (!meshes) return false;
+
+        std::vector<Ir77PVVertex> vertices{};
+        std::vector<std::uint32_t> indices{};
+        std::vector<Ir77MeshRange> ranges{};
+
+        meshes->GetVertexBuffer(vertices);
+        meshes->GetIndexBuffer(indices);
+        meshes->GetMeshRanges(ranges);
+
+        std::vector<Ir77PVVertexSkinned> vertices_skinned{};
+        std::vector<std::uint32_t> indices_skinned{};
+        std::vector<Ir77MeshRange> ranges_skinned{};
+
+        meshes->GetSkinnedVertexBuffer(vertices_skinned);
+        meshes->GetSkinnedIndexBuffer(indices_skinned);
+        meshes->GetSkinnedMeshRanges(ranges_skinned);
+
+        std::vector<std::uint32_t> bone_bases{};
+        placed.pose->WriteInstanceBoneBases(bone_bases, placed.transforms.size());
+
+        bool hit{false};
+        distance = std::numeric_limits<float>::max();
+
+        PickStream(placed, indices, vertices.size(), ranges, origin, ray, distance, hit,
+                   [&](std::size_t const v, std::uint32_t) { return vertices[v].position; });
+
+        PickStream(placed, indices_skinned, vertices_skinned.size(), ranges_skinned, origin, ray, distance, hit, [&](std::size_t const v, std::uint32_t const local) {
+            return Ir77SkinPosition(vertices_skinned[v], placed.bones, local < bone_bases.size() ? bone_bases[local] : 0);
+        });
+
+        return hit;
+    }
+
+    // One stream's ranges against the ray -- position(vertex, local instance) is a corner in its instance's space
+    template <typename Position>
+    static void PickStream(Ir77AnimateEntity const& placed, std::vector<std::uint32_t> const& indices, std::size_t const vertex_count,
+                           std::vector<Ir77MeshRange> const& ranges, glm::vec3 const& origin, glm::vec3 const& ray, float& distance, bool& hit,
+                           Position const& position) {
+        for (Ir77MeshRange const& range : ranges) {
+            if (range.vertex_offset < 0) continue;
+
+            std::size_t const base = static_cast<std::size_t>(range.vertex_offset);
+
+            for (std::uint32_t instance = 0; instance < range.instance_count; instance++) {
+                std::uint32_t const local = range.first_instance + instance;
+                if (local >= placed.transforms.size()) continue;
+
+                glm::mat4 const& model = placed.transforms[local];
+
+                for (std::uint32_t i = 0; i + 2 < range.index_count; i += 3) {
+                    std::size_t const at = range.index_offset + i;
+                    if (at + 2 >= indices.size()) break;
+
+                    std::size_t const a = base + indices[at];
+                    std::size_t const b = base + indices[at + 1];
+                    std::size_t const c = base + indices[at + 2];
+                    if (a >= vertex_count || b >= vertex_count || c >= vertex_count) continue;
+
+                    glm::vec3 const p0 = glm::vec3(model * glm::vec4(position(a, local), 1.0f));
+                    glm::vec3 const p1 = glm::vec3(model * glm::vec4(position(b, local), 1.0f));
+                    glm::vec3 const p2 = glm::vec3(model * glm::vec4(position(c, local), 1.0f));
+
+                    glm::vec3 const e1 = p1 - p0;
+                    glm::vec3 const e2 = p2 - p0;
+                    glm::vec3 const h = glm::cross(ray, e2);
+                    float const det = glm::dot(e1, h);
+                    if (std::abs(det) < 1e-12f) continue;  // the ray runs along the triangle
+
+                    float const inv = 1.0f / det;
+                    glm::vec3 const s = origin - p0;
+                    float const u = glm::dot(s, h) * inv;
+                    if (u < 0.0f || u > 1.0f) continue;
+
+                    glm::vec3 const q = glm::cross(s, e1);
+                    float const v = glm::dot(ray, q) * inv;
+                    if (v < 0.0f || u + v > 1.0f) continue;
+
+                    float const t = glm::dot(e2, q) * inv;
+                    if (t > 0.0f && t < distance) {
+                        distance = t;
+                        hit = true;
+                    }
+                }
+            }
+        }
+    }
+
     // The grid's draw for one window -- after the opaque geometry it has to sit behind, before anything transparent. The pipeline is looked
     // up once; a manifest without "grid" leaves the grid out and says so once in the stats warnings.
     void AppendGrid(std::size_t const& window, std::vector<Ir77PVDrawItem>& opaque) {
@@ -702,6 +1371,8 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         if (Failed(m_renderer->LoadAsset(bundle, placed.asset, report), result)) return result;
 
+        placed.instance_base = report.instance_base;
+
         // every clip in the file plays by default, looping -- the app takes over with animation.play / animation.stop
         pose->PlayAllAnimations(true);
 
@@ -814,10 +1485,32 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     std::shared_ptr<IIr77Lighting> m_lighting{};
 
-    std::shared_ptr<IIr77Field> m_field{};
+    std::shared_ptr<IIr77Edit> m_edit{};
+
+    std::shared_ptr<IIr77Gizmo> m_gizmo{};  // the transform gizmo -- edit mode's at the selection, object mode's at the active entity
+
+    bool m_object_gizmo_shown{false};  // object mode with something active -- SetObjectGizmo
+
+    glm::mat4 m_object_world{1.0f};  // the active entity's world matrix -- where the object gizmo sits
+
+    std::uint32_t m_edit_entity{EDIT_NO_ENTITY};  // the model in edit mode -- its cage is m_edit's
+
+    std::uint32_t m_outline_entity{EDIT_NO_ENTITY};  // the model drawn with the selection's outline (the active one, in object mode)
+
+    std::vector<Ir77EditClip> m_edit_clips{};  // what it was playing -- played again when it leaves edit mode
+
+    std::size_t m_grab_view{0};  // the view a grab started in -- its rays until it ends
 
     // direct link -- Scene -> PeregrineV
     std::shared_ptr<NSIr77PeregrineV::Ir77Server> m_renderer{};  // PeregrineV's server -- the module's one way into the renderer
+
+    // direct link -- Scene -> Fields
+    std::shared_ptr<NSIr77Fields::Ir77Server> m_fields{};  // the fields module's server -- empty: no field in the frame
+
+    // the field's box as Lighting last got it -- compared each frame
+    bool m_field_active{false};
+    glm::vec3 m_field_low{0.0f};
+    glm::vec3 m_field_high{0.0f};
 
     std::size_t m_view_windows{1};
 

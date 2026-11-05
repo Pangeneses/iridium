@@ -16,7 +16,7 @@
 #include "IIr77PVTransfer.hpp"
 #include "IIr77PVMaterial.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
@@ -40,7 +40,7 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     // Material rows for the draw items
     virtual std::shared_ptr<IIr77Return const> SetMaterials(std::shared_ptr<IIr77PVMaterial> materials) = 0;
 
-    // The device's pipeline cache -- engine roles and the draw item checks. After CreatePipelines.
+    // The device's pipeline cache -- engine roles and the draw item checks. After CreatePipelineCache.
     virtual std::shared_ptr<IIr77Return const> SetPipelineCache(std::shared_ptr<IIr77PVPipelineCache> pipeline_cache) = 0;
 
     // Every pool, the command tables (material rows, bounding spheres), the cull lists and their slots -- after the wiring
@@ -81,16 +81,32 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     // Hide / show one object (every instance of it). Applied to each frame copy by Tick.
     virtual std::shared_ptr<IIr77Return const> SetCommandVisible(std::uint32_t const& block_id, std::uint32_t const& command, bool const& visible) = 0;
 
-    // Change how many copies of an object draw -- spawn / despawn inside the models[] slots the client reserved for it
-    // ([firstInstance, firstInstance + count) must not run into the next object's slots).
-    virtual std::shared_ptr<IIr77Return const> SetCommandInstances(std::uint32_t const& block_id, std::uint32_t const& command,
-                                                                       std::uint32_t const& count) = 0;
+    // How many copies of one object draw -- spawn / despawn inside its capacity (its instanceCount at upload). Past the capacity fails.
+    virtual std::shared_ptr<IIr77Return const> SetCommandInstances(std::uint32_t const& block_id, std::uint32_t const& command, std::uint32_t const& count) = 0;
+
+    // The live instances of a models[] slot range: [first_slot, first_slot + reserved) reserved, [first_slot, first_slot + live) drawn -- in every
+    // command of the block that starts in the range
+    virtual std::shared_ptr<IIr77Return const> SetInstanceRange(std::uint32_t const& block_id, std::uint32_t const& first_slot, std::uint32_t const& reserved,
+                                                                std::uint32_t const& live) = 0;
 
     // A block's vertices (skinned = the skinned channel) as a bindless storage buffer over just its pool range -- vertex 0 is its first, so
     // compute reads / writes them in place with block-local indices. Registered on the first call, the same slot after; UnloadBlock releases it.
     virtual std::shared_ptr<IIr77Return const> GetBlockVertexSlot(std::uint32_t const& block_id, bool const& skinned, std::uint32_t& slot) = 0;
 
-    // What Acceleration builds from: the pools, where the block's vertex range ends and its commands, rebased into the pools
+    // An edit: vertices [first, first + count) of a block's vertex range (skinned = the skinned channel; its own order) rewritten from data.
+    // In submission order ahead of the next frames, not waited on.
+    virtual std::shared_ptr<IIr77Return const> UpdateBlockVertices(std::uint32_t const& block_id, bool const& skinned, std::uint32_t const& first,
+                                                                   std::uint32_t const& count, void const* data) = 0;
+
+    // The block's commands never culled from here on (bounding radius -1) -- its vertices are being edited, the spheres no longer hold
+    virtual std::shared_ptr<IIr77Return const> UnboundBlock(std::uint32_t const& block_id) = 0;
+
+    // The mesh path's UpdateBlockVertices -- the meshlets' own bounds and cones stay as they were cut
+    virtual std::shared_ptr<IIr77Return const> UpdateMeshletVertices(std::uint32_t const& meshlet_id, std::uint32_t const& first, std::uint32_t const& count,
+                                                                     void const* data) = 0;
+
+    // What Acceleration builds from: the pools, where the block's vertex range ends and its commands, rebased into the pools, with each
+    // command's capacity -- a TLAS entry per reserved instance
     virtual std::shared_ptr<IIr77Return const> GetBlockGeometry(std::uint32_t const& block_id, Ir77PVBlockGeometry& geometry) = 0;
 
     // Its vertex slots and pool ranges (geometry and commands) -- released once no frame in flight can read them. Remove its draw items from Paint first.
@@ -103,7 +119,7 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     // material row's triangles at a time (triangle_materials), so each meshlet has exactly one material.
     // One draw record + one mesh command per instance. Static (non-skinned) vertices only.
     // instance_count = instances written (one draw record each). Fails when the device has no mesh shading.
-    virtual std::shared_ptr<IIr77Return const> UploadMeshlets(Ir77PVBlockUpload const& block, std::uint32_t& meshlet_id, std::uint32_t& instance_count,
+    virtual std::shared_ptr<IIr77Return const> UploadMeshlets(Ir77PVBlockUpload const& data, std::uint32_t& meshlet_id, std::uint32_t& instance_count,
                                                               bool const& wait = true) = 0;
 
     // What Acceleration builds the mesh path's static stream from: the vertices, the block's index buffer (ray-query devices only) and its
@@ -112,25 +128,30 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
 
     // First instance of a block command -- instance = first_instance + instance offset, for SetMeshletInstanceVisible.
     virtual std::shared_ptr<IIr77Return const> GetMeshletFirstInstance(std::uint32_t const& meshlet_id, std::uint32_t const& command,
-                                                                     std::uint32_t& first_instance) = 0;
+                                                                       std::uint32_t& first_instance) = 0;
 
     // Same as MakeIndirectDrawItem but on the mesh path: commands [first_command, first_command + command_count) of the uploaded block,
     // mapped to their instances. Every meshlet carries its own material row, so the whole block is one mesh draw.
-    virtual std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id,
-                                                                        std::uint32_t const& material_id, std::uint32_t const& first_command,
-                                                                        std::uint32_t const& command_count, Ir77PVDrawItem& item) = 0;
+    virtual std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
+                                                                   std::uint32_t const& first_command, std::uint32_t const& command_count,
+                                                                   Ir77PVDrawItem& item) = 0;
 
     virtual std::shared_ptr<IIr77Return const> MakeMeshletDrawItem(std::size_t const& window, Ir77PVPipelineHandle const& pipeline,
-                                                                        std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
-                                                                        std::uint32_t const& first_command, std::uint32_t const& command_count,
-                                                                        Ir77PVDrawItem& item) = 0;
+                                                                   std::uint32_t const& meshlet_id, std::uint32_t const& material_id,
+                                                                   std::uint32_t const& first_command, std::uint32_t const& command_count,
+                                                                   Ir77PVDrawItem& item) = 0;
 
     // Hide / show every instance of one block object on the mesh path. Applied to each frame copy by Tick.
     virtual std::shared_ptr<IIr77Return const> SetMeshletCommandVisible(std::uint32_t const& meshlet_id, std::uint32_t const& command, bool const& visible) = 0;
 
     // Hide / show one instance. The instance count is fixed at build time -- spawn capacity is reserved by uploading
     // extra instances and starting them hidden.
-    virtual std::shared_ptr<IIr77Return const> SetMeshletInstanceVisible(std::uint32_t const& meshlet_id, std::uint32_t const& instance, bool const& visible) = 0;
+    virtual std::shared_ptr<IIr77Return const> SetMeshletInstanceVisible(std::uint32_t const& meshlet_id, std::uint32_t const& instance,
+                                                                         bool const& visible) = 0;
+
+    // The mesh path's SetInstanceRange -- instances in the range shown when live, hidden otherwise
+    virtual std::shared_ptr<IIr77Return const> SetMeshletInstanceRange(std::uint32_t const& meshlet_id, std::uint32_t const& first_slot,
+                                                                       std::uint32_t const& reserved, std::uint32_t const& live) = 0;
 
     // Its meshlet buffers, their slots and its pool ranges -- released once no frame in flight can read them. Remove its draw items from Paint
     // first.
@@ -147,7 +168,8 @@ typedef struct IIr77PVGeometry : virtual public IIr77Enlisted {
     // released after the frames in flight. Every bin's instances together must fit GEOMETRY_CULL_CAPACITY; at most GEOMETRY_CULL_BINS bins.
     virtual std::shared_ptr<IIr77Return const> SetCullBins(std::vector<Ir77PVCullBin> const& bins) = 0;
 
-    // Zero the view's counts, then cull -- every window records these once per view. Fails without a "cull.compute" pipeline.
+    // Zero the view's counts, then cull -- every window records these once per view. Fails when no "cull.compute" pipeline resolves (none in
+    // the manifest, or it didn't build) -- the caller draws unculled then.
     virtual std::shared_ptr<IIr77Return const> GetCullDispatches(std::vector<Ir77PVDispatch>& dispatches) = 0;
 
     // One bin's culled list for one view through pipeline -- vkCmdDrawIndexedIndirectCount from the pool buffers (skinned = the skinned pair)

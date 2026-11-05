@@ -30,17 +30,19 @@
 
 #include "../interface/IIr77Pose.hpp"
 #include "../interface/IIr77View.hpp"
-#include "../interface/IIr77Field.hpp"
 #include "../interface/IIr77Animate.hpp"
 
 #include "../runtime/Ir77Animate.hpp"
-#include "../runtime/Ir77Flatten.hpp"
+#include "../interface/IIr77Graph.hpp"
+
 #include "../runtime/Ir77Graph.hpp"
 
+#include "../services/Ir77Flatten.hpp"
+
 #include "../types/Ir77Types.hpp"
-#include "../types/Ir77Field.hpp"
 
 #include "../../PeregrineV/server/Ir77Server.hpp"
+#include "../../Fields/server/Ir77Server.hpp"
 
 using namespace NSIr77RT;
 
@@ -48,12 +50,12 @@ namespace NSIr77Scene {
 
 // =============================================================================================================================================
 // Ir77Server -- the scene module's switchboard. Owns Ir77Animate (the work) -- created here, held through IIr77Animate, handed to no one.
-// Animate owns the entities (a Pose each), View, Lighting and Field; this server holds View and Field through their interfaces and reaches an
-// entity's Pose through Animate (GetPose) per op. The module's one door:
+// Animate owns the entities (a Pose each), View and Lighting; this server holds View through its interface and reaches an entity's Pose
+// through Animate (GetPose) per op. The module's one door:
 //
 //   pipe:        Sink(json) in, the post function out (SetPost). Every command arrives here as JSON and every reply leaves the same way.
-//   direct link: only what can't travel as JSON -- the renderer's server (SetRenderer) and the per-frame calls (Update / CreateFrame / stats).
-//                Everything else is an op, setup included.
+//   direct link: only what can't travel as JSON -- the renderer's and the fields module's servers (SetRenderer / SetField) and the
+//                per-frame calls (Update / CreateFrame / stats). Everything else is an op, setup included.
 //
 // Message in:  {"id":7, "from":"ui", "to":"scene", "op":"camera.move", "args":{"right":1, "up":0, "forward":0}}
 // Reply out:   {"id":7, "from":"scene", "to":"ui", "op":"camera.move", "ok":true, "error":""}   (only when the message names a "from")
@@ -85,6 +87,33 @@ namespace NSIr77Scene {
 //   entity.set      id, then any of name, t, r, s, visible, order, light {...}, camera {...} -- what's left out keeps its value
 //   entity.get      id                            -- data { entity } (as in the dump)
 //   entity.list                                   -- data { entities: [...] } (as in the dump)
+//   entity.select   id ('' = none)                -- the active entity (the dump's "active"). Selecting goes back to object mode first --
+//                                                    data { id, interaction, edit, points, edges, mode, selected }
+//   entity.mode     mode "object" | "edit" | "sculpt" | "vertex_paint" | "weight_paint" | "texture_paint" -- the active entity's
+//                                                    interaction mode. Edit needs an active model: it stops playing and rests in its rest pose,
+//                                                    its vertices and edges drawn over it (animation.* on it fail until it leaves; leaving
+//                                                    plays its clips again). Sculpt and the paints aren't built yet -- refused. data as
+//                                                    entity.select
+//   entity.pick     x, y                          -- the model under a point of the window (fractions, from the top left) through the view
+//                                                    there -- data { id } ('' = nothing). Doesn't select; entity.select does
+//   edit.mode       mode "vertex" | "edge" | "face" -- what a click in edit mode selects -- data { mode, selected }
+//   edit.pick       x, y, extend (false)          -- a click in edit mode: the nearest visible element under it; extend toggles it in the
+//                                                    selection, otherwise it replaces it (a miss clears it) -- data { hit, mode, selected }
+//   edit.select_all value (true)                  -- every vertex, or none -- data { mode, selected }
+//   edit.box        x0, y0, x1, y1, extend (false) -- a box drag (fractions of the window, through the view it started in): every visible
+//                                                    element inside it, by the mode; extend adds them -- data { taken, mode, selected }
+//   edit.undo / edit.redo                         -- the last confirmed edit back / again -- data { done, modified, undo, redo }
+//   gizmo.mode      mode "translate" | "rotate" | "scale" -- what the gizmo does, in edit and object mode (a drag under way goes back first)
+//                                                    -- data { gizmo }
+//   gizmo.hover     x, y                          -- the handle under the cursor lights up -- data { handle } (-1 = none)
+//   gizmo.press     x, y                          -- on a handle: a drag starts -- edit mode: of the selection; object mode: of the active
+//                                                    entity's whole transform (world axes; a scale along its own) -- data { handle } (-1 = no
+//                                                    handle there: the press is the viewport's)
+//   gizmo.move      x, y                          -- the drag follows the cursor -- data { changed }
+//   gizmo.end       confirm (true)                -- the drag's change stays (edit mode: onto the undo history), or everything goes back
+//                                                    -- data { modified, undo, redo } (edit) / { modified, id } (object)
+//   edit.commit                                   -- every edited model's .glb rewritten with its edits (Save runs it first) -- data {
+//                                                    written: [model], errors: [line] }
 //   node.list       id                            -- a model's own nodes: data { nodes: [{node, name, parent (-1 = root), t, r, s}] }
 //   node.transform  id, node, t, r, s             -- one node's rest TRS; a clip that drives it still wins on what it animates
 //   animation.play  id, name, loop (true), speed (1)
@@ -95,16 +124,9 @@ namespace NSIr77Scene {
 // 683 = 1 engine unit), cones in radians; a light shines down its local -Z.
 //
 // Entity 0 is the scene file (scene.create starts the ids over).
-//   field.compile   source, topology "surface" | "particles", dims [x, y, z], x / y / z [min, max], value [min, max],
-//                   shading "lit" | "colormap" | "contours", colormap "viridis" | "turbo" | "grey", contour {spacing, width}, params [8],
-//                   canvas (size), pen {target "canvas" | "points", trace "time" | "sweep", speed, sweep, decay, wrap "fade" | "clear", steps,
-//                   pens [{color [r,g,b,a], width}]} -- width in pixels on the canvas, in grid cells as point ink
-//                   -- a failed compile answers with the compiler's messages in "error" (lines counted from the program's first line)
-//   field.params    params [8]                     -- live values, no recompile
-//   field.clear                                    -- blank the canvas
-//   field.reset                                    -- the program's first frame again (f.first), blank canvas, pens at t = 0
-//   field.show      value true | false
-//   scene.project   path                          -- the project folder -- fields.json and Models/<name>.glb live here
+//   scene.project   path                          -- the project folder -- Models/<name>.glb lives here
+//   scene.clear                                   -- empties the scene for another app; the stored scene it was (scene.document) becomes
+//                                                    the startup scene again, so the next Aurum page opens it
 //   scene.startup   name                          -- the stored scene the UI opens at start (iridium.json startup.scene); the dump carries it
 //                                                    until the UI's first scene.create
 //   scene.document  id, name                      -- which stored scene this is (the UI's, after a load or a save) -- kept here so a page
@@ -113,14 +135,11 @@ namespace NSIr77Scene {
 //                                                    at all (the UI owns them; they're stored with the scene) -- the ones the renderer acts on
 //                                                    are applied as they arrive: background [r, g, b] (sRGB 0..1), grid (bool). Cleared by
 //                                                    scene.create. -- data { settings } (no settings given -> just reads them)
-//   scene.dump                                    -- data { project, startup, document {id, name}, settings, entities: [{id, name,
-//                                                    kind, parent, order, visible, t, r, s, + model {model, clips: [{clip, name, duration}],
+//   scene.dump                                    -- data { project, startup, document {id, name}, settings, active, edit {mode, selected},
+//                                                    entities: [{id, name, kind, parent, order, visible, t, r, s, + model {model, clips:
+//                                                    [{clip, name, duration}],
 //                                                    playing: [{clip, name, time, speed, loop}], nodes: [as node.list]} | light {light: {...}}
 //                                                    | camera {camera: {...}}}] } -- the whole scene graph, parents first, in one reply
-//   field.list                                    -- data { names: [...] } from <project>/fields.json (none yet -> [])
-//   field.load      name                          -- data { name, field } -- the panel's form, as saved
-//   field.save      name, field                   -- adds or replaces that entry; the file is rewritten (temp file, then rename)
-//   field.delete    name
 //
 // A handler that returns something leaves it in m_data -- the reply's "data" (an Ir77Json object; {} otherwise). Every reply is built as an
 // Ir77Json (Ir77RT/runtime/Ir77Json.hpp), never glued together as text.
@@ -134,9 +153,9 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
         // Animate's peers exist from its construction -- the ops go straight to them; an entity's Pose comes per op (GetPose)
         m_animate->GetView(m_view);
-        m_animate->GetField(m_field);
 
-        m_graph.SetAnimate(m_animate);
+        m_graph = std::static_pointer_cast<IIr77Graph>(std::make_shared<Ir77Graph>());
+        m_graph->SetAnimate(m_animate);
 
         if (m_empty_parser.parse(std::string_view{"{}"}).get(m_empty_args) != simdjson::SUCCESS)  // what a handler sees when a message has no "args"
             throw std::runtime_error{"Ir77Server: empty args"};
@@ -154,7 +173,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     }
 
     std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIIr77Server>(uid);
+        seat_shared_uuid<&GUIDIIr77Scene>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -173,7 +192,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == GUIDIIr77Server)
+        else if (iid == GUIDIIr77Scene)
             obj = std::shared_ptr<Ir77Server>(shared_from_this(), static_cast<Ir77Server*>(this));
 
         else
@@ -247,9 +266,10 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     // direct link -- setup (Scene -> PeregrineV) and the frame loop
     // -------------------------------------------------------------------------------------------------------------------------------------
     // PeregrineV's server -- the scene's only way into the renderer. A pointer, so direct; before scene.pipeline / scene.create.
-    std::shared_ptr<IIr77Return const> SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) {
-        return m_animate->SetRenderer(renderer);
-    }
+    std::shared_ptr<IIr77Return const> SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) { return m_animate->SetRenderer(renderer); }
+
+    // The fields module's server -- the frame draws its field. Optional; any time, the next frame uses it.
+    std::shared_ptr<IIr77Return const> SetField(std::shared_ptr<NSIr77Fields::Ir77Server> const& fields) { return m_animate->SetField(fields); }
 
     std::shared_ptr<IIr77Return const> Update(float const& dt) { return m_animate->Update(dt); }
 
@@ -274,25 +294,50 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         DefineSceneOperations();
         DefineCameraOperations();
         DefineEntityOperations();
+        DefineEditOperations();
         DefineAnimationOperations();
-        DefineFieldOperations();
-        DefineFieldStoreOperations();
     }
 
     // setup -- iridium sends these at startup; the UI can send scene.create to open another file
     void DefineSceneOperations() {
+        m_operations["scene.project"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            m_project = std::string{Text(a, "path")};
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        // another app is taking the view -- empty, but remember which stored scene to bring back
+        m_operations["scene.clear"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
+            m_entity_models.clear();
+            m_graph->Clear();
+            m_settings = Ir77Json::Object();
+            m_active.clear();
+            m_interaction = Ir77InteractionMode::Object;
+            m_object_drag = Ir77ObjectDrag{};
+            m_animate->SetObjectGizmo(false, glm::mat4(1.0f));
+
+            if (!m_document_name.empty()) m_startup_scene = m_document_name;
+
+            return m_animate->CreateScene("", false, false, false);
+        };
+
         m_operations["scene.create"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             std::string const model{Text(a, "model")};
             std::string const path = model.empty() ? std::string{Text(a, "path")} : ModelPath(model);
 
-            m_entity_models.clear();  // the ids start over
-            m_graph.Clear();          // Animate's entities and lights go with the scene
-            m_startup_scene.clear();  // the UI has opened something -- a page reload mustn't open the startup scene over it
+            m_entity_models.clear();          // the ids start over
+            m_graph->Clear();                  // Animate's entities and lights go with the scene
+            m_active.clear();                 // and edit mode with them (Animate leaves it in CreateScene)
+            m_interaction = Ir77InteractionMode::Object;
+            m_object_drag = Ir77ObjectDrag{};
+            m_animate->SetObjectGizmo(false, glm::mat4(1.0f));
+            m_startup_scene.clear();          // the UI has opened something -- a page reload mustn't open the startup scene over it
             m_settings = Ir77Json::Object();  // a new scene's settings come with it (scene.settings after the load)
 
             std::shared_ptr<IIr77Return const> result{};
-            if (Failed(m_animate->CreateScene(path, Flag(a, "use_mesh", false), Flag(a, "lights", SCENE_IMPORT_LIGHTS), Flag(a, "cameras", SCENE_IMPORT_CAMERAS)),
-                       result))
+            if (Failed(
+                    m_animate->CreateScene(path, Flag(a, "use_mesh", false), Flag(a, "lights", SCENE_IMPORT_LIGHTS), Flag(a, "cameras", SCENE_IMPORT_CAMERAS)),
+                    result))
                 return result;
 
             if (!model.empty()) m_entity_models[0] = model;
@@ -382,7 +427,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         m_operations["camera.focus"] = [this](Ir77SceneArgs const& a) { return m_view->FocusView(static_cast<std::uint32_t>(Number(a, "view", 0.0f))); };
     }
 
-    // The scene graph (types/Ir77Graph.hpp) -- every entity by its id: collections, models, lights, cameras; parented, ordered, shown or hidden
+    // The scene graph (types/Ir77Types.hpp) -- every entity by its id: collections, models, lights, cameras; parented, ordered, shown or hidden
     void DefineEntityOperations() {
         // a new entity -- the core (kind, parent, name, t, r, s, visible, order, id) and its kind's payload: model {model | path}, light {light:
         // {type, color, ...}}, camera {camera: {fov, ortho, near, far}}. id given (a load) -> kept; none -> made. -> { id, model }
@@ -427,7 +472,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
             std::string id{};
             std::string error{};
-            if (!m_graph.Add(entity, path, Flag(a, "use_mesh", false), id, error)) return Fail(error);
+            if (m_graph->Add(entity, path, Flag(a, "use_mesh", false), id, error)->ID() != GUIDIr77OperationSucceeded) return Fail(error);
 
             m_data["id"] = id;
             m_data["model"] = entity.model;
@@ -443,7 +488,14 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         // it and everything under it
         m_operations["entity.remove"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             std::string error{};
-            if (!m_graph.Remove(std::string{Text(a, "id")}, error)) return Fail(error);
+            if (m_graph->Remove(std::string{Text(a, "id")}, error)->ID() != GUIDIr77OperationSucceeded) return Fail(error);
+
+            // the active entity went with it (it, or something under it) -- nothing active; Animate already left edit mode on a model
+            Ir77GraphEntity active{};
+            if (!m_active.empty() && m_graph->Get(m_active, active)->ID() != GUIDIr77OperationSucceeded) {
+                Select("");
+                m_data = Ir77Json::Object();  // entity.remove answers nothing
+            }
 
             return Ir77RETURN<Ir77OperationSucceeded>();
         };
@@ -451,17 +503,19 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         // parent ('' = the scene root), order (0 = after its new siblings)
         m_operations["entity.move"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             std::string error{};
-            if (!m_graph.Move(std::string{Text(a, "id")}, std::string{Text(a, "parent")}, static_cast<std::uint32_t>(std::max(Number(a, "order", 0.0f), 0.0f)),
-                              error))
+            if (m_graph->Move(std::string{Text(a, "id")}, std::string{Text(a, "parent")}, static_cast<std::uint32_t>(std::max(Number(a, "order", 0.0f), 0.0f)),
+                              error)
+                    ->ID() != GUIDIr77OperationSucceeded)
                 return Fail(error);
 
+            ObjectGizmo();  // a new parent moves it
             return Ir77RETURN<Ir77OperationSucceeded>();
         };
 
         // any of: name, t, r, s, visible, order, light {...}, camera {...} -- what's left out keeps its value
         m_operations["entity.set"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             Ir77GraphEntity entity{};
-            if (!m_graph.Get(std::string{Text(a, "id")}, entity)) return Fail("no entity " + std::string{Text(a, "id")});
+            if (m_graph->Get(std::string{Text(a, "id")}, entity)->ID() != GUIDIr77OperationSucceeded) return Fail("no entity " + std::string{Text(a, "id")});
 
             if (!EntityCore(a, entity, false)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
 
@@ -473,15 +527,16 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
             if (a["camera"].get(camera) == simdjson::SUCCESS) CameraFields(camera, entity.camera);
 
             std::string error{};
-            if (!m_graph.Set(entity, error)) return Fail(error);
+            if (m_graph->Set(entity, error)->ID() != GUIDIr77OperationSucceeded) return Fail(error);
 
+            ObjectGizmo();  // the active entity, or a parent of it, may have moved
             return Ir77RETURN<Ir77OperationSucceeded>();
         };
 
         // -> { entity } -- one, as in the dump
         m_operations["entity.get"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             Ir77GraphEntity entity{};
-            if (!m_graph.Get(std::string{Text(a, "id")}, entity)) return Fail("no entity " + std::string{Text(a, "id")});
+            if (m_graph->Get(std::string{Text(a, "id")}, entity)->ID() != GUIDIr77OperationSucceeded) return Fail("no entity " + std::string{Text(a, "id")});
 
             m_data["entity"] = EntityJson(entity);
 
@@ -491,6 +546,36 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         // -> { entities: [...] } -- the whole graph, parents first
         m_operations["entity.list"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
             m_data["entities"] = EntitiesJson();
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        // the active entity ('' = none) -> { id, edit, points, edges }
+        m_operations["entity.select"] = [this](Ir77SceneArgs const& a) { return Select(std::string{Text(a, "id")}); };
+
+        m_operations["entity.mode"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            Ir77InteractionMode mode{Ir77InteractionMode::Object};
+            if (!InteractionModeFromName(Text(a, "mode"), mode))
+                return Fail("entity.mode mode is object, edit, sculpt, vertex_paint, weight_paint or texture_paint");
+
+            return Interact(mode);
+        };
+
+        // the model under x, y (fractions of the window, from the top left) -> { id } ('' = nothing there)
+        m_operations["entity.pick"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            double x{0.0};
+            double y{0.0};
+            if (a["x"].get(x) != simdjson::SUCCESS || a["y"].get(y) != simdjson::SUCCESS) return Fail("entity.pick needs x and y");
+
+            std::shared_ptr<IIr77Return const> result{};
+
+            std::uint32_t runtime{EDIT_NO_ENTITY};
+            if (Failed(m_animate->PickEntity(static_cast<float>(x), static_cast<float>(y), runtime), result)) return result;
+
+            std::string id{};
+            if (runtime != EDIT_NO_ENTITY) m_graph->FindModel(runtime, id);
+
+            m_data["id"] = id;
 
             return Ir77RETURN<Ir77OperationSucceeded>();
         };
@@ -564,7 +649,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     // a model entity's Pose, by the op's id
     bool ModelPose(Ir77SceneArgs const& a, std::shared_ptr<IIr77Pose>& pose) {
         Ir77GraphEntity entity{};
-        if (!m_graph.Get(std::string{Text(a, "id")}, entity)) {
+        if (m_graph->Get(std::string{Text(a, "id")}, entity)->ID() != GUIDIr77OperationSucceeded) {
             m_error = "no entity " + std::string{Text(a, "id")};
             return false;
         }
@@ -581,6 +666,414 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     std::shared_ptr<IIr77Return const> Fail(std::string const& message) {
         m_error = message;
         return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + message);
+    }
+
+    // edit mode on the active model -- selecting its vertices, edges and faces
+    void DefineEditOperations() {
+        m_operations["edit.mode"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            Ir77EditMode mode{Ir77EditMode::Vertex};
+            if (!EditModeFromName(Text(a, "mode"), mode)) return Fail("edit.mode is vertex, edge or face");
+
+            std::shared_ptr<IIr77Return const> result{};
+            if (Failed(m_animate->SetEditMode(mode), result)) return Fail("nothing is in edit mode");
+
+            return SelectionData();
+        };
+
+        m_operations["edit.pick"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            double x{0.0};
+            double y{0.0};
+            if (a["x"].get(x) != simdjson::SUCCESS || a["y"].get(y) != simdjson::SUCCESS) return Fail("edit.pick needs x and y");
+
+            std::shared_ptr<IIr77Return const> result{};
+
+            bool hit{false};
+            if (Failed(m_animate->EditPick(static_cast<float>(x), static_cast<float>(y), Flag(a, "extend", false), hit), result))
+                return Fail("nothing is in edit mode");
+
+            m_data["hit"] = hit;
+            return SelectionData();
+        };
+
+        m_operations["edit.box"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            double x0{0.0};
+            double y0{0.0};
+            double x1{0.0};
+            double y1{0.0};
+            if (a["x0"].get(x0) != simdjson::SUCCESS || a["y0"].get(y0) != simdjson::SUCCESS || a["x1"].get(x1) != simdjson::SUCCESS ||
+                a["y1"].get(y1) != simdjson::SUCCESS)
+                return Fail("edit.box needs x0, y0, x1, y1");
+
+            std::shared_ptr<IIr77Return const> result{};
+
+            std::uint32_t taken{0};
+            if (Failed(m_animate->EditBoxSelect(static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x1), static_cast<float>(y1),
+                                                Flag(a, "extend", false), taken),
+                       result))
+                return Fail("nothing is in edit mode");
+
+            m_data["taken"] = taken;
+            return SelectionData();
+        };
+
+        m_operations["edit.select_all"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+            if (Failed(m_animate->EditSelectAll(Flag(a, "value", true)), result)) return Fail("nothing is in edit mode");
+
+            return SelectionData();
+        };
+
+        m_operations["edit.undo"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+
+            bool done{false};
+            if (Failed(m_animate->EditUndo(done), result)) return Fail("nothing is in edit mode");
+
+            m_data["done"] = done;
+            return HistoryData();
+        };
+
+        m_operations["gizmo.mode"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            Ir77GizmoMode mode{Ir77GizmoMode::Translate};
+            if (!GizmoModeFromName(Text(a, "mode"), mode)) return Fail("gizmo.mode is translate, rotate or scale");
+
+            EndObjectDrag(false);  // an object drag under way was the old mode's -- back where it started
+            m_animate->SetGizmoMode(mode);  // and an edit one (Edit puts it back)
+            m_data["gizmo"] = GizmoModeName(mode);
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        m_operations["gizmo.hover"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            double x{0.0};
+            double y{0.0};
+            if (a["x"].get(x) != simdjson::SUCCESS || a["y"].get(y) != simdjson::SUCCESS) return Fail("gizmo.hover needs x and y");
+
+            std::shared_ptr<IIr77Return const> result{};
+
+            std::uint32_t handle{GIZMO_NONE};
+            if (m_interaction == Ir77InteractionMode::Edit) {
+                if (Failed(m_animate->EditGizmoHover(static_cast<float>(x), static_cast<float>(y), handle), result)) return Fail("nothing is in edit mode");
+            } else if (Failed(m_animate->ObjectGizmoHover(static_cast<float>(x), static_cast<float>(y), handle), result)) {
+                return result;
+            }
+
+            m_data["handle"] = handle == GIZMO_NONE ? -1 : static_cast<int>(handle);
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        m_operations["gizmo.press"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            double x{0.0};
+            double y{0.0};
+            if (a["x"].get(x) != simdjson::SUCCESS || a["y"].get(y) != simdjson::SUCCESS) return Fail("gizmo.press needs x and y");
+
+            std::shared_ptr<IIr77Return const> result{};
+
+            std::uint32_t handle{GIZMO_NONE};
+            if (m_interaction == Ir77InteractionMode::Edit) {
+                if (Failed(m_animate->EditGizmoPress(static_cast<float>(x), static_cast<float>(y), handle), result)) return Fail("nothing is in edit mode");
+            } else if (Failed(BeginObjectDrag(static_cast<float>(x), static_cast<float>(y), handle), result)) {
+                return result;
+            }
+
+            m_data["handle"] = handle == GIZMO_NONE ? -1 : static_cast<int>(handle);
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        m_operations["gizmo.move"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            double x{0.0};
+            double y{0.0};
+            if (a["x"].get(x) != simdjson::SUCCESS || a["y"].get(y) != simdjson::SUCCESS) return Fail("gizmo.move needs x and y");
+
+            std::shared_ptr<IIr77Return const> result{};
+
+            if (m_object_drag.active) {
+                if (Failed(MoveObjectDrag(static_cast<float>(x), static_cast<float>(y)), result)) return result;
+
+                m_data["changed"] = m_object_drag.changed;
+                return Ir77RETURN<Ir77OperationSucceeded>();
+            }
+
+            glm::vec3 delta{0.0f};
+            if (Failed(m_animate->EditGrabMove(static_cast<float>(x), static_cast<float>(y), Ir77EditAxis::Free, delta), result)) return Fail("no drag under way");
+
+            m_data["changed"] = glm::dot(delta, delta) > 0.0f;
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        m_operations["gizmo.end"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            bool const confirm = Flag(a, "confirm", true);
+
+            if (m_object_drag.active) {
+                std::string const id = m_object_drag.id;
+                bool const modified = EndObjectDrag(confirm);
+
+                m_data["modified"] = modified;
+                m_data["id"] = id;
+                return Ir77RETURN<Ir77OperationSucceeded>();
+            }
+
+            std::shared_ptr<IIr77Return const> result{};
+            if (Failed(m_animate->EditGrabEnd(confirm), result)) return result;
+
+            return HistoryData();
+        };
+
+        m_operations["edit.commit"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
+            std::vector<std::string> written{};
+            std::vector<std::string> errors{};
+            m_animate->CommitEdits(written, errors);  // a model that wasn't written is in errors -- the reply carries both
+
+            Ir77Json& files = m_data["written"] = Ir77Json::Array();
+            for (std::string const& path : written) files.Push(std::filesystem::path{path}.stem().string());
+
+            Ir77Json& lines = m_data["errors"] = Ir77Json::Array();
+            for (std::string const& line : errors) lines.Push(line);
+
+            return HistoryData();
+        };
+
+        m_operations["edit.redo"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
+            std::shared_ptr<IIr77Return const> result{};
+
+            bool done{false};
+            if (Failed(m_animate->EditRedo(done), result)) return Fail("nothing is in edit mode");
+
+            m_data["done"] = done;
+            return HistoryData();
+        };
+    }
+
+    // the reply's modified flag and how far undo / redo can go
+    std::shared_ptr<IIr77Return const> HistoryData() {
+        bool grabbing{false};
+        bool modified{false};
+        m_animate->GetEditGrab(grabbing, modified);
+
+        std::uint32_t undo{0};
+        std::uint32_t redo{0};
+        m_animate->GetEditHistory(undo, redo);
+
+        m_data["modified"] = modified;
+        m_data["undo"] = undo;
+        m_data["redo"] = redo;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // the reply's mode and selected count
+    std::shared_ptr<IIr77Return const> SelectionData() {
+        Ir77EditMode mode{Ir77EditMode::Vertex};
+        std::uint32_t selected{0};
+        m_animate->GetEditSelection(mode, selected);
+
+        m_data["mode"] = EditModeName(mode);
+        m_data["selected"] = selected;
+
+        Ir77GizmoMode gizmo{Ir77GizmoMode::Translate};
+        std::uint32_t hot{GIZMO_NONE};
+        m_animate->GetGizmo(gizmo, hot);
+        m_data["gizmo"] = GizmoModeName(gizmo);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // A model in edit mode -- it plays nothing until it leaves
+    bool InEdit(Ir77GraphEntity const& e) const {
+        std::uint32_t edit{EDIT_NO_ENTITY};
+        std::uint32_t points{0};
+        std::uint32_t edges{0};
+        m_animate->GetEditEntity(edit, points, edges);
+
+        return e.kind == Ir77GraphKind::Model && e.runtime != GRAPH_NO_RUNTIME && e.runtime == edit;
+    }
+
+    // The animation ops' model -- one in edit mode plays nothing, so they wait until it leaves (Esc)
+    bool AnimatedPose(Ir77SceneArgs const& a, std::shared_ptr<IIr77Pose>& pose) {
+        if (!ModelPose(a, pose)) return false;
+
+        Ir77GraphEntity entity{};
+        m_graph->Get(std::string{Text(a, "id")}, entity);
+
+        if (InEdit(entity)) {
+            m_error = "entity " + entity.id + " is in edit mode -- its animations are off until it leaves";
+            return false;
+        }
+
+        return true;
+    }
+
+    // The active entity ('' = none) -- in object mode: whatever mode the one before was in, it leaves it first. -> m_data (ModeData)
+    std::shared_ptr<IIr77Return const> Select(std::string const& id) {
+        EndObjectDrag(false);
+
+        if (!id.empty()) {
+            Ir77GraphEntity entity{};
+            if (m_graph->Get(id, entity)->ID() != GUIDIr77OperationSucceeded) return Fail("no entity " + id);
+        }
+
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(m_animate->SetEditEntity(EDIT_NO_ENTITY), result)) return result;
+
+        m_active = id;
+        m_interaction = Ir77InteractionMode::Object;
+        Outline();
+        ObjectGizmo();
+
+        return ModeData();
+    }
+
+    // The active entity into a mode -- object leaves whatever it was in; edit builds the active model's cage. A mode that isn't built yet, or
+    // edit with no active model: refused, the mode stays. -> m_data (ModeData)
+    std::shared_ptr<IIr77Return const> Interact(Ir77InteractionMode const mode) {
+        EndObjectDrag(false);
+        if (!InteractionModeBuilt(mode)) return Fail(std::string{InteractionModeName(mode)} + " mode isn't built yet");
+
+        std::uint32_t runtime{EDIT_NO_ENTITY};
+
+        if (mode == Ir77InteractionMode::Edit) {
+            Ir77GraphEntity entity{};
+            if (m_active.empty() || m_graph->Get(m_active, entity)->ID() != GUIDIr77OperationSucceeded) return Fail("edit mode needs an active model");
+            if (entity.kind != Ir77GraphKind::Model || entity.runtime == GRAPH_NO_RUNTIME) return Fail("edit mode needs an active model -- " + m_active + " isn't one");
+
+            runtime = entity.runtime;
+        }
+
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(m_animate->SetEditEntity(runtime), result)) return result;
+
+        m_interaction = mode;
+        Outline();
+        ObjectGizmo();
+
+        return ModeData();
+    }
+
+    // The active model's outline -- in object mode only (edit mode draws its cage instead); anything else active, or nothing: none
+    void Outline() {
+        std::uint32_t runtime{EDIT_NO_ENTITY};
+
+        Ir77GraphEntity entity{};
+        if (m_interaction == Ir77InteractionMode::Object && !m_active.empty() && m_graph->Get(m_active, entity)->ID() == GUIDIr77OperationSucceeded &&
+            entity.kind == Ir77GraphKind::Model && entity.runtime != GRAPH_NO_RUNTIME)
+            runtime = entity.runtime;
+
+        m_animate->SetOutlineEntity(runtime);
+    }
+
+    // Object mode's gizmo -- at the active entity, any kind, in object mode only; otherwise hidden
+    void ObjectGizmo() {
+        glm::mat4 world{1.0f};
+        bool const shown = m_interaction == Ir77InteractionMode::Object && !m_active.empty() &&
+                           m_graph->World(m_active, world)->ID() == GUIDIr77OperationSucceeded;
+
+        m_animate->SetObjectGizmo(shown, world);
+    }
+
+    // a press on the object gizmo -- a drag of the active entity's whole transform starts (handle = the handle; GIZMO_NONE: none)
+    std::shared_ptr<IIr77Return const> BeginObjectDrag(float const x, float const y, std::uint32_t& handle) {
+        handle = GIZMO_NONE;
+        EndObjectDrag(false);
+
+        Ir77GraphEntity entity{};
+        if (m_active.empty() || m_graph->Get(m_active, entity)->ID() != GUIDIr77OperationSucceeded) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(m_animate->ObjectGizmoPress(x, y, handle), result)) return result;
+        if (handle == GIZMO_NONE) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        Ir77ObjectDrag drag{};
+        drag.active = true;
+        drag.id = entity.id;
+        drag.t = entity.t;
+        drag.r = entity.r;
+        drag.s = entity.s;
+        m_graph->World(entity.id, drag.start_world);
+        if (!entity.parent.empty()) m_graph->World(entity.parent, drag.parent_world);
+
+        m_object_drag = drag;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // the cursor now -> the entity's world = the drag's matrix * where it started, taken back into its parent as its own t / r / s
+    std::shared_ptr<IIr77Return const> MoveObjectDrag(float const x, float const y) {
+        std::shared_ptr<IIr77Return const> result{};
+
+        glm::mat4 drag{1.0f};
+        bool changed{false};
+        if (Failed(m_animate->ObjectGizmoDrag(x, y, drag, changed), result)) return result;
+
+        Ir77GraphEntity entity{};
+        if (m_graph->Get(m_object_drag.id, entity)->ID() != GUIDIr77OperationSucceeded) {
+            m_object_drag = Ir77ObjectDrag{};
+            m_animate->ObjectGizmoEnd();
+            return Fail("the dragged entity is gone");
+        }
+
+        glm::mat4 const world = drag * m_object_drag.start_world;
+        glm::mat4 const local = glm::inverse(m_object_drag.parent_world) * world;
+
+        // a parent's non-uniform scale under its rotation can't be held by t / r / s -- its shear is dropped
+        glm::vec3 skew{0.0f};
+        glm::vec4 perspective{0.0f};
+        glm::vec3 t{0.0f};
+        glm::quat r{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 s{1.0f};
+        if (!glm::decompose(local, s, r, t, skew, perspective)) return Ir77RETURN<Ir77OperationSucceeded>();  // degenerate (a zero scale) -- hold
+
+        entity.t = t;
+        entity.r = glm::normalize(r);
+        entity.s = s;
+
+        std::string error{};
+        if (m_graph->Set(entity, error)->ID() != GUIDIr77OperationSucceeded) return Fail(error);
+
+        m_object_drag.changed = changed;
+        ObjectGizmo();  // the gizmo follows a move
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The object drag is over -- confirm: it stays (true if it changed anything); otherwise the entity goes back to where it started. No drag:
+    // false.
+    bool EndObjectDrag(bool const confirm) {
+        if (!m_object_drag.active) return false;
+
+        Ir77ObjectDrag const drag = m_object_drag;
+        m_object_drag = Ir77ObjectDrag{};
+        m_animate->ObjectGizmoEnd();
+
+        if (confirm) return drag.changed;
+
+        Ir77GraphEntity entity{};
+        if (m_graph->Get(drag.id, entity)->ID() == GUIDIr77OperationSucceeded) {
+            entity.t = drag.t;
+            entity.r = drag.r;
+            entity.s = drag.s;
+
+            std::string error{};
+            m_graph->Set(entity, error);
+        }
+
+        ObjectGizmo();
+        return false;
+    }
+
+    // { id, interaction, edit, points, edges } + the edit selection
+    std::shared_ptr<IIr77Return const> ModeData() {
+        std::uint32_t edit{EDIT_NO_ENTITY};
+        std::uint32_t points{0};
+        std::uint32_t edges{0};
+        m_animate->GetEditEntity(edit, points, edges);
+
+        m_data["id"] = m_active;
+        m_data["interaction"] = InteractionModeName(m_interaction);
+        m_data["edit"] = edit != EDIT_NO_ENTITY;
+        m_data["points"] = points;
+        m_data["edges"] = edges;
+
+        return SelectionData();
     }
 
     // type / color / intensity / range / inner / outer over what the light had -- what's left out keeps its value
@@ -637,8 +1130,9 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         return nodes;
     }
 
-    // One model's clips (what its file has) and players (what's running)
-    void ClipsJson(std::shared_ptr<IIr77Pose> const& pose, Ir77Json& clips, Ir77Json& playing) const {
+    // One model's clips (what its file has) and players (what's running). held: the model is in edit mode -- what it plays when it leaves
+    // stands in for its (empty) players, time 0, so a save in edit mode stores what the model plays.
+    void ClipsJson(std::shared_ptr<IIr77Pose> const& pose, bool const held, Ir77Json& clips, Ir77Json& playing) const {
         clips = Ir77Json::Array();
         playing = Ir77Json::Array();
 
@@ -656,6 +1150,22 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
             clip["clip"] = c;
             clip["name"] = names[c];
             clip["duration"] = duration;
+        }
+
+        if (held) {
+            std::vector<Ir77EditClip> suspended{};
+            m_animate->GetEditClips(suspended);
+
+            for (Ir77EditClip const& clip : suspended) {
+                Ir77Json& player = playing.Push(Ir77Json::Object());
+                player["clip"] = clip.clip;
+                player["name"] = clip.clip < names.size() ? names[clip.clip] : std::string{};
+                player["time"] = 0.0f;
+                player["speed"] = clip.speed;
+                player["loop"] = clip.loop;
+            }
+
+            return;
         }
 
         std::uint32_t players{0};
@@ -687,6 +1197,20 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         dump["document"]["id"] = m_document_id;
         dump["document"]["name"] = m_document_name;
         dump["settings"] = m_settings;
+        dump["active"] = m_active;
+        dump["interaction"] = InteractionModeName(m_interaction);
+
+        // edit mode on the active model -- what a click selects and how many vertices are selected
+        Ir77EditMode mode{Ir77EditMode::Vertex};
+        std::uint32_t selected{0};
+        m_animate->GetEditSelection(mode, selected);
+        dump["edit"]["mode"] = EditModeName(mode);
+        dump["edit"]["selected"] = selected;
+
+        Ir77GizmoMode gizmo{Ir77GizmoMode::Translate};
+        std::uint32_t hot{GIZMO_NONE};
+        m_animate->GetGizmo(gizmo, hot);
+        dump["edit"]["gizmo"] = GizmoModeName(gizmo);
         dump["entities"] = EntitiesJson();
 
         return dump;
@@ -695,7 +1219,10 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     // the graph, parents first
     Ir77Json EntitiesJson() const {
         Ir77Json entities = Ir77Json::Array();
-        for (Ir77GraphEntity const* entity : m_graph.Ordered()) entities.Push(EntityJson(*entity));
+        std::vector<Ir77GraphEntity const*> ordered{};
+        m_graph->Ordered(ordered);
+
+        for (Ir77GraphEntity const* entity : ordered) entities.Push(EntityJson(*entity));
 
         return entities;
     }
@@ -720,7 +1247,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
             std::shared_ptr<IIr77Pose> pose{};
             if (e.runtime != GRAPH_NO_RUNTIME && m_animate->GetPose(e.runtime, pose)->ID() == GUIDIr77OperationSucceeded && pose) {
                 nodes = NodesJson(pose);
-                ClipsJson(pose, clips, playing);
+                ClipsJson(pose, InEdit(e), clips, playing);
             }
 
             json["model"] = e.model;
@@ -807,7 +1334,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         }
     }
 
-    // A .glb from anywhere -> a model of the open project, flattened (runtime/Ir77Flatten.hpp) into <project>/Models/<model>.glb -- one file,
+    // A .glb from anywhere -> a model of the open project, flattened (services/Ir77Flatten.hpp) into <project>/Models/<model>.glb -- one file,
     // one entity. model = the file's name, made unique (Door, Door_001, Door_002, ...); a flattened result identical to a model already there is
     // that model, so importing the same file twice adds no copy. A file already in Models/ is taken as it is. Nothing in Models/ is ever
     // overwritten. A .gltf is refused: its buffers and textures are separate files. What the flatten left out -> m_import_report.
@@ -897,267 +1424,22 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     void DefineAnimationOperations() {
         m_operations["animation.play"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             std::shared_ptr<IIr77Pose> pose{};
-            if (!ModelPose(a, pose)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
+            if (!AnimatedPose(a, pose)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
 
             return pose->PlayAnimation(std::string{Text(a, "name")}, Flag(a, "loop", true), Number(a, "speed", 1.0f));
         };
         m_operations["animation.stop"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             std::shared_ptr<IIr77Pose> pose{};
-            if (!ModelPose(a, pose)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
+            if (!AnimatedPose(a, pose)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
 
             return pose->StopAnimation(std::string{Text(a, "name")});
         };
         m_operations["animation.stop_all"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
             std::shared_ptr<IIr77Pose> pose{};
-            if (!ModelPose(a, pose)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
+            if (!AnimatedPose(a, pose)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
 
             return pose->StopAllAnimations();
         };
-    }
-
-    void DefineFieldOperations() {
-        m_operations["field.compile"] = [this](Ir77SceneArgs const& a) {
-            Ir77FieldSettings settings{};
-
-            settings.source = std::string{Text(a, "source")};
-            settings.topology = Text(a, "topology") == "particles" ? 1u : 0u;
-
-            float dims[3]{128.0f, 128.0f, 1.0f};
-            Numbers(a, "dims", dims, 3);
-            settings.dims = glm::uvec3(static_cast<std::uint32_t>(std::max(dims[0], 1.0f)), static_cast<std::uint32_t>(std::max(dims[1], 1.0f)),
-                                       static_cast<std::uint32_t>(std::max(dims[2], 1.0f)));
-
-            Numbers(a, "x", &settings.x.x, 2);
-            Numbers(a, "y", &settings.y.x, 2);
-            Numbers(a, "z", &settings.z.x, 2);
-            Numbers(a, "value", &settings.value.x, 2);
-
-            std::string_view const shading = Text(a, "shading");
-            settings.shading = shading == "contours" ? 2u : shading == "colormap" ? 1u : 0u;
-
-            std::string_view const colormap = Text(a, "colormap");
-            settings.colormap = colormap == "turbo" ? 1u : colormap == "grey" ? 2u : 0u;
-
-            simdjson::dom::object contour{};
-            if (a["contour"].get(contour) == simdjson::SUCCESS) {
-                settings.contour_spacing = Number(contour, "spacing", settings.contour_spacing);
-                settings.contour_width = Number(contour, "width", settings.contour_width);
-            }
-
-            Numbers(a, "params", settings.params.data(), settings.params.size());
-
-            settings.canvas_size = static_cast<std::uint32_t>(std::max(Number(a, "canvas", 2048.0f), 16.0f));
-
-            simdjson::dom::object pen{};
-            if (a["pen"].get(pen) == simdjson::SUCCESS) {
-                bool const sweep = Text(pen, "trace") == "sweep";
-
-                settings.pen_target = Text(pen, "target") == "points" ? 1u : 0u;
-
-                settings.pen_speed = Number(pen, "speed", settings.pen_speed);
-                settings.sweep = sweep ? std::max(Number(pen, "sweep", 1.0f), 1e-4f) : 0.0f;
-                settings.decay = std::max(Number(pen, "decay", 0.0f), 0.0f);
-                settings.wrap_clear = Text(pen, "wrap") == "clear";
-                settings.steps = static_cast<std::uint32_t>(std::clamp(Number(pen, "steps", 256.0f), 1.0f, 65536.0f));
-
-                simdjson::dom::array pens{};
-                if (pen["pens"].get(pens) == simdjson::SUCCESS) {
-                    std::uint32_t count{0};
-
-                    for (auto const element : pens) {
-                        if (count >= settings.pen_color.size()) break;
-
-                        simdjson::dom::object entry{};
-                        if (element.get(entry) != simdjson::SUCCESS) continue;
-
-                        float color[4]{1.0f, 1.0f, 1.0f, 1.0f};
-                        Numbers(entry, "color", color, 4);
-
-                        settings.pen_color[count] = glm::vec4(color[0], color[1], color[2], color[3]);
-                        settings.pen_width[count] = std::max(Number(entry, "width", 2.0f), 0.5f);
-                        count++;
-                    }
-
-                    settings.pens = std::max(count, 1u);
-                }
-            }
-
-            std::string errors{};
-            auto const result = m_field->CompileField(settings, errors);
-
-            m_error = errors;
-
-            return result;
-        };
-
-        m_operations["field.params"] = [this](Ir77SceneArgs const& a) {
-            std::array<float, 8> params{};
-            Numbers(a, "params", params.data(), params.size());
-
-            return m_field->SetFieldParams(params);
-        };
-
-        m_operations["field.clear"] = [this](Ir77SceneArgs const&) { return m_field->ClearFieldCanvas(); };
-        m_operations["field.reset"] = [this](Ir77SceneArgs const&) { return m_field->ResetField(); };
-        m_operations["field.show"] = [this](Ir77SceneArgs const& a) { return m_field->ShowField(Flag(a, "value", true)); };
-    }
-
-    // A project's saved fields -- <project>/fields.json, one object keyed by name. Each value is the panel's form as it sent it; this
-    // server never looks inside one. Read fresh on every op, so a hand edit to the file shows up.
-    void DefineFieldStoreOperations() {
-        m_operations["scene.project"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
-            m_project = std::string{Text(a, "path")};
-
-            return Ir77RETURN<Ir77OperationSucceeded>();
-        };
-
-        m_operations["field.list"] = [this](Ir77SceneArgs const&) -> std::shared_ptr<IIr77Return const> {
-            std::shared_ptr<IIr77Return const> result{};
-
-            std::map<std::string, std::string> entries{};
-            if (Failed(DefineFieldsRead(entries), result)) return result;
-
-            Ir77Json& names = m_data["names"] = Ir77Json::Array();
-            for (auto const& [name, entry] : entries) names.Push(name);
-
-            return Ir77RETURN<Ir77OperationSucceeded>();
-        };
-
-        m_operations["field.load"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
-            std::shared_ptr<IIr77Return const> result{};
-
-            std::string const name{Text(a, "name")};
-
-            std::map<std::string, std::string> entries{};
-            if (Failed(DefineFieldsRead(entries), result)) return result;
-
-            auto const found = entries.find(name);
-            if (found == entries.end()) {
-                m_error = "no field '" + name + "'";
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
-            }
-
-            m_data["name"] = name;
-            m_data["field"] = Ir77Json::Raw(found->second);  // stored as the panel sent it
-
-            return Ir77RETURN<Ir77OperationSucceeded>();
-        };
-
-        m_operations["field.save"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
-            std::shared_ptr<IIr77Return const> result{};
-
-            std::string const name{Text(a, "name")};
-            if (name.empty()) {
-                m_error = "a field needs a name";
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
-            }
-
-            simdjson::dom::element field{};
-            if (a["field"].get(field) != simdjson::SUCCESS || !field.is_object()) {
-                m_error = "field.save needs \"field\" as an object";
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
-            }
-
-            std::string const entry = simdjson::minify(field);  // copied before the file is parsed
-
-            std::map<std::string, std::string> entries{};
-            if (Failed(DefineFieldsRead(entries), result)) return result;
-
-            entries[name] = entry;
-
-            return DefineFieldsWrite(entries);
-        };
-
-        m_operations["field.delete"] = [this](Ir77SceneArgs const& a) -> std::shared_ptr<IIr77Return const> {
-            std::shared_ptr<IIr77Return const> result{};
-
-            std::string const name{Text(a, "name")};
-
-            std::map<std::string, std::string> entries{};
-            if (Failed(DefineFieldsRead(entries), result)) return result;
-
-            if (entries.erase(name) == 0) {
-                m_error = "no field '" + name + "'";
-                return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
-            }
-
-            return DefineFieldsWrite(entries);
-        };
-    }
-
-    // <project>/fields.json -> name -> entry (minified JSON). No file yet is an empty list, not an error.
-    std::shared_ptr<IIr77Return const> DefineFieldsRead(std::map<std::string, std::string>& entries) {
-        entries.clear();
-
-        if (m_project.empty()) {
-            m_error = "no project open";
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
-        }
-
-        std::filesystem::path const file = std::filesystem::path{m_project} / "fields.json";
-
-        std::error_code error{};
-        if (!std::filesystem::exists(file, error)) return Ir77RETURN<Ir77OperationSucceeded>();
-
-        // its own parser -- m_parser still holds the message being handled, and its args point into it
-        simdjson::dom::element root{};
-        if (m_fields_parser.load(file.string()).get(root) != simdjson::SUCCESS) {
-            m_error = file.string() + " is not valid JSON";
-            return Ir77RETURN<Ir77OperationFailed>(this, "Ir77Server: " + m_error);
-        }
-
-        simdjson::dom::object fields{};
-        if (root.get(fields) != simdjson::SUCCESS) {
-            m_error = file.string() + " must be one object keyed by field name";
-            return Ir77RETURN<Ir77OperationFailed>(this, "Ir77Server: " + m_error);
-        }
-
-        for (auto const field : fields) entries[std::string{field.key}] = simdjson::minify(field.value);
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
-    }
-
-    // name -> entry back to <project>/fields.json, one entry per line. Written to fields.json.tmp, then renamed over the old file -- a
-    // crash mid-write leaves the old file whole.
-    std::shared_ptr<IIr77Return const> DefineFieldsWrite(std::map<std::string, std::string> const& entries) {
-        std::filesystem::path const file = std::filesystem::path{m_project} / "fields.json";
-        std::filesystem::path temp = file;
-        temp += ".tmp";
-
-        std::error_code error{};
-        std::filesystem::create_directories(m_project, error);
-
-        {
-            std::ofstream out{temp, std::ios::trunc};
-            if (!out) {
-                m_error = "cannot write " + temp.string();
-                return Ir77RETURN<Ir77OperationFailed>(this, "Ir77Server: " + m_error);
-            }
-
-            out << "{\n";
-
-            std::size_t written{0};
-            for (auto const& [name, entry] : entries) {
-                written++;
-                out << "  " << Ir77Json::Quote(name) << ": " << entry << (written < entries.size() ? ",\n" : "\n");
-            }
-
-            out << "}\n";
-            out.flush();
-
-            if (!out) {
-                m_error = "cannot write " + temp.string();
-                return Ir77RETURN<Ir77OperationFailed>(this, "Ir77Server: " + m_error);
-            }
-        }
-
-        std::filesystem::rename(temp, file, error);
-        if (error) {
-            m_error = "cannot replace " + file.string() + ": " + error.message();
-            return Ir77RETURN<Ir77OperationFailed>(this, "Ir77Server: " + m_error);
-        }
-
-        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // args readers -- a missing or mistyped key gives the fallback
@@ -1223,8 +1505,6 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
     std::shared_ptr<IIr77View> m_view{};  // Animate's -- camera.* ops
 
-    std::shared_ptr<IIr77Field> m_field{};  // Animate's -- field.* ops
-
     // Ir77PVLight::type -- as Ir77Light writes them from the glTF
     static constexpr int LIGHT_DIRECTIONAL{0};
 
@@ -1240,9 +1520,9 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
     Ir77Json m_settings{Ir77Json::Object()};  // the scene's settings (scene.settings) -- any keys; the dump carries them
 
-    std::string m_project{};  // scene.project -- the folder fields.json and models/ live in
+    std::string m_project{};  // scene.project -- the folder models/ live in
 
-    Ir77Graph m_graph{};  // the scene graph -- every entity by its id; it drives Animate
+    std::shared_ptr<IIr77Graph> m_graph{};  // the scene graph -- every entity by its id; it drives Animate. Only this server holds it.
 
     std::vector<std::string> m_import_report{};  // what the last import's flatten left out -- entity.add's reply carries it
 
@@ -1254,7 +1534,11 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
     std::string m_document_name{};
 
-    simdjson::dom::parser m_fields_parser{};  // fields.json -- separate from m_parser, which holds the message being handled
+    std::string m_active{};  // entity.select -- the active entity's id ('' = none). The dump carries it.
+
+    Ir77InteractionMode m_interaction{Ir77InteractionMode::Object};  // entity.mode -- what the active entity is worked in
+
+    Ir77ObjectDrag m_object_drag{};  // object mode's gizmo drag on the active entity
 
     simdjson::dom::parser m_parser{};
 

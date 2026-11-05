@@ -12,14 +12,19 @@
 
 #include "IIr77PVDevice.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
 namespace NSIr77PeregrineV {
 
+// One image on the device -- image, view and sampler, in the layout shaders read it from. SetDevice / SetAllocator -> SetKind -> [SetFormat] /
+// [SetSampler] -> one Create* by kind -> GetImageInfo for the bindless table. Every Create* blocks until the GPU is done; calling one again
+// replaces the image, so nothing may still be reading the old one.
 typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
     IIr77PVTexture() = default;
+
+    // ---- configuration ----------------------------------------------------------------------------------------------------------------------
 
     virtual std::shared_ptr<IIr77Return const> SetDevice(std::shared_ptr<IIr77PVDevice> device) = 0;
 
@@ -34,7 +39,9 @@ typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
     // anisotropy > 0 is used only if the device supports it (clamped to its limit); the logical device must enable samplerAnisotropy
     virtual std::shared_ptr<IIr77Return const> SetSampler(Ir77PVSamplerDesc const& sampler) = 0;
 
-    // Color / Data: tightly packed pixels, width * height * bytes-per-pixel
+    // ---- create -- one per texture, by kind -------------------------------------------------------------------------------------------------
+
+    // Color / Data: tightly packed pixels, width * height * bytes-per-pixel. mipmaps = the full chain where the format can be blitted.
     virtual std::shared_ptr<IIr77Return const> CreateFromPixels(VkCommandPool const& pool, VkQueue const& queue, void const* pixels, std::uint32_t const& width,
                                                                 std::uint32_t const& height, bool const& mipmaps) = 0;
 
@@ -45,19 +52,24 @@ typedef struct IIr77PVTexture : virtual public IIr77Enlisted {
     // Color / Data: 1x1 of one RGBA8 value (bytes R,G,B,A packed little-endian: 0xAABBGGRR)
     virtual std::shared_ptr<IIr77Return const> CreateSolid(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& rgba) = 0;
 
+    // CreateSolid through the device's upload pool -- no Vulkan objects needed
     virtual std::shared_ptr<IIr77Return const> CreatePlaceholder(std::uint32_t const& rgba) = 0;
 
-    // Depth: shadow-map target, cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL so it can be sampled before any
-    // shadow pass runs. The shadow render pass must end in DEPTH_STENCIL_READ_ONLY_OPTIMAL. 1x1 doubles as the shadow placeholder.
+    // Depth: shadow-map target, cleared to 1.0 and left in DEPTH_STENCIL_READ_ONLY_OPTIMAL so it can be sampled before any shadow pass runs.
+    // The shadow render pass must end in DEPTH_STENCIL_READ_ONLY_OPTIMAL. 1x1 doubles as the shadow placeholder.
     virtual std::shared_ptr<IIr77Return const> CreateDepth(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width,
                                                            std::uint32_t const& height) = 0;
 
-    // Storage kind: cleared to 0, VK_IMAGE_LAYOUT_GENERAL for good -- register as both a texture and a storage image
+    // Storage: cleared to 0, VK_IMAGE_LAYOUT_GENERAL for good -- register as both a texture and a storage image
     virtual std::shared_ptr<IIr77Return const> CreateStorage(VkCommandPool const& pool, VkQueue const& queue, std::uint32_t const& width,
-                                                             std::uint32_t const& height) = 0;                                                           
+                                                             std::uint32_t const& height) = 0;
 
+    // ---- queries ----------------------------------------------------------------------------------------------------------------------------
+
+    // View, sampler and read layout -- what the bindless table registers. Fails before a Create*.
     virtual std::shared_ptr<IIr77Return const> GetImageInfo(VkDescriptorImageInfo* info) = 0;
 
+    // The rest are VK_NULL_HANDLE / empty before a Create*
     virtual std::shared_ptr<IIr77Return const> GetImage(VkImage* image) = 0;
 
     virtual std::shared_ptr<IIr77Return const> GetView(VkImageView* view) = 0;

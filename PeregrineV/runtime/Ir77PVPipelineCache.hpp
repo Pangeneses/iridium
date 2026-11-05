@@ -21,7 +21,7 @@
 
 #include <simdjson.h>
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
 
@@ -53,8 +53,9 @@ namespace NSIr77PeregrineV {
 //   use:       FindPipeline(name / kind) once -> Ir77PVPipelineHandle (draw items and dispatches carry it) -> GetPipeline(handle) per draw,
 //              GetComputePipeline(handle) per dispatch. The only way in: a handle names a pipeline (or a role) and resolves against the current
 //              manifest, so a manifest reload re-points everything.
-//   resolve:   handle -> ResolveSlot -> DescribeNamed / DescribeKind -> BuildPipeline or BuildComputePipeline (the one already built, or
-//              built now; a description that failed isn't retried until the next manifest load or its shader is replaced)
+//   resolve:   handle -> ResolveSlot -> DescribeSlot (DescribeNamed / DescribeKind) -> FindOrBuildPipeline or FindOrBuildComputePipeline (the one
+//              already built, or BuildPipeline / BuildComputePipeline now; a description that failed isn't retried until the next manifest
+//              load or its shader is replaced; a render pass not set yet is retried on the next use)
 //
 // Manifest (version 1):
 //   "pipelines": { name: { vertex / fragment / task / mesh: shader registry names,
@@ -183,8 +184,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         if (!m_shader_stack) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: SetShader not called.");
         if (m_cache != VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: pipeline cache already created.");
 
-        auto const result = DefineCachePath();
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(DefineCachePath(), result)) return result;
 
         return DefineCache();
     }
@@ -202,7 +203,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
     }
 
     // Per draw: one index after the first call; the first call (and the first after a manifest load) describes and builds. A compute handle
-    // fails here -- see GetComputePipeline. A handle that can't resolve fails quietly (reported once) until the next manifest load.
+    // fails here -- see GetComputePipeline. A handle that can't resolve fails quietly (reported once) until the next manifest load -- except
+    // one waiting on its render pass, which tries again on every use.
     std::shared_ptr<IIr77Return const> GetPipeline(Ir77PVPipelineHandle const& handle, std::shared_ptr<IIr77PVPipeline>& pipeline) {
         if (handle >= m_handles.size()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: unknown pipeline handle.");
 
@@ -215,8 +217,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
         if (slot.failed || slot.compute) return Ir77RETURN<Ir77NotConfigured>();
 
-        auto const result = ResolveSlot(handle);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(ResolveSlot(handle), result)) return result;
 
         if (!slot.pipeline) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: '" + slot.name + "' is a compute pipeline -- dispatch it.");
 
@@ -238,8 +240,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
         if (slot.failed || slot.pipeline) return Ir77RETURN<Ir77NotConfigured>();
 
-        auto const result = ResolveSlot(handle);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(ResolveSlot(handle), result)) return result;
 
         if (!slot.compute) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: '" + slot.name + "' is a graphics pipeline -- draw it.");
 
@@ -465,6 +467,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         simdjson::dom::object pipelines{};
         if (root["pipelines"].get(pipelines) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, where + "\"pipelines\" must be an object.");
 
+        std::shared_ptr<IIr77Return const> result{};
+
         std::map<std::string, Ir77PVPipelineDesc> named{};
         std::map<std::string, std::string> unavailable{};
         std::map<std::string, std::vector<std::string>> user{};
@@ -478,8 +482,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
             Ir77PVPipelineDesc desc{};
 
             // malformed -- the whole load fails
-            auto result = ReadNamedState(where + "pipeline '" + name + "': ", entry, desc, user[name]);
-            if (result->ID() != GUIDIr77OperationSucceeded) return result;
+            if (Failed(ReadNamedState(where + "pipeline '" + name + "': ", entry, desc, user[name]), result)) return result;
 
             // a shader that isn't registered -- this pipeline is unavailable, the rest load
             std::string missing{};
@@ -496,8 +499,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
         std::map<std::string, std::string> roles{};
 
-        auto const result = ReadRoles(root, where, named, unavailable, roles);
-        if (result->ID() != GUIDIr77OperationSucceeded) return result;
+        if (Failed(ReadRoles(root, where, named, unavailable, roles), result)) return result;
 
         m_named = std::move(named);
         m_unavailable = std::move(unavailable);
@@ -518,7 +520,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
     // Everything in a pipeline entry except its stages. Unknown keys are errors -- a typo shouldn't silently fall back to a default.
     std::shared_ptr<IIr77Return const> ReadNamedState(std::string const& where, simdjson::dom::object const& entry, Ir77PVPipelineDesc& desc,
-                                                        std::vector<std::string>& user) {
+                                                      std::vector<std::string>& user) {
         bool compute{false};
         std::string graphics_key{};
 
@@ -620,8 +622,8 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
     // "roles": every engine role it names must point at a pipeline in the file; static and cef must point at available ones
     std::shared_ptr<IIr77Return const> ReadRoles(simdjson::dom::element const& root, std::string const& where,
-                                                   std::map<std::string, Ir77PVPipelineDesc> const& named,
-                                                   std::map<std::string, std::string> const& unavailable, std::map<std::string, std::string>& roles) {
+                                                 std::map<std::string, Ir77PVPipelineDesc> const& named, std::map<std::string, std::string> const& unavailable,
+                                                 std::map<std::string, std::string>& roles) {
         simdjson::dom::object object{};
         if (root["roles"].get(object) != simdjson::SUCCESS) return Ir77RETURN<Ir77NotConfigured>(this, where + "\"roles\" must be an object.");
 
@@ -637,7 +639,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
                 continue;
             }
 
-            if (named.count(std::string{pipeline}) == 0 && unavailable.count(std::string{pipeline}) == 0)
+            if (!named.contains(std::string{pipeline}) && !unavailable.contains(std::string{pipeline}))
                 return Ir77RETURN<Ir77NotConfigured>(
                     this, where + "role '" + role + "' names pipeline '" + std::string{pipeline} + "', which isn't in \"pipelines\".");
 
@@ -654,7 +656,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
             if (role == roles.end()) return Ir77RETURN<Ir77NotConfigured>(this, where + "required role '" + RoleName(kind) + "' is missing.");
 
-            if (named.count(role->second) == 0)
+            if (!named.contains(role->second))
                 return Ir77RETURN<Ir77NotConfigured>(this,
                                                      where + "required role '" + RoleName(kind) + "' points at unavailable pipeline '" + role->second + "'.");
         }
@@ -671,59 +673,41 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         return DescribeNamed(role->second, desc);
     }
 
-    // An unresolved slot -> its description -> its graphics or compute pipeline. A failure marks the slot until the next manifest load.
+    // An unresolved slot -> its description -> its graphics or compute pipeline. A failure marks the slot until the next manifest load --
+    // except a graphics pipeline whose render pass isn't set yet: that's wiring still to come, so the slot tries again on its next use.
     std::shared_ptr<IIr77Return const> ResolveSlot(Ir77PVPipelineHandle const& handle) {
         auto& slot = m_handles[handle];
 
+        std::shared_ptr<IIr77Return const> result{};
+
         Ir77PVPipelineDesc desc{};
-
-        Ir77PVPipelineKind kind{};
-        auto result = !slot.role                 ? DescribeNamed(slot.name, desc)
-                      : RoleOf(slot.name, kind) ? DescribeKind(kind, desc)
-                                                : Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: '" + slot.name + "' isn't an engine role.");
-
-        if (result->ID() == GUIDIr77OperationSucceeded)
-            result = desc.IsCompute() ? BuildComputePipeline(desc, slot.compute) : BuildPipeline(desc, slot.pipeline);
-
-        if (result->ID() != GUIDIr77OperationSucceeded) slot.failed = true;
-
-        return result;
-    }
-
-    // compute description -> its pipeline, the same way
-    std::shared_ptr<IIr77Return const> BuildComputePipeline(Ir77PVPipelineDesc const& desc, std::shared_ptr<IIr77PVPipelineCPT>& pipeline) {
-        if (m_cache == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: CreatePipelineCache not called.");
-
-        auto const found = m_compute_pipelines.find(desc);
-        if (found != m_compute_pipelines.end()) {
-            pipeline = found->second;
-            return Ir77RETURN<Ir77OperationSucceeded>();
-        }
-
-        if (m_failed.count(desc) != 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: this pipeline failed to build earlier.");
-
-        auto created = std::static_pointer_cast<IIr77PVPipelineCPT>(std::make_shared<Ir77PVPipelineCPT>());
-
-        created->SetDevice(m_device);
-        created->SetLayout(m_layout);
-        created->SetShader(m_shader_stack);
-        created->SetComputeShader(desc.compute);
-        created->SetPipelineCache(m_cache);
-
-        auto const result = created->CreatePipeline();
-        if (result->ID() != GUIDIr77OperationSucceeded) {
-            m_failed.insert(desc);
+        if (Failed(DescribeSlot(handle, desc), result)) {
+            slot.failed = true;
             return result;
         }
 
-        m_compute_pipelines.emplace(desc, created);
-        pipeline = created;
+        if (Failed(desc.IsCompute() ? FindOrBuildComputePipeline(desc, slot.compute) : FindOrBuildPipeline(desc, slot.pipeline), result)) {
+            if (desc.IsCompute() || HasRenderPass(desc.pass)) slot.failed = true;
+            return result;
+        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // description -> its pipeline: the one already built, or built now. A description that failed stays failed until the next manifest load.
-    std::shared_ptr<IIr77Return const> BuildPipeline(Ir77PVPipelineDesc const& desc, std::shared_ptr<IIr77PVPipeline>& pipeline) {
+    // A handle's description -- its pipeline name's, or its role's pipeline's
+    std::shared_ptr<IIr77Return const> DescribeSlot(Ir77PVPipelineHandle const& handle, Ir77PVPipelineDesc& desc) {
+        auto const& slot = m_handles[handle];
+        if (!slot.role) return DescribeNamed(slot.name, desc);
+
+        Ir77PVPipelineKind kind{};
+        if (!RoleOf(slot.name, kind)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: '" + slot.name + "' isn't an engine role.");
+
+        return DescribeKind(kind, desc);
+    }
+
+    // description -> its graphics pipeline: the one already built, or built now. A description that failed stays failed until the next
+    // manifest load or InvalidateShader of one of its shaders.
+    std::shared_ptr<IIr77Return const> FindOrBuildPipeline(Ir77PVPipelineDesc const& desc, std::shared_ptr<IIr77PVPipeline>& pipeline) {
         if (m_cache == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: CreatePipelineCache not called.");
 
         auto const found = m_pipelines.find(desc);
@@ -732,34 +716,87 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
             return Ir77RETURN<Ir77OperationSucceeded>();
         }
 
-        if (m_failed.count(desc) != 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: this pipeline failed to build earlier.");
+        if (m_failed.contains(desc)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: this pipeline failed to build earlier.");
 
-        // a miss: built against the pass the description names, kept -- or remembered as failed
-        auto const pass = m_render_passes.find(desc.pass);
-        if (pass == m_render_passes.end() || !pass->second) {
+        // wiring still to come -- not a build failure, so not remembered
+        if (!HasRenderPass(desc.pass)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: the description's render pass was not set.");
+
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(BuildPipeline(desc, m_render_passes.at(desc.pass), pipeline), result)) {
             m_failed.insert(desc);
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: the description's render pass was not set.");
+            return result;
         }
 
-        auto created = std::static_pointer_cast<IIr77PVPipeline>(std::make_shared<Ir77PVPipeline>());
+        m_pipelines.emplace(desc, pipeline);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // description -> its compute pipeline, the same way
+    std::shared_ptr<IIr77Return const> FindOrBuildComputePipeline(Ir77PVPipelineDesc const& desc, std::shared_ptr<IIr77PVPipelineCPT>& pipeline) {
+        if (m_cache == VK_NULL_HANDLE) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: CreatePipelineCache not called.");
+
+        auto const found = m_compute_pipelines.find(desc);
+        if (found != m_compute_pipelines.end()) {
+            pipeline = found->second;
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        }
+
+        if (m_failed.contains(desc)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77PVPipelineCache: this pipeline failed to build earlier.");
+
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(BuildComputePipeline(desc, pipeline), result)) {
+            m_failed.insert(desc);
+            return result;
+        }
+
+        m_compute_pipelines.emplace(desc, pipeline);
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // One graphics pipeline from its description, against render_pass -- built through the cache's VkPipelineCache
+    std::shared_ptr<IIr77Return const> BuildPipeline(Ir77PVPipelineDesc const& desc, std::shared_ptr<IIr77PVRenderPass> const& render_pass,
+                                                     std::shared_ptr<IIr77PVPipeline>& pipeline) {
+        std::shared_ptr<IIr77PVPipeline> created = std::make_shared<Ir77PVPipeline>();
 
         created->SetDevice(m_device);
-        created->SetRenderPass(pass->second);
+        created->SetRenderPass(render_pass);
         created->SetLayout(m_layout);
         created->SetShader(m_shader_stack);
         created->SetDesc(desc);
         created->SetPipelineCache(m_cache);
 
-        auto const result = created->CreatePipeline();
-        if (result->ID() != GUIDIr77OperationSucceeded) {
-            m_failed.insert(desc);
-            return result;
-        }
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(created->CreatePipeline(), result)) return result;
 
-        m_pipelines.emplace(desc, created);
         pipeline = created;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // One compute pipeline from its description -- built through the cache's VkPipelineCache
+    std::shared_ptr<IIr77Return const> BuildComputePipeline(Ir77PVPipelineDesc const& desc, std::shared_ptr<IIr77PVPipelineCPT>& pipeline) {
+        std::shared_ptr<IIr77PVPipelineCPT> created = std::make_shared<Ir77PVPipelineCPT>();
+
+        created->SetDevice(m_device);
+        created->SetLayout(m_layout);
+        created->SetShader(m_shader_stack);
+        created->SetComputeShader(desc.compute);
+        created->SetPipelineCache(m_cache);
+
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(created->CreatePipeline(), result)) return result;
+
+        pipeline = created;
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // A render pass of this kind has been set (SetRenderPass)
+    bool HasRenderPass(Ir77PVRenderPassKind const& kind) const {
+        auto const pass = m_render_passes.find(kind);
+        return pass != m_render_passes.end() && pass->second;
     }
 
     // -------------------------------------------------------------------------------------------------------------------------------------
@@ -849,15 +886,15 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
         bool role{false};
         std::shared_ptr<IIr77PVPipeline> pipeline{};    // graphics -- empty until first use, and again after every manifest load
         std::shared_ptr<IIr77PVPipelineCPT> compute{};  // compute -- the same
-        bool failed{false};                             // didn't resolve under this manifest -- not retried until the next load
+        bool failed{false};                             // didn't resolve under this manifest -- not retried until the next load (or InvalidateShader)
     }* pIr77PVPipelineSlot;
 
     static constexpr std::uint64_t MANIFEST_VERSION = 1;
 
     // every engine role -- RoleName names each one
-    static constexpr Ir77PVPipelineKind ROLE_KINDS[]{Ir77PVPipelineKind::Static,      Ir77PVPipelineKind::Skinned, Ir77PVPipelineKind::Shadow,
-                                                     Ir77PVPipelineKind::ShadowSkinned, Ir77PVPipelineKind::Transparent, Ir77PVPipelineKind::CEF,
-                                                     Ir77PVPipelineKind::Mesh,        Ir77PVPipelineKind::SkinnedTransparent};
+    static constexpr Ir77PVPipelineKind ROLE_KINDS[]{Ir77PVPipelineKind::Static,        Ir77PVPipelineKind::Skinned,           Ir77PVPipelineKind::Shadow,
+                                                     Ir77PVPipelineKind::ShadowSkinned, Ir77PVPipelineKind::Transparent,       Ir77PVPipelineKind::CEF,
+                                                     Ir77PVPipelineKind::Mesh,          Ir77PVPipelineKind::SkinnedTransparent};
 
     // pc.user[4..7] -- user[0..3] belong to the engine
     static constexpr std::size_t USER_PARAMETER_COUNT = 4;
@@ -879,7 +916,7 @@ class Ir77PVPipelineCache : public Ir77Enlisted, public IIr77PVPipelineCache, pu
 
     std::map<Ir77PVPipelineDesc, std::shared_ptr<IIr77PVPipelineCPT>> m_compute_pipelines{};
 
-    // descriptions that failed to build (bad stages / missing pass) -- not retried every frame
+    // descriptions that failed to build -- not retried every frame (a render pass not set yet isn't a failure)
     std::set<Ir77PVPipelineDesc> m_failed{};
 
     // manifest -- name -> description (stages resolved), name -> why unavailable, name -> pc.user[4..7] names, role -> pipeline name

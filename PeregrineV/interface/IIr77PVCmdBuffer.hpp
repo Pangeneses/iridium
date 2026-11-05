@@ -21,7 +21,7 @@
 #include "IIr77PVOverlay.hpp"
 #include "IIr77PVAcceleration.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
@@ -53,7 +53,7 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     // This window's frame table slot per view + the slots they list, one entry per frame in flight
     virtual std::shared_ptr<IIr77Return const> SetFrameSlots(std::array<Ir77PVFrameSlots, MAX_FRAMES_IN_FLIGHT> const& frame_slots) = 0;
 
-    // Buffer slot of the device's material table (Ir77PeregrineV::GetMaterialTableSlot)
+    // Buffer slot of the device's material table -- Paint passes it on from Materials
     virtual std::shared_ptr<IIr77Return const> SetMaterialTable(std::uint32_t const& slot) = 0;
 
     // The device's pipeline cache -- resolves the pipeline handles on draw items and the overlay while recording. Required.
@@ -82,15 +82,6 @@ typedef struct IIr77PVCmdBuffer : virtual public IIr77Enlisted {
     // ---- acceleration structures -------------------------------------------------------------------------------------------------------------
     // Built right after the Compute pass (BLAS refits, TLAS). Paint sets it each frame on the first window it records. Unset = no builds.
     virtual std::shared_ptr<IIr77Return const> SetAcceleration(std::shared_ptr<IIr77PVAcceleration> acceleration) = 0;
-
-    /*
-    // ---- ray tracing -------------------------------------------------------------------------------------------------------------------------
-    virtual std::shared_ptr<IIr77Return const> SetRayTracing(std::shared_ptr<IIr77PVPipelineRT> pipeline, Ir77PVPushConstants const& push) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetRayTarget(VkImage const& image, VkExtent2D const& extent) = 0;
-
-    virtual std::shared_ptr<IIr77Return const> SetAccelStructure(std::shared_ptr<IIr77PVAccelStructure> tlas) = 0;
-    */
 
     // ---- create ------------------------------------------------------------------------------------------------------------------------------
     // Pool, per-frame command buffers, per-frame sync objects and extension commands. After SetDevice.

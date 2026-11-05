@@ -16,7 +16,7 @@
 #include "IIr77PVBuffer.hpp"
 #include "IIr77PVTransfer.hpp"
 
-#include "../types/Ir77PVTypes.hpp"
+#include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
 
