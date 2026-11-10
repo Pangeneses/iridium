@@ -13,7 +13,7 @@ using namespace NSIr77PeregrineV;
 namespace NSIr77Scene {
 
 // A skinned vertex's skin matrix -- the sum skinned.vert makes (weights x the instance's joint palette), before the instance's models[]
-// matrix. bones = the asset's palettes back to back (Pose::WriteBoneMatrices); base = where this instance's starts. A joint past the palette
+// matrix. bones = the asset's palettes back to back (Model::WriteBoneMatrices); base = where this instance's starts. A joint past the palette
 // counts as no joint; no joints at all -> identity (where the file put it).
 inline glm::mat4 Ir77SkinMatrix(Ir77PVVertexSkinned const& vertex, std::vector<glm::mat4> const& bones, std::uint32_t const base) {
     glm::mat4 skin{0.0f};

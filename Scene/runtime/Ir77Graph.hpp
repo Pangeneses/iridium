@@ -35,7 +35,7 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
-#include "../interface/IIr77Animate.hpp"
+#include "../interface/IIr77World.hpp"
 #include "../interface/IIr77Graph.hpp"
 
 #include "../types/Ir77Types.hpp"
@@ -45,15 +45,15 @@ using namespace NSIr77RT;
 namespace NSIr77Scene {
 
 // =============================================================================================================================================
-// Ir77Graph -- the scene graph's working copy (types/Ir77Types.hpp). The scene server owns it; Animate does the drawing: a model entity is an
-// Animate entity, a light entity a world light. Every change here lands on Animate at once -- world transforms composed down the tree,
+// Ir77Graph -- the scene graph's working copy (types/Ir77Types.hpp). The scene server owns it; World does the drawing: a model entity is an
+// World entity, a light entity a world light. Every change here lands on World at once -- world transforms composed down the tree,
 // visibility too -- so what's drawn is always the graph. Saving and loading are the UI's (it reads Dump, it replays Add).
 //
 //   Add(entity, path) -> id      a new entity (id made here unless the entity brings one -- a load keeps its ids)
 //   Remove(id)                   it and everything under it
 //   Move(id, parent, order)      re-parent / re-order -- never under itself
 //   Set(entity)                  name, transform, visibility, payload -- the whole core and payload replaced
-//   Clear()                      empty -- the scene server calls it with scene.create (Animate's runtime ids start over)
+//   Clear()                      empty -- the scene server calls it with scene.create (World's runtime ids start over)
 // Errors come back as a message (error) and an Ir77NotConfigured return.
 // =============================================================================================================================================
 class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_shared_from_this<Ir77Graph> {
@@ -110,8 +110,8 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
     }
 
    public:
-    std::shared_ptr<IIr77Return const> SetAnimate(std::shared_ptr<IIr77Animate> const& animate) {
-        m_animate = animate;
+    std::shared_ptr<IIr77Return const> SetWorld(std::shared_ptr<IIr77World> const& world) {
+        m_world = world;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -126,7 +126,7 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
     // siblings.
     std::shared_ptr<IIr77Return const> Add(Ir77GraphEntity const& added, std::string const& path, bool const& use_mesh, std::string& id,
                                            std::string& error) {
-        if (!m_animate) return Fail("no Animate", error);
+        if (!m_world) return Fail("no World", error);
 
         Ir77GraphEntity entity = added;
 
@@ -148,7 +148,7 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
             if (path.empty()) return Fail("a model entity needs a model", error);
 
             std::uint32_t runtime{0};
-            if (m_animate->ImportEntity(path, use_mesh, false, runtime)->ID() != GUIDIr77OperationSucceeded)
+            if (m_world->ImportEntity(path, use_mesh, false, runtime)->ID() != GUIDIr77OperationSucceeded)
                 return Fail("model " + entity.model + " didn't load (" + path + ")", error);
 
             entity.runtime = runtime;
@@ -156,7 +156,7 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
 
         if (entity.kind == Ir77GraphKind::Light) {
             std::uint32_t runtime{0};
-            if (m_animate->AddLight(entity.light, glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), runtime)->ID() != GUIDIr77OperationSucceeded)
+            if (m_world->AddLight(entity.light, glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), runtime)->ID() != GUIDIr77OperationSucceeded)
                 return Fail("the light couldn't be made", error);
 
             entity.runtime = runtime;
@@ -180,8 +180,8 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
             Ir77GraphEntity const& entity = m_entities.at(*it);
 
             if (entity.runtime != GRAPH_NO_RUNTIME) {
-                if (entity.kind == Ir77GraphKind::Model) m_animate->RemoveEntity(entity.runtime);
-                if (entity.kind == Ir77GraphKind::Light) m_animate->RemoveLight(entity.runtime);
+                if (entity.kind == Ir77GraphKind::Model) m_world->RemoveEntity(entity.runtime);
+                if (entity.kind == Ir77GraphKind::Light) m_world->RemoveLight(entity.runtime);
             }
 
             m_entities.erase(*it);
@@ -249,7 +249,7 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The model entity behind an Animate entity -- '' when none
+    // The model entity behind a World entity -- '' when none
     std::shared_ptr<IIr77Return const> FindModel(std::uint32_t const& runtime, std::string& id) const {
         id.clear();
 
@@ -306,7 +306,7 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
         return true;
     }
 
-    // it and everything under it onto Animate -- world transforms and visibility
+    // it and everything under it onto World -- world transforms and visibility
     void Apply(std::string const& id) {
         std::vector<std::string> subtree{};
         Subtree(id, subtree);
@@ -323,13 +323,13 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
             bool const shown = ShownOf(at);
 
             if (entity.kind == Ir77GraphKind::Model) {
-                m_animate->SetEntityTransform(entity.runtime, t, r, s);
-                m_animate->SetEntityVisible(entity.runtime, shown);
+                m_world->SetEntityTransform(entity.runtime, t, r, s);
+                m_world->SetEntityVisible(entity.runtime, shown);
             }
 
             if (entity.kind == Ir77GraphKind::Light) {
-                m_animate->SetLight(entity.runtime, entity.light, t, r);
-                m_animate->SetLightVisible(entity.runtime, shown);
+                m_world->SetLight(entity.runtime, entity.light, t, r);
+                m_world->SetLightVisible(entity.runtime, shown);
             }
         }
     }
@@ -389,7 +389,7 @@ class Ir77Graph : public Ir77Enlisted, public IIr77Graph, public std::enable_sha
         return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Graph: " + message);
     }
 
-    std::shared_ptr<IIr77Animate> m_animate{};
+    std::shared_ptr<IIr77World> m_world{};
 
     std::map<std::string, Ir77GraphEntity> m_entities{};  // by id
 

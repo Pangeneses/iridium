@@ -77,6 +77,9 @@ typedef struct IIr77View : virtual public IIr77Enlisted {
     // The controlled camera, back where this view starts
     virtual std::shared_ptr<IIr77Return const> ResetCamera() = 0;
 
+    // Every view back to how it starts -- one view filling the window, focused, each camera where it starts (an app switch)
+    virtual std::shared_ptr<IIr77Return const> ResetViews() = 0;
+
     virtual ~IIr77View() = default;
 }* pIIr77View;
 }  // namespace NSIr77Scene

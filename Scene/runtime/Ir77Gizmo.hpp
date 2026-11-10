@@ -40,7 +40,7 @@ using namespace NSIr77PeregrineV;
 namespace NSIr77Scene {
 
 // =============================================================================================================================================
-// Ir77Gizmo -- the transform gizmo (gizmo.vert / edit.frag through the "edit.gizmo" pipeline). Owned by Ir77Animate and shared with Ir77Edit:
+// Ir77Gizmo -- the transform gizmo (gizmo.vert / edit.frag through the "edit.gizmo" pipeline). Owned by Ir77World and shared with Ir77Edit:
 // edit mode drives it at the selection's median, object mode at the active entity. One mode for both.
 //
 // A placement is a matrix: its pivot is the translation, its axes the (unit) columns -- the identity's for world axes, an object's own

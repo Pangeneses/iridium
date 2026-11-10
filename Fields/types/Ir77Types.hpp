@@ -16,7 +16,7 @@ namespace NSIr77Fields {
 // the surface's height range for the shadow box.
 struct Ir77FieldSettings {
     std::string source{};
-    std::uint32_t topology{0};  // 0 surface (z = 0 slice of the grid), 1 particles
+    std::uint32_t topology{0};  // 0 surface (z = 0 slice of the grid), 1 particles, 2 isosurface (where |data.x| crosses 1 in the 3D grid)
     glm::uvec3 dims{128, 128, 1};
     glm::vec2 x{-4.0f, 4.0f};
     glm::vec2 y{-4.0f, 4.0f};
@@ -68,9 +68,28 @@ struct Ir77FieldConfig {
     std::array<glm::vec4, 2> pen_width{};
     glm::uvec4 ink{0u};  // x point-ink slot, y pen target (0 canvas, 1 points)
     glm::uvec4 values{0u};  // x data slot (field.data -- the config's own when there's none), y how many floats
+    glm::uvec4 iso{0u};     // isosurface: x vertex buffer slot, y counter slot, z vertex budget (both the config's own slot, 0 otherwise)
+    glm::uvec4 markers{0u}; // x marker buffer slot (the config's own when there's none), y how many it holds (FIELD_MAX_MARKERS or 0)
 };
 
-static_assert(sizeof(Ir77FieldConfig) == 352, "must match Ir77FieldConfig in field.glsl");
+static_assert(sizeof(Ir77FieldConfig) == 384, "must match Ir77FieldConfig in field.glsl");
+
+// One marker -- a lit sphere the program places (Marker()). std430, 32 bytes. Must match Ir77FieldMarker in field.glsl.
+struct Ir77FieldMarkerGPU {
+    glm::vec4 sphere{0.0f};  // xyz world centre, w radius (0: none)
+    glm::vec4 color{0.0f};
+};
+
+static_assert(sizeof(Ir77FieldMarkerGPU) == 32, "must match Ir77FieldMarker in field.glsl");
+
+// One isosurface vertex -- std430, 48 bytes. Must match Ir77FieldIsoVertex in field.glsl.
+struct Ir77FieldIsoVertexGPU {
+    glm::vec4 position{0.0f};  // xyz world, w unused
+    glm::vec4 normal{0.0f};    // xyz outward, w the value there (data.x, signed)
+    glm::vec4 color{0.0f};
+};
+
+static_assert(sizeof(Ir77FieldIsoVertexGPU) == 48, "must match Ir77FieldIsoVertex in field.glsl");
 
 // =============================================================================================================================================
 // limits
@@ -81,6 +100,12 @@ inline constexpr std::uint64_t FIELD_MAX_POINTS{16u * 1024u * 1024u};
 // field.data -- the most floats a program's data buffer holds (64 MB)
 inline constexpr std::uint64_t FIELD_MAX_DATA{16u * 1024u * 1024u};
 
+// where data files live -- <project>/data/<name>.json (Compute writes them, field.data.load reads them)
+inline constexpr char const* FIELD_DATA_FOLDER{"data"};
+
+// the built-in programs -- <shader root>/fields/library.json and the .glsl files it names
+inline constexpr char const* FIELD_LIBRARY_FOLDER{"fields"};
+
 // a surface past this stays out of the rays (its grid index copy: 96 MB)
 inline constexpr std::uint64_t FIELD_MAX_RAY_CELLS{4u * 1024u * 1024u};
 
@@ -88,6 +113,25 @@ inline constexpr std::uint64_t FIELD_MAX_RAY_CELLS{4u * 1024u * 1024u};
 inline constexpr std::uint32_t FIELD_JOB_POINTS{0};
 inline constexpr std::uint32_t FIELD_JOB_CANVAS{1};
 inline constexpr std::uint32_t FIELD_JOB_PEN{2};
+inline constexpr std::uint32_t FIELD_JOB_ISO_CLEAR{3};  // the isosurface's vertex counter back to 0
+inline constexpr std::uint32_t FIELD_JOB_ISO{4};        // one thread a cell -- marching tetrahedra into the vertex buffer
+inline constexpr std::uint32_t FIELD_JOB_MARKERS{5};    // one thread a marker -- the program's Marker() into the marker buffer
+
+// markers -- spheres a program places (nuclei, sources, probes); drawn whatever the topology
+inline constexpr std::uint32_t FIELD_MAX_MARKERS{64};
+inline constexpr std::uint32_t FIELD_MARKER_STACKS{16};
+inline constexpr std::uint32_t FIELD_MARKER_SLICES{32};
+inline constexpr std::uint32_t FIELD_MARKER_VERTICES{FIELD_MARKER_STACKS * FIELD_MARKER_SLICES * 6};
+
+// the topologies
+inline constexpr std::uint32_t FIELD_TOPOLOGY_SURFACE{0};
+inline constexpr std::uint32_t FIELD_TOPOLOGY_PARTICLES{1};
+inline constexpr std::uint32_t FIELD_TOPOLOGY_ISOSURFACE{2};
+
+// an isosurface's vertex budget -- 3 a cell of the grid, between these (a cell holds up to 12 triangles, but only cells the surface crosses
+// make any: past the budget, triangles are dropped). 48 bytes a vertex: the most is 96 MB.
+inline constexpr std::uint64_t FIELD_MIN_ISO_VERTICES{3u * 65536u};
+inline constexpr std::uint64_t FIELD_MAX_ISO_VERTICES{2u * 1024u * 1024u};
 
 // 64 threads a group (local_size_x in field_compute.glsl)
 inline constexpr std::uint64_t FIELD_GROUP_SIZE{64};

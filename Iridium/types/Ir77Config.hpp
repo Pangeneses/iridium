@@ -65,7 +65,6 @@ typedef struct Ir77Config {
     // startup -- what to show until the Angular app opens a project itself
     std::string startup_project{};   // folder name under projects
     std::string startup_scene{};     // file under that project's Models/
-    std::string startup_pipeline{};  // manifest pipeline for the scene's static runs -- empty = the "static" role
 }* pIr77Config;
 
 }  // namespace NSIr77

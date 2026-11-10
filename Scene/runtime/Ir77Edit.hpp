@@ -50,7 +50,7 @@ namespace NSIr77Scene {
 
 // =============================================================================================================================================
 // Ir77Edit -- edit mode: the model's edit mesh, its selection, and the cage drawn over it (edit_faces.vert / edit_edges.vert /
-// edit_points.vert / edit.frag). Owned by Ir77Animate, which builds it when a model goes into edit mode and adds its draws to every window's
+// edit_points.vert / edit.frag). Owned by Ir77World, which builds it when a model goes into edit mode and adds its draws to every window's
 // opaque list after the grid.
 //
 //   setup:     SetRenderer
@@ -67,11 +67,11 @@ namespace NSIr77Scene {
 //              each stream that changed. A confirmed grab goes into the model's mesh (Ir77Mesh) -- what a save writes out -- and onto the undo
 //              history (every stream vertex it touched, before and after); a cancelled one puts back exactly what it found.
 //   history:   Undo / Redo -- a confirmed edit back or again, positions and normals as they were. Kept while the model is in edit mode.
-//   per frame: AppendDraws(window, items) -- selected faces tinted, edges, then points (vertex mode). Animate puts them in the transparent list,
+//   per frame: AppendDraws(window, items) -- selected faces tinted, edges, then points (vertex mode). World puts them in the transparent list,
 //              after the model's own transparent draws, so an alpha (BLEND) model never washes its cage out.
 //
 // The cage is placed on the GPU through the frame's instance table, so it follows the model's transform with no rebuild. A model in edit
-// mode plays nothing (Animate holds its clips), so the rest pose the cage was built in is the pose it draws in.
+// mode plays nothing (World holds its clips), so the rest pose the cage was built in is the pose it draws in.
 // =============================================================================================================================================
 class Ir77Edit : public Ir77Enlisted, public IIr77Edit, public std::enable_shared_from_this<Ir77Edit> {
    public:
@@ -133,7 +133,7 @@ class Ir77Edit : public Ir77Enlisted, public IIr77Edit, public std::enable_share
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The transform gizmo -- Animate's, shared with object mode
+    // The transform gizmo -- World's, shared with object mode
     std::shared_ptr<IIr77Return const> SetGizmo(std::shared_ptr<IIr77Gizmo> const& gizmo) {
         m_gizmo = gizmo;
 
@@ -1483,7 +1483,7 @@ class Ir77Edit : public Ir77Enlisted, public IIr77Edit, public std::enable_share
 
     std::vector<glm::vec3> m_grab_moves{};  // per edit vertex -- the last ApplyGrab's move in its instance space (what its glTF vertices follow)
 
-    std::shared_ptr<IIr77Gizmo> m_gizmo{};  // Animate's -- shared with object mode
+    std::shared_ptr<IIr77Gizmo> m_gizmo{};  // World's -- shared with object mode
 
     // confirmed edits while in edit mode -- Undo walks back, Redo forward; a new edit clears what Redo had
     std::vector<Ir77EditStep> m_undo{};

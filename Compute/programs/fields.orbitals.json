@@ -1,0 +1,61 @@
+{
+  "orbitals": {
+    "source": "// =============================================================================================================================================\n// orbitals -- Compute's field program: a molecule's orbitals and electron density, read from field.data. Compute owns this format -- it writes\n// the data and sends this source as field.compile with it, so the writer and the reader live together and Fields stays generic (it only runs\n// the function; include/view.glsl draws it -- a cloud on particles, a slice on a surface; see its header for the view's params p[3..7]).\n//\n//   p[0] what   -1 the total density; then the orbitals in the data's order, evenly across to the last at +1\n//\n// Units: bohr, hartree. Until Compute sends it, paste it into the Fields panel and load data with the data button (h2.sto3g.json,\n// p.sto3g.json beside it -- written and checked by orbitals.data.py).\n//\n// ---- the layout (version 1) -- field.data, every value a float (indices and counts are whole numbers, exact to 2^24) ---------------------\n//\n//   header    8      version (1), atoms A, shells S, primitives P, basis functions N, orbitals M, total energy, 0\n//   atoms     A x 4  x, y, z, Z (nuclear charge)                         -- bohr, world axes (Y up)\n//   shells    S x 4  atom, l (0 s, 1 p, 2 d), first primitive, primitive count\n//   primitives P x 2 exponent alpha, coefficient d (on the normalized primitive, contraction included)\n//   orbitals  M x (2 + N)  occupation, energy, then N coefficients on the basis functions\n//\n// Basis functions are the shells in order, each shell's Cartesian components in order:\n//   s: 1      p: x, y, z      d: xx, xy, xz, yy, yz, zz        (N = the sum of 1 / 3 / 6 over the shells)\n// One function: phi(r) = sum_k d_k Nk x^a y^b z^c exp(-alpha_k |r - atom|^2), x y z from its atom, Nk the normalized Cartesian primitive's\n//   Nk = (2 alpha / pi)^(3/4) (4 alpha)^(l/2) / sqrt((2a-1)!! (2b-1)!! (2c-1)!!)\n// so the solver's integrals must be over exactly these functions (their own normalization, their own order). Shells past d are skipped.\n// =============================================================================================================================================\n\n#define ORBITALS_VERSION 1u\n#define ORBITALS_HEADER 8u\n#define ORBITALS_ATOM 4u\n#define ORBITALS_SHELL 4u\n#define ORBITALS_PRIMITIVE 2u\n#define ORBITALS_MAX_L 2u\n\n// where everything sits in field.data -- valid = a version-1 layout that fits in what was uploaded\nstruct Ir77Orbitals {\n    bool valid;\n    uint atoms;\n    uint shells;\n    uint primitives;\n    uint functions;\n    uint orbitals;\n    float energy;\n    uint atom_at;\n    uint shell_at;\n    uint primitive_at;\n    uint orbital_at;\n};\n\nIr77Orbitals Ir77OrbitalsLayout() {\n    Ir77Orbitals o;\n    o.valid = false;\n    o.atoms = 0u;\n    o.shells = 0u;\n    o.primitives = 0u;\n    o.functions = 0u;\n    o.orbitals = 0u;\n    o.energy = 0.0;\n    o.atom_at = 0u;\n    o.shell_at = 0u;\n    o.primitive_at = 0u;\n    o.orbital_at = 0u;\n\n    if (Ir77FieldDataCount() < ORBITALS_HEADER || uint(Ir77FieldData(0u) + 0.5) != ORBITALS_VERSION) return o;\n\n    o.atoms = uint(Ir77FieldData(1u) + 0.5);\n    o.shells = uint(Ir77FieldData(2u) + 0.5);\n    o.primitives = uint(Ir77FieldData(3u) + 0.5);\n    o.functions = uint(Ir77FieldData(4u) + 0.5);\n    o.orbitals = uint(Ir77FieldData(5u) + 0.5);\n    o.energy = Ir77FieldData(6u);\n\n    o.atom_at = ORBITALS_HEADER;\n    o.shell_at = o.atom_at + o.atoms * ORBITALS_ATOM;\n    o.primitive_at = o.shell_at + o.shells * ORBITALS_SHELL;\n    o.orbital_at = o.primitive_at + o.primitives * ORBITALS_PRIMITIVE;\n\n    o.valid = o.orbital_at + o.orbitals * (2u + o.functions) <= Ir77FieldDataCount();\n    return o;\n}\n\nvec3 Ir77OrbitalAtom(Ir77Orbitals o, uint atom) {\n    uint at = o.atom_at + atom * ORBITALS_ATOM;\n    return vec3(Ir77FieldData(at), Ir77FieldData(at + 1u), Ir77FieldData(at + 2u));\n}\n\nfloat Ir77OrbitalCharge(Ir77Orbitals o, uint atom) { return Ir77FieldData(o.atom_at + atom * ORBITALS_ATOM + 3u); }\n\nfloat Ir77OrbitalOccupation(Ir77Orbitals o, uint orbital) { return Ir77FieldData(o.orbital_at + orbital * (2u + o.functions)); }\n\nfloat Ir77OrbitalEnergy(Ir77Orbitals o, uint orbital) { return Ir77FieldData(o.orbital_at + orbital * (2u + o.functions) + 1u); }\n\n// a shell's radial part at r^2 from its atom -- sum_k d_k (2 alpha / pi)^(3/4) (4 alpha)^(l/2) exp(-alpha r^2)\nfloat Ir77ShellRadial(Ir77Orbitals o, uint first, uint count, uint l, float r2) {\n    float sum = 0.0;\n\n    for (uint k = 0u; k < count; k++) {\n        uint at = o.primitive_at + (first + k) * ORBITALS_PRIMITIVE;\n        float alpha = Ir77FieldData(at);\n        float d = Ir77FieldData(at + 1u);\n\n        float norm = pow(2.0 * alpha / 3.14159265359, 0.75) * pow(4.0 * alpha, 0.5 * float(l));\n        sum += d * norm * exp(-alpha * r2);\n    }\n\n    return sum;\n}\n\n// One orbital (0-based) at p -- signed. Each shell's radial part once, its components from it.\nfloat Ir77Orbital(Ir77Orbitals o, uint orbital, vec3 p) {\n    if (!o.valid || orbital >= o.orbitals) return 0.0;\n\n    uint coefficients = o.orbital_at + orbital * (2u + o.functions) + 2u;\n    uint mu = 0u;\n    float psi = 0.0;\n\n    for (uint s = 0u; s < o.shells; s++) {\n        uint at = o.shell_at + s * ORBITALS_SHELL;\n        uint atom = uint(Ir77FieldData(at) + 0.5);\n        uint l = uint(Ir77FieldData(at + 1u) + 0.5);\n        uint first = uint(Ir77FieldData(at + 2u) + 0.5);\n        uint count = uint(Ir77FieldData(at + 3u) + 0.5);\n\n        uint components = l == 0u ? 1u : l == 1u ? 3u : 6u;\n        if (l > ORBITALS_MAX_L) {  // past d -- its (l+1)(l+2)/2 functions skipped\n            mu += (l + 1u) * (l + 2u) / 2u;\n            continue;\n        }\n\n        vec3 x = p - Ir77OrbitalAtom(o, atom);\n        float radial = Ir77ShellRadial(o, first, count, l, dot(x, x));\n\n        if (l == 0u) {\n            psi += Ir77FieldData(coefficients + mu) * radial;\n        } else if (l == 1u) {\n            psi += radial * (Ir77FieldData(coefficients + mu) * x.x + Ir77FieldData(coefficients + mu + 1u) * x.y + Ir77FieldData(coefficients + mu + 2u) * x.z);\n        } else {\n            // xx xy xz yy yz zz -- the squares carry 1 / sqrt(3!!) = 1 / sqrt(3)\n            const float SQUARE = 0.57735027;\n            psi += radial * (Ir77FieldData(coefficients + mu) * x.x * x.x * SQUARE + Ir77FieldData(coefficients + mu + 1u) * x.x * x.y +\n                             Ir77FieldData(coefficients + mu + 2u) * x.x * x.z + Ir77FieldData(coefficients + mu + 3u) * x.y * x.y * SQUARE +\n                             Ir77FieldData(coefficients + mu + 4u) * x.y * x.z + Ir77FieldData(coefficients + mu + 5u) * x.z * x.z * SQUARE);\n        }\n\n        mu += components;\n    }\n\n    return psi;\n}\n\n// The electron density at p -- sum over orbitals of occupation x psi^2 (electrons per cubic bohr)\nfloat Ir77OrbitalDensity(Ir77Orbitals o, vec3 p) {\n    float rho = 0.0;\n\n    for (uint i = 0u; i < o.orbitals; i++) {\n        float occupation = Ir77OrbitalOccupation(o, i);\n        if (occupation <= 0.0) continue;\n\n        float psi = Ir77Orbital(o, i, p);\n        rho += occupation * psi * psi;\n    }\n\n    return rho;\n}\n\n// ---- the function -------------------------------------------------------------------------------------------------------------------------\n\nIr77Sample Sample(vec3 p, float params[8]) {\n    Ir77Orbitals o = Ir77OrbitalsLayout();\n    int what = int((params[0] + 1.0) * 0.5 * float(o.orbitals) + 0.5);  // 0 density, 1.. orbital\n\n    Ir77Sample s;\n    if (what <= 0) {\n        s.value = Ir77OrbitalDensity(o, p);\n        s.weight = s.value;\n    } else {\n        s.value = Ir77Orbital(o, uint(what - 1), p);\n        s.weight = s.value * s.value;\n    }\n\n    return s;\n}\n\n#include \"include/view.glsl\"\n",
+    "params": [
+      -1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      -1
+    ],
+    "settings": {
+      "topology": "particles",
+      "dims": [
+        256,
+        256,
+        4
+      ],
+      "x": [
+        -4,
+        4
+      ],
+      "y": [
+        -4,
+        4
+      ],
+      "z": [
+        -4,
+        4
+      ],
+      "value": [
+        -1,
+        1
+      ],
+      "shading": "lit",
+      "colormap": "viridis",
+      "contourSpacing": 0.1,
+      "contourWidth": 1
+    },
+    "pen": {
+      "enabled": false,
+      "canvas": 2048,
+      "target": "canvas",
+      "trace": "time",
+      "speed": 1,
+      "sweep": 1,
+      "decay": 0,
+      "wrap": "fade",
+      "steps": 256,
+      "pens": [
+        {
+          "color": "#ffffff",
+          "alpha": 1,
+          "width": 2
+        }
+      ]
+    }
+  }
+}

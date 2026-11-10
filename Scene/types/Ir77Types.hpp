@@ -26,7 +26,7 @@ namespace NSIr77Scene {
 // =============================================================================================================================================
 enum class Ir77GraphKind : std::uint8_t { Collection, Model, Light, Camera };
 
-inline constexpr std::uint32_t GRAPH_NO_RUNTIME{UINT32_MAX};  // nothing behind it in Animate (a collection, a camera)
+inline constexpr std::uint32_t GRAPH_NO_RUNTIME{UINT32_MAX};  // nothing behind it in World (a collection, a camera)
 
 inline constexpr std::size_t GRAPH_ID_LENGTH{16};  // 64-bit, lower-case hex
 
@@ -54,7 +54,7 @@ struct Ir77GraphEntity {
     Ir77PVLight light{};       // light -- type, color, intensity (glTF units), range, cones
     Ir77GraphCamera camera{};  // camera
 
-    // what Animate has behind it -- a model's entity, a light's world light; handed out again on every load, never stored
+    // what World has behind it -- a model's entity, a light's world light; handed out again on every load, never stored
     std::uint32_t runtime{GRAPH_NO_RUNTIME};
 };
 
@@ -355,7 +355,7 @@ inline constexpr float EDIT_PICK_VERTEX_PIXELS{10.0f};
 
 inline constexpr float EDIT_PICK_EDGE_PIXELS{8.0f};
 
-// Animate's "no entity" -- nothing in edit mode, a pick that hit nothing
+// World's "no entity" -- nothing in edit mode, a pick that hit nothing
 inline constexpr std::uint32_t EDIT_NO_ENTITY{UINT32_MAX};
 
 // vertices per element -- a point's square and an edge's strip (two triangles), a face's triangle (edit_*.vert)
@@ -363,7 +363,7 @@ inline constexpr std::uint32_t EDIT_VERTICES_PER_ELEMENT{6};
 
 inline constexpr std::uint32_t EDIT_VERTICES_PER_FACE{3};
 
-// ---- commit -- an edited model back into its .glb (Ir77Animate::CommitEdits, services/Ir77Flatten.hpp Rewrite) ----------------------------------
+// ---- commit -- an edited model back into its .glb (Ir77World::CommitEdits, services/Ir77Flatten.hpp Rewrite) ----------------------------------
 
 // Where one Ir77Mesh range came from in the file -- its glTF mesh and primitive, and how many vertices the file gives that primitive
 struct Ir77MeshOrigin {

@@ -23,9 +23,9 @@ namespace NSIr77Scene {
 // ---- collection ---------------------------------------------------------------------------------------------------------------------------------
 inline Ir77GUID GUIDIIr77Scene{(static_cast<unsigned __int128>(0xFF3BBC89C52846C6) << 64) | 0xB7ABC31A43D1E78D};
 
-// ---- runtime -- Animate coordinates its peers ---------------------------------------------------------------------------------------------------
-inline Ir77GUID GUIDIIr77Animate{(static_cast<unsigned __int128>(0xDDCC1637E91D4094) << 64) | 0x8FF28A0358B7731E};
-inline Ir77GUID GUIDIIr77Pose{(static_cast<unsigned __int128>(0x308F2E5EBF9F4F59) << 64) | 0xBC93710E13FB13DF};
+// ---- runtime -- World coordinates its peers ---------------------------------------------------------------------------------------------------
+inline Ir77GUID GUIDIIr77World{(static_cast<unsigned __int128>(0xDDCC1637E91D4094) << 64) | 0x8FF28A0358B7731E};
+inline Ir77GUID GUIDIIr77Model{(static_cast<unsigned __int128>(0x308F2E5EBF9F4F59) << 64) | 0xBC93710E13FB13DF};
 inline Ir77GUID GUIDIIr77View{(static_cast<unsigned __int128>(0xF932E0D060D54E7F) << 64) | 0xB3845F2DBB828B49};
 inline Ir77GUID GUIDIIr77Lighting{(static_cast<unsigned __int128>(0x78D08C0AC3324EFE) << 64) | 0x931E67E715BE0977};
 inline Ir77GUID GUIDIIr77Graph{(static_cast<unsigned __int128>(0x3982CB189CD5CBC7) << 64) | 0xB03ECF3F5C97B911};
@@ -116,7 +116,7 @@ class IDIIr77Scene : public Ir77Enlisted, public IIr77Dictionary, public std::en
 
     // same order as the declarations above
     std::map<std::string, IIr77GUID const*> m_index{
-        {"GUIDIIr77Scene", &GUIDIIr77Scene},     {"GUIDIIr77Animate", &GUIDIIr77Animate},     {"GUIDIIr77Pose", &GUIDIIr77Pose},
+        {"GUIDIIr77Scene", &GUIDIIr77Scene},     {"GUIDIIr77World", &GUIDIIr77World},         {"GUIDIIr77Model", &GUIDIIr77Model},
         {"GUIDIIr77View", &GUIDIIr77View},       {"GUIDIIr77Lighting", &GUIDIIr77Lighting},   {"GUIDIIr77Mesh", &GUIDIIr77Mesh},
         {"GUIDIIr77Light", &GUIDIIr77Light},     {"GUIDIIr77Camera", &GUIDIIr77Camera},       {"GUIDIIr77Material", &GUIDIIr77Material},
         {"GUIDIIr77Texture", &GUIDIIr77Texture}, {"GUIDIIr77Animation", &GUIDIIr77Animation}, {"GUIDIIr77Edit", &GUIDIIr77Edit},

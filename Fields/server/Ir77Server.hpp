@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
+#include <iterator>
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -45,25 +47,35 @@ namespace NSIr77Fields {
 //   pipe:        Sink(json) in, the post function out (SetPost) -- address "fields". Every command arrives here as JSON and every reply leaves
 //                the same way.
 //   direct link: only what can't travel as JSON -- the renderer's server (SetRenderer), and the per-frame calls the scene makes while it builds
-//                its frame (AppendDispatches / AppendDraws / GetBounds). Fields never sees the scene; the scene calls in.
+//                its frame (AppendDispatches / AppendDraws / GetBounds). Fields never sees the scene; the scene calls in. No module compiles
+//                a field or hands it data behind the panel's back: data comes from files (field.data.load), written by whoever made it.
 //
 // Message in:  {"id":7, "from":"ui", "to":"fields", "op":"field.params", "args":{"params":[0, 1, 0, 0, 0, 0, 0, 0]}}
 // Reply out:   {"id":7, "from":"fields", "to":"ui", "op":"field.params", "ok":true, "error":""}   (only when the message names a "from")
 //
 // ops:
-//   field.compile   source, topology "surface" | "particles", dims [x, y, z], x / y / z [min, max], value [min, max],
+//   field.compile   source, topology "surface" | "particles" | "isosurface", dims [x, y, z], x / y / z [min, max], value [min, max],
 //                   shading "lit" | "colormap" | "contours", colormap "viridis" | "turbo" | "grey", contour {spacing, width}, params [8],
 //                   canvas (size), pen {target "canvas" | "points", trace "time" | "sweep", speed, sweep, decay, wrap "fade" | "clear", steps,
-//                   pens [{color [r,g,b,a], width}]} -- width in pixels on the canvas, in grid cells as point ink
+//                   pens [{color [r,g,b,a], width}]} -- width in pixels on the canvas, in grid cells as point ink,
+//                   data "name" (field.data.load first -- read again on every compile) | "" (no data) | left out (the data stays as it is)
 //                   -- a failed compile answers with the compiler's messages in "error" (lines counted from the program's first line)
 //   field.params    params [8]                     -- live values, no recompile
 //   field.data      values [floats]                -- the program's own data, read with Ir77FieldData(i); replaces what was there, [] clears it.
 //                                                    Kept across recompiles, released with the field -- data { count }
+//   field.data.list                               -- data { files: [{name, format, version, count}] } -- <project>/data/*.json
+//   field.data.load name                          -- <project>/data/<name>.json's "values" into field.data -- data { name, format, version,
+//                                                    count, summary, sliders }. A data file: {"format", "version", "summary" {...}, "sliders"
+//                                                    [{index, min, max, step, labels}], "values" [floats]} -- whoever writes it (Compute) owns
+//                                                    the format; Fields reads "values" and passes the rest to the panel (sliders: a range and
+//                                                    a name per value for the program's sliders, fitted to this data)
+//   field.library.root path                       -- the shader root -- the built-in programs are <root>/fields/fields.json, copied into
+//                                                    each project's fields.json (the ones it lacks) when it opens
 //   field.clear                                    -- blank the canvas
 //   field.reset                                    -- the program's first frame again (f.first), blank canvas, pens at t = 0
 //   field.show      value true | false
 //   field.release                                  -- the program out, its buffers freed (switching away from the fields app)
-//   field.project   path                          -- the project folder -- fields.json lives here
+//   field.project   path                          -- the project folder -- fields.json lives here; the built-ins it lacks go into it
 //   field.list                                    -- data { names: [...] } from <project>/fields.json (none yet -> [])
 //   field.load      name                          -- data { name, field } -- the panel's form, as saved
 //   field.save      name, field                   -- adds or replaces that entry; the file is rewritten (temp file, then rename)
@@ -208,9 +220,6 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
     std::shared_ptr<IIr77Return const> GetBounds(bool& active, glm::vec3& low, glm::vec3& high) { return m_field->GetBounds(active, low, high); }
 
-    // field.data over the direct link -- for a module whose data is too big to send as JSON (a solver's output: basis, coefficients)
-    std::shared_ptr<IIr77Return const> SetFieldData(std::vector<float> const& values) { return m_field->SetFieldData(values); }
-
    private:
     using Ir77FieldsArgs = simdjson::dom::object;
 
@@ -225,6 +234,8 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
     void RegisterPipeOperations() {
         DefineFieldOperations();
         DefineFieldStoreOperations();
+        DefineDataOperations();
+        DefineLibraryOperations();
     }
 
     // the running field -- one program at a time
@@ -232,6 +243,17 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         m_operations["field.compile"] = [this](Ir77FieldsArgs const& a) {
             Ir77FieldSettings settings{};
             ReadSettings(a, settings);
+
+            // the data file first -- read fresh, so a solve written since shows; a missing file fails the compile
+            std::string_view data{};
+            if (a["data"].get(data) == simdjson::SUCCESS) {
+                std::shared_ptr<IIr77Return const> loaded{};
+                if (data.empty()) {
+                    if (Failed(m_field->SetFieldData({}), loaded)) return loaded;
+                } else if (Failed(LoadData(std::string{data}), loaded)) {
+                    return loaded;
+                }
+            }
 
             std::string errors{};
             auto const result = m_field->CompileField(settings, errors);
@@ -279,7 +301,7 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         m_operations["field.project"] = [this](Ir77FieldsArgs const& a) -> std::shared_ptr<IIr77Return const> {
             m_project = std::string{Text(a, "path")};
 
-            return Ir77RETURN<Ir77OperationSucceeded>();
+            return Seed();
         };
 
         m_operations["field.list"] = [this](Ir77FieldsArgs const&) -> std::shared_ptr<IIr77Return const> {
@@ -356,10 +378,163 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         };
     }
 
+    // Data files -- <project>/data/<name>.json. Fields reads "values"; "format", "version" and "summary" pass through to the panel.
+    void DefineDataOperations() {
+        m_operations["field.data.list"] = [this](Ir77FieldsArgs const&) -> std::shared_ptr<IIr77Return const> {
+            Ir77Json& files = m_data["files"] = Ir77Json::Array();
+
+            if (m_project.empty()) return Ir77RETURN<Ir77OperationSucceeded>();  // no project -- no files
+
+            std::filesystem::path const folder = std::filesystem::path{m_project} / FIELD_DATA_FOLDER;
+
+            std::error_code error{};
+            if (!std::filesystem::is_directory(folder, error)) return Ir77RETURN<Ir77OperationSucceeded>();
+
+            std::map<std::string, std::filesystem::path> found{};  // sorted by name
+            for (auto const& entry : std::filesystem::directory_iterator{folder, error})
+                if (entry.is_regular_file(error) && entry.path().extension() == ".json") found[entry.path().stem().string()] = entry.path();
+
+            for (auto const& [name, path] : found) {
+                Ir77Json file = Ir77Json::Object();
+                file["name"] = name;
+
+                simdjson::dom::element root{};
+                if (m_store_parser.load(path.string()).get(root) == simdjson::SUCCESS) {
+                    std::string_view format{};
+                    std::int64_t version{0};
+                    simdjson::dom::array values{};
+                    file["format"] = root["format"].get(format) == simdjson::SUCCESS ? std::string{format} : std::string{};
+                    file["version"] = root["version"].get(version) == simdjson::SUCCESS ? version : 0;
+                    file["count"] = root["values"].get(values) == simdjson::SUCCESS ? static_cast<std::uint64_t>(values.size()) : 0u;
+                } else {
+                    file["format"] = "";
+                    file["version"] = 0;
+                    file["count"] = 0u;
+                    file["error"] = "not valid JSON";
+                }
+
+                files.Push(file);
+            }
+
+            return Ir77RETURN<Ir77OperationSucceeded>();
+        };
+
+        m_operations["field.data.load"] = [this](Ir77FieldsArgs const& a) { return LoadData(std::string{Text(a, "name")}); };
+    }
+
+    // <project>/data/<name>.json -> field.data; m_data gets {name, format, version, count, summary}
+    std::shared_ptr<IIr77Return const> LoadData(std::string const& name) {
+        if (m_project.empty()) {
+            m_error = "no project open -- data files live in <project>/" + std::string{FIELD_DATA_FOLDER};
+            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Server: " + m_error);
+        }
+
+        if (!PlainName(name)) {
+            m_error = "data name '" + name + "' -- letters, digits, '-', '_' and '.' only";
+            return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Server: " + m_error);
+        }
+
+        std::filesystem::path const file = std::filesystem::path{m_project} / FIELD_DATA_FOLDER / (name + ".json");
+
+        simdjson::dom::element root{};
+        if (m_store_parser.load(file.string()).get(root) != simdjson::SUCCESS) {
+            std::error_code error{};
+            m_error = std::filesystem::exists(file, error) ? file.string() + " is not valid JSON" : "no data file " + file.string();
+            return Ir77RETURN<Ir77OperationFailed>(this, "Ir77Server: " + m_error);
+        }
+
+        simdjson::dom::array values{};
+        if (root["values"].get(values) != simdjson::SUCCESS) {
+            m_error = file.string() + " has no \"values\" array";
+            return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Server: " + m_error);
+        }
+
+        std::vector<float> floats{};
+        floats.reserve(values.size());
+        for (auto const element : values) {
+            double value{0.0};
+            if (element.get(value) != simdjson::SUCCESS) {
+                m_error = file.string() + ": values are numbers -- element " + std::to_string(floats.size()) + " isn't";
+                return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Server: " + m_error);
+            }
+            floats.push_back(static_cast<float>(value));
+        }
+
+        std::shared_ptr<IIr77Return const> result{};
+        if (Failed(m_field->SetFieldData(floats), result)) {
+            m_error = file.string() + ": " + std::to_string(floats.size()) + " floats -- at most " + std::to_string(FIELD_MAX_DATA);
+            return result;
+        }
+
+        std::string_view format{};
+        std::int64_t version{0};
+        simdjson::dom::element summary{};
+
+        m_data["name"] = name;
+        m_data["format"] = root["format"].get(format) == simdjson::SUCCESS ? std::string{format} : std::string{};
+        m_data["version"] = root["version"].get(version) == simdjson::SUCCESS ? version : 0;
+        m_data["count"] = static_cast<std::uint64_t>(floats.size());
+        m_data["summary"] = root["summary"].get(summary) == simdjson::SUCCESS ? Ir77Json::Raw(simdjson::minify(summary)) : Ir77Json::Object();
+
+        // what the writer says about the program's sliders for this data ([{index, min, max, step, labels}]) -- the panel applies it
+        simdjson::dom::element sliders{};
+        m_data["sliders"] = root["sliders"].get(sliders) == simdjson::SUCCESS && sliders.is_array() ? Ir77Json::Raw(simdjson::minify(sliders)) : Ir77Json::Array();
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // The built-in programs -- <root>/fields/fields.json, in the project store's own form (name -> the panel's form, its source in it). A
+    // project gets each one it lacks when it opens (field.project, or field.library.root after it): from then on they're its saved fields,
+    // edited, saved and deleted like any other. An edited one is never overwritten; a deleted one comes back the next time the project opens.
+    void DefineLibraryOperations() {
+        m_operations["field.library.root"] = [this](Ir77FieldsArgs const& a) -> std::shared_ptr<IIr77Return const> {
+            m_library = std::string{Text(a, "path")};
+
+            return Seed();
+        };
+    }
+
+    // the built-ins the project's fields.json lacks, written into it
+    std::shared_ptr<IIr77Return const> Seed() {
+        if (m_library.empty() || m_project.empty()) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        std::filesystem::path const file = std::filesystem::path{m_library} / FIELD_LIBRARY_FOLDER / "fields.json";
+        std::error_code missing{};
+        if (!std::filesystem::exists(file, missing)) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        simdjson::dom::element root{};
+        simdjson::dom::object builtins{};
+        if (m_store_parser.load(file.string()).get(root) != simdjson::SUCCESS || root.get(builtins) != simdjson::SUCCESS) {
+            m_error = file.string() + " isn't a JSON object";
+            return Ir77RETURN<Ir77OperationFailed>(this, "Ir77Server: " + m_error);
+        }
+        std::map<std::string, std::string> wanted{};
+        for (auto const entry : builtins) wanted[std::string{entry.key}] = simdjson::minify(entry.value);
+
+        std::shared_ptr<IIr77Return const> result{};
+        std::map<std::string, std::string> entries{};
+        if (Failed(ReadStore(entries), result)) return result;
+
+        bool added = false;
+        for (auto const& [name, entry] : wanted)
+            if (entries.emplace(name, entry).second) added = true;
+
+        return added ? WriteStore(entries) : Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
+    // a file name with no folder in it -- letters, digits, '-', '_', '.' (not leading)
+    static bool PlainName(std::string const& name) {
+        if (name.empty() || name.front() == '.' || name.size() > 128) return false;
+        for (char const c : name)
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_' && c != '.') return false;
+        return true;
+    }
+
     // field.compile's args -> the settings; anything left out keeps Ir77FieldSettings' default
     void ReadSettings(Ir77FieldsArgs const& a, Ir77FieldSettings& settings) const {
         settings.source = std::string{Text(a, "source")};
-        settings.topology = Text(a, "topology") == "particles" ? 1u : 0u;
+        std::string_view const topology = Text(a, "topology");
+        settings.topology = topology == "particles" ? FIELD_TOPOLOGY_PARTICLES : topology == "isosurface" ? FIELD_TOPOLOGY_ISOSURFACE : FIELD_TOPOLOGY_SURFACE;
 
         float dims[3]{128.0f, 128.0f, 1.0f};
         Numbers(a, "dims", dims, 3);
@@ -537,7 +712,9 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
     Ir77Json m_data{Ir77Json::Object()};  // a handler's result for the reply's "data" -- reset to {} before every message
 
-    std::string m_project{};  // field.project -- the folder fields.json lives in
+    std::string m_project{};  // field.project -- the folder fields.json and data/ live in
+
+    std::string m_library{};  // field.library.root -- the shader root; the built-in programs are in its fields/
 
     simdjson::dom::parser m_store_parser{};  // fields.json -- separate from m_parser, which holds the message being handled
 

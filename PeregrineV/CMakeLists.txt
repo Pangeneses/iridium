@@ -70,6 +70,8 @@ FetchContent_MakeAvailable(vma glm meshoptimizer simdjson)
 # -----------------------------------------------------------------------------
 target_include_directories(PeregrineV PUBLIC ${vma_SOURCE_DIR}/include)
 
+target_link_libraries(Ir77 PRIVATE Ir77Compute)
+
 target_link_libraries(PeregrineV PUBLIC
     Vulkan::Vulkan
     SDL3::SDL3

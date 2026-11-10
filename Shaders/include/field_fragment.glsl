@@ -2,6 +2,9 @@
 // field_fragment.glsl -- main() of field.frag, included after the program. Inputs from field.vert; config from pc.user[4].
 //   particles (pc.mode 1): round soft sprite, colour or colour map, unlit (additive pipeline)
 //   surface   (pc.mode 0): lit colour or colour map [+ contours], then point ink, then the canvas, then Paint() curves on top -- overlays
+//   isosurface (pc.mode 2): lit colour or colour map, both sides (the triangles have no winding: the side facing the eye is lit, its
+//                           normal turned towards it); no canvas (it has no 2D domain)
+//   markers   (pc.mode 3): lit in their own colour, whatever the shading
 //                          are unlit
 // =============================================================================================================================================
 #ifndef IR77_FIELD_FRAGMENT_GLSL
@@ -76,10 +79,15 @@ void main() {
     // surface -- one lit side, the side the normal points out of; the underside gets ambient only. Shadows: rays on a ray-query device
     // (CompileField defines IR77_RAY_SHADOWS), the shadow map otherwise.
     vec3 n = normalize(fragNormal);
+    bool front = gl_FrontFacing;
+    if (pc.mode >= 2u) {
+        if (dot(n, IR77_CAMERA.eye.xyz - fragWorldPos) < 0.0) n = -n;
+        front = true;
+    }
 
-    vec3 albedo = cfg.shading.x == 0u ? fragColor.rgb : Ir77Colormap(cfg.shading.y, t);
+    vec3 albedo = cfg.shading.x == 0u || pc.mode == 3u ? fragColor.rgb : Ir77Colormap(cfg.shading.y, t);
 
-    if (cfg.shading.x == 2u && cfg.contour.x > 0.0) {
+    if (cfg.shading.x == 2u && cfg.contour.x > 0.0 && pc.mode != 3u) {
         // iso lines every `spacing` value units, `width` pixels wide whatever the slope
         float v = fragValue / cfg.contour.x;
         float d = abs(fract(v - 0.5) - 0.5) / max(fwidth(v), 1e-6);
@@ -87,8 +95,8 @@ void main() {
     }
 
     // ambient on both sides, occluded from the side being looked at; direct light on the lit side only
-    float occlusion = Ir77AmbientOcclusion(fragWorldPos, gl_FrontFacing ? n : -n, gl_FrontFacing ? n : -n);
-    vec3 color = albedo * (IR77_FIELD_AMBIENT * occlusion + (gl_FrontFacing ? Ir77Lighting(fragWorldPos, n) : vec3(0.0)));
+    float occlusion = Ir77AmbientOcclusion(fragWorldPos, front ? n : -n, front ? n : -n);
+    vec3 color = albedo * (IR77_FIELD_AMBIENT * occlusion + (front ? Ir77Lighting(fragWorldPos, n) : vec3(0.0)));
     color = color / (1.0 + color);
 
     float params[8] = float[8](cfg.params[0].x, cfg.params[0].y, cfg.params[0].z, cfg.params[0].w, cfg.params[1].x, cfg.params[1].y,
@@ -98,7 +106,7 @@ void main() {
     color = mix(color, fragInk.rgb, clamp(fragInk.a, 0.0, 1.0));
 
     // canvas -- the pens' trace, laid over the domain
-    if (cfg.shading.w != 0u) {
+    if (cfg.shading.w != 0u && pc.mode < 2u) {
         vec2 uv = (fragCoord - vec2(cfg.domain_x.x, cfg.domain_x.z)) / vec2(cfg.domain_x.y - cfg.domain_x.x, cfg.domain_x.w - cfg.domain_x.z);
         vec4 c = texture(IR77_TEXTURE(cfg.canvas.y), uv);
         color = mix(color, c.rgb, c.a);

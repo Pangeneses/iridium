@@ -12,7 +12,7 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "IIr77Pose.hpp"
+#include "IIr77Model.hpp"
 #include "IIr77View.hpp"
 #include "IIr77Lighting.hpp"
 
@@ -34,12 +34,12 @@ using namespace NSIr77PeregrineV;
 
 namespace NSIr77Scene {
 
-// The scene module's work -- owns and wires the entities (one Pose each), View and Lighting, and draws the fields module into its frame; hands the renderer each file as one asset
+// The scene module's work -- owns and wires the entities (one Model each), View and Lighting, and draws the fields module into its frame; hands the renderer each file as one asset
 // and each frame as one frame.
-//   SetRenderer / SetViewSize / SetPipeline -> CreateScene -> [ImportEntity / RemoveEntity / SetEntityTransform, AddLight / SetLight /
+//   SetRenderer / SetViewSize -> CreateScene -> [ImportEntity / RemoveEntity / SetEntityTransform, AddLight / SetLight /
 //   RemoveLight] -> per frame: Update(dt) -> CreateFrame(seconds)
-typedef struct IIr77Animate : virtual public IIr77Enlisted {
-    IIr77Animate() = default;
+typedef struct IIr77World : virtual public IIr77Enlisted {
+    IIr77World() = default;
 
     // The renderer's server -- where the scene's asset goes (CreateScene) and each frame goes (CreateFrame). Its forwarding methods are the
     // only way into PeregrineV.
@@ -112,8 +112,8 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
     // and draws -- to the renderer in one SubmitFrame.
     virtual std::shared_ptr<IIr77Return const> CreateFrame(float const& seconds) = 0;
 
-    // An entity's Pose -- its clips and nodes
-    virtual std::shared_ptr<IIr77Return const> GetPose(std::uint32_t const& entity, std::shared_ptr<IIr77Pose>& pose) = 0;
+    // An entity's Model -- its clips and nodes
+    virtual std::shared_ptr<IIr77Return const> GetModel(std::uint32_t const& entity, std::shared_ptr<IIr77Model>& model) = 0;
 
     // The model in edit mode -- it stops playing and rests in its rest pose, then its vertices and edges are drawn over it from the next
     // frame. EDIT_NO_ENTITY leaves edit mode, and the model plays what it played before, from the start.
@@ -157,7 +157,7 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetGizmo(Ir77GizmoMode& mode, std::uint32_t& hot) const = 0;
 
-    // ---- object mode's gizmo -- the active entity's whole transform. Animate draws it and answers the drag; what moves is the caller's.
+    // ---- object mode's gizmo -- the active entity's whole transform. World draws it and answers the drag; what moves is the caller's.
 
     // shown at world (the active entity's world matrix: its pivot, and its own axes for a scale) from the next frame; hidden: none
     virtual std::shared_ptr<IIr77Return const> SetObjectGizmo(bool const& shown, glm::mat4 const& world) = 0;
@@ -202,12 +202,12 @@ typedef struct IIr77Animate : virtual public IIr77Enlisted {
 
     virtual std::shared_ptr<IIr77Return const> GetLighting(std::shared_ptr<IIr77Lighting>& lighting) = 0;
 
-    // stats -- copies, safe to keep
+    // stats -- copies, safe to keep. The scene as it is now: every entity's counts added up, the lights, the warnings
     virtual std::shared_ptr<IIr77Return const> GetSceneStats(Ir77SceneStats& stats) const = 0;
 
     // The scene's part of the frame stats -- active camera, draw counts, playing clips. Timings stay with whoever runs the loop.
     virtual std::shared_ptr<IIr77Return const> WriteFrameStats(Ir77FrameStats& stats) const = 0;
 
-    virtual ~IIr77Animate() = default;
-}* pIIr77Animate;
+    virtual ~IIr77World() = default;
+}* pIIr77World;
 }  // namespace NSIr77Scene

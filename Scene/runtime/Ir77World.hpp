@@ -10,7 +10,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -20,7 +19,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "../../Ir77RT/dictionary/IDIIr77MPVM.hpp"
@@ -36,25 +34,25 @@
 #include "../../Ir77RT/runtime/Ir77Enlisted.hpp"
 #include "../../Ir77RT/runtime/Ir77Return.hpp"
 
-#include "../interface/IIr77Camera.hpp"
-#include "../interface/IIr77Light.hpp"
-#include "../interface/IIr77Mesh.hpp"
-#include "../interface/IIr77Material.hpp"
-#include "../interface/IIr77Texture.hpp"
 #include "../interface/IIr77Animation.hpp"
-#include "../interface/IIr77Pose.hpp"
-#include "../interface/IIr77View.hpp"
-#include "../interface/IIr77Lighting.hpp"
+#include "../interface/IIr77Camera.hpp"
 #include "../interface/IIr77Edit.hpp"
 #include "../interface/IIr77Gizmo.hpp"
-#include "../interface/IIr77Animate.hpp"
+#include "../interface/IIr77Light.hpp"
+#include "../interface/IIr77Lighting.hpp"
+#include "../interface/IIr77Material.hpp"
+#include "../interface/IIr77Mesh.hpp"
+#include "../interface/IIr77Model.hpp"
+#include "../interface/IIr77Texture.hpp"
+#include "../interface/IIr77View.hpp"
+#include "../interface/IIr77World.hpp"
 
-#include "./Ir77Pose.hpp"
-#include "./Ir77View.hpp"
-#include "./Ir77Lighting.hpp"
 #include "./Ir77Edit.hpp"
 #include "./Ir77Gizmo.hpp"
+#include "./Ir77Lighting.hpp"
+#include "./Ir77Model.hpp"
 #include "./Ir77Skinning.hpp"
+#include "./Ir77View.hpp"
 
 #include "../services/Ir77Flatten.hpp"
 
@@ -73,29 +71,33 @@ using namespace NSIr77PeregrineV;
 namespace NSIr77Scene {
 
 // =============================================================================================================================================
-// Ir77Animate -- the scene module's work, owned by its server (Ir77Server) and reached only through it. The lifetime controller for the
-// scene's peers -- the entities (one Pose each: a file, its node tree and animation), View (the cameras) and Lighting (lights and
-// shadows) -- which it creates and wires; and the one place that talks to all of them at once (plus the fields module, when set):
+// Ir77World -- the scene module's work, owned by its server (Ir77Server) and reached only through it. The lifetime controller for the
+// scene's peers -- the entities (one Model each: a file, its node tree and animation), View (the cameras), Lighting (lights and shadows),
+// Edit (the edit cage) and Gizmo (the transform handles) -- which it creates and wires; and the one place that talks to all of them at once
+// (plus the fields module, when set):
 //
-//   setup:     SetRenderer / SetField / SetViewSize -> CreateScene(path, use_mesh, lights, cameras) -- every entity and light goes, the
-//              file becomes entity 0: Pose parses, the file goes to the renderer as one asset bundle (LoadAsset), its lights become world
-//              lights, View takes its cameras and frames it
-//   entities:  ImportEntity(path, lights) -> its id / RemoveEntity / SetEntityTransform -- any number of files, each its own asset in the
-//              renderer, each placed in the world as a whole
-//   lights:    AddLight / SetLight / RemoveLight -- world lights, the scene graph's: placed by the UI, or imported with a file (a copy, placed
-//              where the file had it -- it doesn't follow the entity). Lighting gets them all, shadow casters over every entity where it sits,
-//              on every change
-//   per frame: Update(dt) -> CreateFrame(seconds) -- one Ir77PVFrame: cameras (View), every entity's transforms and bones (its Pose), lights
-//              and shadow matrices (Lighting), the field's dispatches and draws (the fields server) -> SubmitFrame
-//   the UI:    the scene server reaches the peers through GetPose(entity) / GetView for its ops
+//   setup:     SetRenderer / SetField / SetViewSize / [SetBackground / SetGridVisible] -> CreateScene(path, use_mesh, lights, cameras) --
+//              every entity and light goes, the file becomes entity 0: Model parses, the file goes to the renderer as one asset bundle
+//              (LoadAsset), its lights become world lights, View takes its cameras and frames it
+//   entities:  ImportEntity(path, use_mesh, lights) -> its id / RemoveEntity / SetEntityVisible / SetEntityTransform -- any number of files,
+//              each its own asset in the renderer, each placed in the world as a whole; PickEntity finds the one under a point
+//   lights:    AddLight / SetLight / RemoveLight / SetLightVisible -- world lights, the scene graph's: placed by the UI, or imported with a
+//              file (a copy, placed where the file had it -- it doesn't follow the entity). Lighting gets them all, shadow casters over every
+//              entity where it sits, on every change
+//   edit mode: SetEditEntity -> Edit* (pick, box, select all, grab, gizmo, undo / redo) -> CommitEdits writes the edited models' .glb files
+//   object:    SetOutlineEntity / SetObjectGizmo -> ObjectGizmo* -- the active entity's outline and its whole-transform gizmo
+//   per frame: Update(dt) -> CreateFrame(seconds) -- one Ir77PVFrame: cameras (View), every entity's transforms and bones (its Model), lights
+//              and shadow matrices (Lighting), the field's dispatches and draws (the fields server), the grid, the cage and the gizmo ->
+//              SubmitFrame
+//   the UI:    the scene server reaches the peers through GetModel(entity) / GetView for its ops
 //
 // The renderer makes the draws, the material tables, the skinning and the acceleration structures -- the scene only says what is there.
 // =============================================================================================================================================
-class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable_shared_from_this<Ir77Animate> {
+class Ir77World : public Ir77Enlisted, public IIr77World, public std::enable_shared_from_this<Ir77World> {
    private:
-    // one entity -- a file in the world: its Pose, its asset in the renderer, where it sits, and its frame data
-    struct Ir77AnimateEntity {
-        std::shared_ptr<IIr77Pose> pose{};
+    // one entity -- a file in the world: its Model, its asset in the renderer, where it sits, and its frame data
+    struct Ir77WorldModel {
+        std::shared_ptr<IIr77Model> model{};
         std::uint32_t asset{IR77PV_NO_ASSET};
         std::string path{};
         glm::vec3 translation{0.0f};
@@ -108,11 +110,12 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         bool visible{true};                   // false -- left out of the frame (SetEntityVisible)
         std::uint32_t instance_base{0};       // its first models[] slot -- where LoadAsset put it (the edit cage is placed through it)
         bool geometry_dirty{false};           // an edit its file doesn't hold yet -- CommitEdits writes it
+        Ir77SceneStats stats{};               // its file's counts and its load's report -- LoadEntity; GetSceneStats adds them up
     };
 
     // one world light -- what it is (type, color, intensity in glTF units: lux / candela, range, cones) and where it sits; it shines down its
     // local -Z. light.position / direction are made from the placement when the lights are built.
-    struct Ir77AnimateLight {
+    struct Ir77WorldLight {
         Ir77PVLight light{};
         glm::vec3 translation{0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
@@ -121,7 +124,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     };
 
    public:
-    Ir77Animate() {
+    Ir77World() {
         try {
             m_enlisted_uuid.Generate();
         } catch (std::invalid_argument a) {
@@ -130,7 +133,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         m_enlisted = std::chrono::system_clock::now();
 
-        // the peers -- they never see Animate. Entities come with the scene.
+        // the peers -- they never see World. Entities come with the scene.
         m_view = std::static_pointer_cast<IIr77View>(std::make_shared<Ir77View>());
         m_lighting = std::static_pointer_cast<IIr77Lighting>(std::make_shared<Ir77Lighting>());
         m_edit = std::static_pointer_cast<IIr77Edit>(std::make_shared<Ir77Edit>());
@@ -138,7 +141,6 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         m_edit->SetGizmo(m_gizmo);  // edit mode and object mode share one gizmo -- one mode, one draw
     }
 
-   public:
     std::shared_ptr<IIr77Return const> EnlistedAs(std::shared_ptr<IIr77GUID const>& uid) const {
         seat_shared_uuid<&GUIDIIr77Enlisted>(uid);
 
@@ -148,7 +150,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
     std::shared_ptr<IIr77Return const> MemberUuid(std::shared_ptr<IIr77GUID const>& uid) const {
-        seat_shared_uuid<&GUIDIr77Animate>(uid);
+        seat_shared_uuid<&GUIDIr77World>(uid);
 
         if (!m_valid) return Ir77RETURN<Ir77Invalidated>(this, "Enlisted has been invalidated.");
 
@@ -167,11 +169,11 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         if (iid == GUIDIIr77Enlisted)
             obj = std::shared_ptr<IIr77Enlisted>(shared_from_this(), static_cast<IIr77Enlisted*>(this));
 
-        else if (iid == GUIDIIr77Animate)
-            obj = std::shared_ptr<IIr77Animate>(shared_from_this(), static_cast<IIr77Animate*>(this));
+        else if (iid == GUIDIIr77World)
+            obj = std::shared_ptr<IIr77World>(shared_from_this(), static_cast<IIr77World*>(this));
 
-        else if (iid == GUIDIr77Animate)
-            obj = std::shared_ptr<Ir77Animate>(shared_from_this(), static_cast<Ir77Animate*>(this));
+        else if (iid == GUIDIr77World)
+            obj = std::shared_ptr<Ir77World>(shared_from_this(), static_cast<Ir77World*>(this));
 
         else
             return GUIDQueryFailed;
@@ -179,7 +181,6 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return GUIDQuerySucceeded;
     }
 
-   public:
     // The renderer's server -- where the scene's asset goes (CreateScene) and each frame goes (CreateFrame). Its forwarding methods are the
     // only way into PeregrineV.
     std::shared_ptr<IIr77Return const> SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) {
@@ -236,7 +237,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     // No geometry is fine: an empty path, a file with nothing drawable, or a file that fails to load all leave a running scene with no
     // geometry. A file that fails to load is logged (and listed in the stats warnings), not a failure.
     std::shared_ptr<IIr77Return const> CreateScene(std::string const& path, bool const& use_mesh, bool const& lights, bool const& cameras) {
-        if (!m_renderer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: SetRenderer not called.");
+        if (!m_renderer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77World: SetRenderer not called.");
 
         std::shared_ptr<IIr77Return const> result{};
 
@@ -252,18 +253,18 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         m_scene_ready = false;
 
         // a file that won't load (ParseAsset logged why) -> carry on with an empty scene
-        auto pose = std::static_pointer_cast<IIr77Pose>(std::make_shared<Ir77Pose>());
+        auto model = std::static_pointer_cast<IIr77Model>(std::make_shared<Ir77Model>());
 
-        bool const load_failed = pose->ParseAsset(path)->ID() != GUIDIr77OperationSucceeded;
-        if (load_failed) pose->ParseAsset(std::string{});
+        bool const load_failed = model->ParseAsset(path)->ID() != GUIDIr77OperationSucceeded;
+        if (load_failed) model->ParseAsset(std::string{});
 
         Ir77PVAssetReport report{};
         Ir77PVAssetBundle bundle{};
         std::uint32_t entity{0};
 
-        if (Failed(LoadEntity(pose, path, use_mesh, bundle, report, entity), result)) return result;
+        if (Failed(LoadEntity(model, path, use_mesh, bundle, report, entity), result)) return result;
 
-        Ir77AnimateEntity const& first = m_entities.at(entity);
+        Ir77WorldModel const& first = m_entities.at(entity);
 
         if (lights) ImportLights(entity);
 
@@ -271,38 +272,14 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         // cameras -- the file's (when imported), then the controlled ones framed on it; view 0 starts on the file's first camera if it has one
         std::shared_ptr<IIr77Camera> scene_cameras{};
-        if (cameras) pose->GetCameras(scene_cameras);
+        if (cameras) model->GetCameras(scene_cameras);
 
         m_view->SetCameras(scene_cameras);
         m_view->SetBounds(first.bounds_min, first.bounds_max);
 
-        // stats -- the scene file's, filled once here, read by the app through GetSceneStats
-        std::shared_ptr<IIr77Animation> scene_animations{};
-        pose->GetAnimations(scene_animations);
-
-        m_stats = Ir77SceneStats{};
-        m_stats.path = path;
-        m_stats.gpu = report.device_name;
-        m_stats.render_path = std::string{report.mesh_path ? "mesh shading indirect" : "vertex indirect"} + (report.ray_query ? ", ray queries" : "");
-
-        pose->GetAssetCounts(m_stats.nodes, m_stats.meshes, m_stats.materials, m_stats.textures, m_stats.cameras, m_stats.skins, m_stats.bones, m_stats.clips);
-
-        m_stats.clip_names.assign(m_stats.clips, std::string{});
-        for (std::uint32_t c = 0; c < m_stats.clips; c++) scene_animations->GetClipName(c, m_stats.clip_names[c]);
-
-        m_stats.static_vertices = bundle.vertices.size();
-        m_stats.static_indices = bundle.indices.size();
-        m_stats.skinned_vertices = bundle.vertices_skinned.size();
-        m_stats.skinned_indices = bundle.indices_skinned.size();
-        m_stats.static_primitives = static_cast<std::uint32_t>(bundle.primitives.size());
-        m_stats.skinned_primitives = static_cast<std::uint32_t>(bundle.primitives_skinned.size());
-        m_stats.instances = bundle.instance_count;
-        m_stats.opaque_runs = report.opaque_runs;
-        m_stats.skinned_runs = report.skinned_runs;
-        m_stats.transparent_objects = report.transparent_objects;
-        m_lighting->GetLights(m_stats.lights);  // with the casters' shadow tiles
-
-        if (load_failed) m_stats.warnings.push_back("scene file didn't load -- running with an empty scene");
+        // this scene's warnings start over -- the grid's are the module's (GetSceneStats adds them)
+        m_scene_warnings.clear();
+        if (load_failed) m_scene_warnings.push_back("scene file didn't load -- running with an empty scene");
 
         PrintSceneStats();  // console copy, for when the app UI isn't up
 
@@ -318,28 +295,32 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     // One more file in the scene, at the origin, its clips playing -- entity is its id. A file that won't load is a failure here (nothing is
     // added). lights -> its lights become world lights; the cameras stay as they are.
     std::shared_ptr<IIr77Return const> ImportEntity(std::string const& path, bool const& use_mesh, bool const& lights, std::uint32_t& entity) {
-        if (!m_renderer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: SetRenderer not called.");
-        if (path.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: an entity needs a file.");
+        if (!m_renderer) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77World: SetRenderer not called.");
+        if (path.empty()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77World: an entity needs a file.");
 
         std::shared_ptr<IIr77Return const> result{};
 
-        auto pose = std::static_pointer_cast<IIr77Pose>(std::make_shared<Ir77Pose>());
-        if (Failed(pose->ParseAsset(path), result)) return result;
+        auto model = std::static_pointer_cast<IIr77Model>(std::make_shared<Ir77Model>());
+        if (Failed(model->ParseAsset(path), result)) return result;
 
         Ir77PVAssetReport report{};
         Ir77PVAssetBundle bundle{};
 
-        if (Failed(LoadEntity(pose, path, use_mesh, bundle, report, entity), result)) return result;
+        if (Failed(LoadEntity(model, path, use_mesh, bundle, report, entity), result)) return result;
 
         if (lights) ImportLights(entity);
 
-        return BuildLights();
+        if (Failed(BuildLights(), result)) return result;
+
+        PrintSceneStats();
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // The entity's asset leaves the renderer (its draws stop with the next frame). Lights it brought stay -- they're world lights now.
     std::shared_ptr<IIr77Return const> RemoveEntity(std::uint32_t const& entity) {
         auto const found = m_entities.find(entity);
-        if (found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such entity.");
+        if (found == m_entities.end()) return NoEntity();
 
         if (entity == m_edit_entity) SetEditEntity(EDIT_NO_ENTITY);
         if (entity == m_outline_entity) m_outline_entity = EDIT_NO_ENTITY;
@@ -352,7 +333,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     std::shared_ptr<IIr77Return const> SetEntityVisible(std::uint32_t const& entity, bool const& visible) {
         auto const found = m_entities.find(entity);
-        if (found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such entity.");
+        if (found == m_entities.end()) return NoEntity();
 
         found->second.visible = visible;
 
@@ -363,15 +344,15 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     std::shared_ptr<IIr77Return const> SetEntityTransform(std::uint32_t const& entity, glm::vec3 const& translation, glm::quat const& rotation,
                                                           glm::vec3 const& scale) {
         auto const found = m_entities.find(entity);
-        if (found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such entity.");
+        if (found == m_entities.end()) return NoEntity();
 
-        Ir77AnimateEntity& placed = found->second;
+        Ir77WorldModel& placed = found->second;
         placed.translation = translation;
         placed.rotation = glm::normalize(rotation);
         placed.scale = scale;
 
         std::shared_ptr<IIr77Return const> result{};
-        if (Failed(placed.pose->SetRootTransform(EntityMatrix(placed)), result)) return result;
+        if (Failed(placed.model->SetRootTransform(EntityMatrix(placed)), result)) return result;
 
         return BuildLights();
     }
@@ -402,7 +383,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     // -------------------------------------------------------------------------------------------------------------------------------------
 
     std::shared_ptr<IIr77Return const> AddLight(Ir77PVLight const& light, glm::vec3 const& translation, glm::quat const& rotation, std::uint32_t& id) {
-        Ir77AnimateLight placed{};
+        Ir77WorldLight placed{};
         placed.light = light;
         placed.translation = translation;
         placed.rotation = glm::normalize(rotation);
@@ -415,7 +396,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     std::shared_ptr<IIr77Return const> SetLight(std::uint32_t const& id, Ir77PVLight const& light, glm::vec3 const& translation, glm::quat const& rotation) {
         auto const found = m_lights.find(id);
-        if (found == m_lights.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such light.");
+        if (found == m_lights.end()) return NoLight();
 
         found->second.light = light;
         found->second.translation = translation;
@@ -425,14 +406,14 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
     std::shared_ptr<IIr77Return const> RemoveLight(std::uint32_t const& id) {
-        if (m_lights.erase(id) == 0) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such light.");
+        if (m_lights.erase(id) == 0) return NoLight();
 
         return BuildLights();
     }
 
     std::shared_ptr<IIr77Return const> SetLightVisible(std::uint32_t const& id, bool const& visible) {
         auto const found = m_lights.find(id);
-        if (found == m_lights.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such light.");
+        if (found == m_lights.end()) return NoLight();
 
         found->second.visible = visible;
 
@@ -443,7 +424,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     std::shared_ptr<IIr77Return const> GetLight(std::uint32_t const& id, Ir77PVLight& light, glm::vec3& translation, glm::quat& rotation,
                                                 std::uint32_t& entity) {
         auto const found = m_lights.find(id);
-        if (found == m_lights.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such light.");
+        if (found == m_lights.end()) return NoLight();
 
         light = found->second.light;
         translation = found->second.translation;
@@ -461,13 +442,13 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // Once per frame, before CreateFrame: every entity's animation, world matrices and joint palettes (its Pose), then the held camera keys
+    // Once per frame, before CreateFrame: every entity's animation, world matrices and joint palettes (its Model), then the held camera keys
     // (View)
     std::shared_ptr<IIr77Return const> Update(float const& dt) {
         std::shared_ptr<IIr77Return const> result{};
 
         for (auto const& [id, entity] : m_entities)
-            if (Failed(entity.pose->Update(dt), result)) return result;
+            if (Failed(entity.model->Update(dt), result)) return result;
 
         return m_view->Update(dt);
     }
@@ -482,7 +463,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         float const dt = seconds - m_last_seconds;
         float const aspect = m_view_height > 0 ? static_cast<float>(m_view_width) / static_cast<float>(m_view_height) : 1.78f;
 
-        // the entities -- their instances and joint palettes as their Poses left them
+        // the entities -- their instances and joint palettes as their Models left them
         std::size_t const shown = static_cast<std::size_t>(std::count_if(m_entities.begin(), m_entities.end(), [](auto const& e) { return e.second.visible; }));
         m_frame.assets.resize(shown);
 
@@ -490,8 +471,8 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         for (auto& [id, entity] : m_entities) {
             if (!entity.visible) continue;  // hidden -- out of the frame, so out of the draws and the rays
 
-            entity.pose->WriteInstanceTransforms(entity.transforms);
-            entity.pose->WriteBoneMatrices(entity.bones);
+            entity.model->WriteInstanceTransforms(entity.transforms);
+            entity.model->WriteBoneMatrices(entity.bones);
 
             Ir77PVFrameAsset& asset = m_frame.assets[a++];
             asset.asset = entity.asset;
@@ -585,35 +566,33 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         auto const found = m_entities.find(entity);
         if (found == m_entities.end()) {
             m_edit->ReleaseCage();
-            return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such entity.");
+            return NoEntity();
         }
 
-        Ir77AnimateEntity& placed = found->second;
+        Ir77WorldModel& placed = found->second;
         std::shared_ptr<IIr77Return const> result{};
 
         // what it plays, held -- then nothing, and the rest pose now rather than on the next Update
-        HoldClips(placed.pose, m_edit_clips);
-        placed.pose->StopAllAnimations();
-        if (Failed(placed.pose->Update(0.0f), result)) return result;
+        HoldClips(placed.model, m_edit_clips);
+        placed.model->StopAllAnimations();
+        if (Failed(placed.model->Update(0.0f), result)) return result;
 
-        placed.pose->WriteInstanceTransforms(placed.transforms);
-        placed.pose->WriteBoneMatrices(placed.bones);
+        placed.model->WriteInstanceTransforms(placed.transforms);
+        placed.model->WriteBoneMatrices(placed.bones);
 
         std::vector<std::uint32_t> bone_bases{};
-        placed.pose->WriteInstanceBoneBases(bone_bases, placed.transforms.size());
+        placed.model->WriteInstanceBoneBases(bone_bases, placed.transforms.size());
 
         std::shared_ptr<IIr77Mesh> meshes{};
-        placed.pose->GetMeshes(meshes);
+        placed.model->GetMeshes(meshes);
 
         m_edit_entity = entity;
 
         std::shared_ptr<IIr77Material> materials{};
-        placed.pose->GetMaterials(materials);
+        placed.model->GetMaterials(materials);
 
-        if (Failed(m_edit->CreateCage(meshes, materials, placed.asset, placed.instance_base, placed.bones, bone_bases), result)) {
+        if (Failed(m_edit->CreateCage(meshes, materials, placed.asset, placed.instance_base, placed.bones, bone_bases), result))
             SetEditEntity(EDIT_NO_ENTITY);  // its clips back
-            return result;
-        }
 
         return result;
     }
@@ -632,8 +611,8 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
     // The model under a point of window 0 -- x, y fractions of the window, from its top left. The view whose area holds the point (the last
-    // one, it draws on top) casts a ray from its camera as the last frame drew it; every shown model's static triangles where they sat in that
-    // frame; the nearest hit. Nothing hit -> EDIT_NO_ENTITY.
+    // one, it draws on top) casts a ray from its camera as the last frame drew it; every shown model's triangles (static and skinned) where they
+    // sat in that frame; the nearest hit. Nothing hit -> EDIT_NO_ENTITY.
     std::shared_ptr<IIr77Return const> PickEntity(float const& x, float const& y, std::uint32_t& entity) {
         entity = EDIT_NO_ENTITY;
 
@@ -657,7 +636,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     // What a click in edit mode selects -- vertex / edge / face
     std::shared_ptr<IIr77Return const> SetEditMode(Ir77EditMode const& mode) {
-        if (m_edit_entity == EDIT_NO_ENTITY) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+        if (m_edit_entity == EDIT_NO_ENTITY) return NotEditing();
 
         return m_edit->SetMode(mode);
     }
@@ -669,7 +648,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         hit = false;
 
         auto const found = m_entities.find(m_edit_entity);
-        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return NotEditing();
 
         Ir77EditView view{};
         if (!ViewAt(x, y, view)) return Ir77RETURN<Ir77OperationSucceeded>();  // outside every view -- nothing changes
@@ -684,7 +663,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         selected = 0;
 
         auto const found = m_entities.find(m_edit_entity);
-        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return NotEditing();
 
         std::size_t view_index{0};
         Ir77EditView start{};
@@ -697,7 +676,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     // Every vertex of the model in edit mode (true) or none
     std::shared_ptr<IIr77Return const> EditSelectAll(bool const& select) {
-        if (m_edit_entity == EDIT_NO_ENTITY) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+        if (m_edit_entity == EDIT_NO_ENTITY) return NotEditing();
 
         return m_edit->SelectAll(select);
     }
@@ -711,7 +690,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         delta = glm::vec3(0.0f);
 
         Ir77EditView view{};
-        if (!ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: the grab's view is gone.");
+        if (!ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77World: the grab's view is gone.");
 
         return m_edit->MoveGrab(view, axis, delta);
     }
@@ -764,7 +743,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         changed = false;
 
         Ir77EditView view{};
-        if (!ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: the drag's view is gone.");
+        if (!ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77World: the drag's view is gone.");
 
         return m_gizmo->Drag(view, world, changed);
     }
@@ -776,7 +755,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         handle = GIZMO_NONE;
 
         auto const found = m_entities.find(m_edit_entity);
-        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return NotEditing();
 
         Ir77EditView view{};
         if (!ViewAt(x, y, view)) return m_edit->ClearGizmoHot();
@@ -790,7 +769,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         handle = GIZMO_NONE;
 
         auto const found = m_entities.find(m_edit_entity);
-        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+        if (m_edit_entity == EDIT_NO_ENTITY || found == m_entities.end()) return NotEditing();
 
         Ir77EditView view{};
         if (!ViewIndexAt(x, y, m_grab_view) || !ViewRay(m_grab_view, x, y, view)) return Ir77RETURN<Ir77OperationSucceeded>();
@@ -804,14 +783,14 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     // the last confirmed edit of the model in edit mode back / again; done = false: nothing there
     std::shared_ptr<IIr77Return const> EditUndo(bool& done) {
         done = false;
-        if (m_edit_entity == EDIT_NO_ENTITY) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+        if (m_edit_entity == EDIT_NO_ENTITY) return NotEditing();
 
         return m_edit->Undo(done);
     }
 
     std::shared_ptr<IIr77Return const> EditRedo(bool& done) {
         done = false;
-        if (m_edit_entity == EDIT_NO_ENTITY) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: nothing is in edit mode.");
+        if (m_edit_entity == EDIT_NO_ENTITY) return NotEditing();
 
         return m_edit->Redo(done);
     }
@@ -845,19 +824,19 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         auto const edited = m_entities.find(m_edit_entity);
         if (edited != m_entities.end() && !edited->second.geometry_dirty) m_edit->MarkSaved();
 
-        if (!errors.empty()) return Ir77RETURN<Ir77OperationFailed>(this, "[WARN] Ir77Animate: " + std::to_string(errors.size()) + " model(s) not written.");
+        if (!errors.empty()) return Ir77RETURN<Ir77OperationFailed>(this, "[WARN] Ir77World: " + std::to_string(errors.size()) + " model(s) not written.");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
     // ---- the peers -- the scene server holds these for its ops ----------------------------------------------------------------------------
 
-    // An entity's Pose -- its clips and nodes
-    std::shared_ptr<IIr77Return const> GetPose(std::uint32_t const& entity, std::shared_ptr<IIr77Pose>& pose) {
+    // An entity's Model -- its clips and nodes
+    std::shared_ptr<IIr77Return const> GetModel(std::uint32_t const& entity, std::shared_ptr<IIr77Model>& model) {
         auto const found = m_entities.find(entity);
-        if (found == m_entities.end()) return Ir77RETURN<Ir77NotConfigured>(this, "Ir77Animate: no such entity.");
+        if (found == m_entities.end()) return NoEntity();
 
-        pose = found->second.pose;
+        model = found->second.model;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -877,8 +856,46 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     // -------------------------------------------------------------------------------------------------------------------------------------
     // stats -- copies, safe to keep
     // -------------------------------------------------------------------------------------------------------------------------------------
+
+    // The scene as it is now -- every entity's counts added up (path: the scene file's, entity 0), every model's clips in entity order, the
+    // world lights as Lighting last built them (with the casters' shadow tiles), the GPU and render path of the last load, this scene's
+    // warnings and the module's
     std::shared_ptr<IIr77Return const> GetSceneStats(Ir77SceneStats& stats) const {
-        stats = m_stats;
+        stats = Ir77SceneStats{};
+        stats.gpu = m_gpu;
+        stats.render_path = m_render_path;
+
+        auto const scene = m_entities.find(0);
+        if (scene != m_entities.end()) stats.path = scene->second.path;
+
+        for (auto const& [id, entity] : m_entities) {
+            Ir77SceneStats const& e = entity.stats;
+
+            stats.nodes += e.nodes;
+            stats.meshes += e.meshes;
+            stats.materials += e.materials;
+            stats.textures += e.textures;
+            stats.cameras += e.cameras;
+            stats.skins += e.skins;
+            stats.bones += e.bones;
+            stats.clips += e.clips;
+            stats.static_vertices += e.static_vertices;
+            stats.static_indices += e.static_indices;
+            stats.skinned_vertices += e.skinned_vertices;
+            stats.skinned_indices += e.skinned_indices;
+            stats.static_primitives += e.static_primitives;
+            stats.skinned_primitives += e.skinned_primitives;
+            stats.instances += e.instances;
+            stats.opaque_runs += e.opaque_runs;
+            stats.skinned_runs += e.skinned_runs;
+            stats.transparent_objects += e.transparent_objects;
+            stats.clip_names.insert(stats.clip_names.end(), e.clip_names.begin(), e.clip_names.end());
+        }
+
+        m_lighting->GetLights(stats.lights);
+
+        stats.warnings = m_scene_warnings;
+        if (m_grid_missing) stats.warnings.push_back("no \"grid\" pipeline in the manifest -- the editor grid is off");
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -895,17 +912,18 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         auto const scene = m_entities.find(0);
         if (scene == m_entities.end()) return Ir77RETURN<Ir77OperationSucceeded>();
 
-        std::shared_ptr<IIr77Pose> const& pose = scene->second.pose;
+        Ir77WorldModel const& placed = scene->second;
+        std::shared_ptr<IIr77Model> const& model = placed.model;
 
         std::uint32_t players{0};
-        pose->GetPlayerCount(players);
+        model->GetPlayerCount(players);
 
         for (std::uint32_t p = 0; p < players; p++) {
             Ir77ClipStat clip_stat{};
             std::uint32_t clip{UINT32_MAX};
 
-            if (pose->GetPlayer(p, clip, clip_stat.time, clip_stat.duration, clip_stat.speed, clip_stat.loop)->ID() != GUIDIr77OperationSucceeded) continue;
-            if (clip < m_stats.clip_names.size()) clip_stat.name = m_stats.clip_names[clip];
+            if (model->GetPlayer(p, clip, clip_stat.time, clip_stat.duration, clip_stat.speed, clip_stat.loop)->ID() != GUIDIr77OperationSucceeded) continue;
+            if (clip < placed.stats.clip_names.size()) clip_stat.name = placed.stats.clip_names[clip];
 
             stats.playing.push_back(clip_stat);
         }
@@ -914,6 +932,13 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
    private:
+    // the failures more than one method gives
+    std::shared_ptr<IIr77Return const> NoEntity() const { return Ir77RETURN<Ir77NotConfigured>(this, "Ir77World: no such entity."); }
+
+    std::shared_ptr<IIr77Return const> NoLight() const { return Ir77RETURN<Ir77NotConfigured>(this, "Ir77World: no such light."); }
+
+    std::shared_ptr<IIr77Return const> NotEditing() const { return Ir77RETURN<Ir77NotConfigured>(this, "Ir77World: nothing is in edit mode."); }
+
     // The field's box -> Lighting, only when it moved or the field came up / went down -- SetFieldBounds rebuilds the shadow casters. No
     // fields server: nothing to cover.
     void UpdateFieldBounds() {
@@ -945,9 +970,9 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
     // One model's mesh -> its file: per file primitive, every stream vertex written back to the file vertex it came from
-    bool WriteModel(Ir77AnimateEntity const& placed, std::string& error) const {
+    bool WriteModel(Ir77WorldModel const& placed, std::string& error) const {
         std::shared_ptr<IIr77Mesh> meshes{};
-        placed.pose->GetMeshes(meshes);
+        placed.model->GetMeshes(meshes);
         if (!meshes) {
             error = "no meshes";
             return false;
@@ -1043,10 +1068,10 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     // the entities on the same file as entity -- its edited vertices, in their meshes and the renderer
     void ShareGeometry(std::uint32_t const entity) {
-        Ir77AnimateEntity const& source = m_entities.at(entity);
+        Ir77WorldModel const& source = m_entities.at(entity);
 
         std::shared_ptr<IIr77Mesh> meshes{};
-        source.pose->GetMeshes(meshes);
+        source.model->GetMeshes(meshes);
         if (!meshes) return;
 
         std::vector<Ir77PVVertex> vertices{};
@@ -1058,7 +1083,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
             if (id == entity || placed.path != source.path) continue;
 
             std::shared_ptr<IIr77Mesh> other{};
-            placed.pose->GetMeshes(other);
+            placed.model->GetMeshes(other);
             if (!other) continue;
 
             if (other->UpdateVertices(vertices)->ID() != GUIDIr77OperationSucceeded) continue;  // a different count -- not the same load
@@ -1069,18 +1094,18 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         }
     }
 
-    // A pose's players -> clips (each clip once, the speed and loop it plays with)
-    static void HoldClips(std::shared_ptr<IIr77Pose> const& pose, std::vector<Ir77EditClip>& clips) {
+    // A model's players -> clips (each clip once, the speed and loop it plays with)
+    static void HoldClips(std::shared_ptr<IIr77Model> const& model, std::vector<Ir77EditClip>& clips) {
         clips.clear();
 
         std::uint32_t players{0};
-        pose->GetPlayerCount(players);
+        model->GetPlayerCount(players);
 
         for (std::uint32_t p = 0; p < players; p++) {
             Ir77EditClip held{};
             float time{0.0f};
             float duration{0.0f};
-            if (pose->GetPlayer(p, held.clip, time, duration, held.speed, held.loop)->ID() == GUIDIr77OperationSucceeded) clips.push_back(held);
+            if (model->GetPlayer(p, held.clip, time, duration, held.speed, held.loop)->ID() == GUIDIr77OperationSucceeded) clips.push_back(held);
         }
     }
 
@@ -1089,7 +1114,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         auto const found = m_entities.find(m_edit_entity);
 
         if (m_edit_entity != EDIT_NO_ENTITY && found != m_entities.end())
-            for (Ir77EditClip const& held : m_edit_clips) found->second.pose->PlayAnimation(held.clip, held.loop, held.speed);
+            for (Ir77EditClip const& held : m_edit_clips) found->second.model->PlayAnimation(held.clip, held.loop, held.speed);
 
         m_edit_clips.clear();
     }
@@ -1146,7 +1171,6 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return true;
     }
 
-    // In edit mode on a model that is in the frame
     // object mode's gizmo placement -- at the entity's origin; world axes for a move or a turn, its own for a scale
     glm::mat4 ObjectPlacement() const {
         Ir77GizmoMode mode{Ir77GizmoMode::Translate};
@@ -1158,6 +1182,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return placement;
     }
 
+    // in edit mode on a model that is in the frame
     bool EditShown() const {
         if (m_edit_entity == EDIT_NO_ENTITY) return false;
 
@@ -1167,9 +1192,9 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     // One entity's triangles against a ray, world space, where its instances sat this frame -- skinned ones posed by the palette it drew with.
     // The nearest hit's distance along the ray. Both faces count (Moller-Trumbore, no culling): a click on a back face still picks the model.
-    bool PickTriangles(Ir77AnimateEntity const& placed, glm::vec3 const& origin, glm::vec3 const& ray, float& distance) const {
+    bool PickTriangles(Ir77WorldModel const& placed, glm::vec3 const& origin, glm::vec3 const& ray, float& distance) const {
         std::shared_ptr<IIr77Mesh> meshes{};
-        placed.pose->GetMeshes(meshes);
+        placed.model->GetMeshes(meshes);
         if (!meshes) return false;
 
         std::vector<Ir77PVVertex> vertices{};
@@ -1189,7 +1214,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         meshes->GetSkinnedMeshRanges(ranges_skinned);
 
         std::vector<std::uint32_t> bone_bases{};
-        placed.pose->WriteInstanceBoneBases(bone_bases, placed.transforms.size());
+        placed.model->WriteInstanceBoneBases(bone_bases, placed.transforms.size());
 
         bool hit{false};
         distance = std::numeric_limits<float>::max();
@@ -1206,7 +1231,7 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     // One stream's ranges against the ray -- position(vertex, local instance) is a corner in its instance's space
     template <typename Position>
-    static void PickStream(Ir77AnimateEntity const& placed, std::vector<std::uint32_t> const& indices, std::size_t const vertex_count,
+    static void PickStream(Ir77WorldModel const& placed, std::vector<std::uint32_t> const& indices, std::size_t const vertex_count,
                            std::vector<Ir77MeshRange> const& ranges, glm::vec3 const& origin, glm::vec3 const& ray, float& distance, bool& hit,
                            Position const& position) {
         for (Ir77MeshRange const& range : ranges) {
@@ -1259,14 +1284,13 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     }
 
     // The grid's draw for one window -- after the opaque geometry it has to sit behind, before anything transparent. The pipeline is looked
-    // up once; a manifest without "grid" leaves the grid out and says so once in the stats warnings.
+    // up once; a manifest without "grid" leaves the grid out, and the stats warnings say so from then on.
     void AppendGrid(std::size_t const& window, std::vector<Ir77PVDrawItem>& opaque) {
         if (!m_grid_visible || m_grid_missing || !m_renderer) return;
 
         if (m_grid_pipeline == IR77PV_NO_PIPELINE && m_renderer->FindPipeline(std::string{"grid"}, m_grid_pipeline)->ID() != GUIDIr77OperationSucceeded) {
             m_grid_pipeline = IR77PV_NO_PIPELINE;
-            m_grid_missing = true;
-            m_stats.warnings.push_back("no \"grid\" pipeline in the manifest -- the editor grid is off");
+            m_grid_missing = true;  // GetSceneStats says so
             return;
         }
 
@@ -1278,27 +1302,27 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     // One parsed file -> the renderer as one asset bundle (geometry per channel with each primitive's material, the decoded textures, the
     // materials, the instance slots and joint palettes) -> a new entity at the origin, its clips playing. entity is its id.
-    std::shared_ptr<IIr77Return const> LoadEntity(std::shared_ptr<IIr77Pose> const& pose, std::string const& path, bool const use_mesh,
+    std::shared_ptr<IIr77Return const> LoadEntity(std::shared_ptr<IIr77Model> const& model, std::string const& path, bool const use_mesh,
                                                   Ir77PVAssetBundle& bundle, Ir77PVAssetReport& report, std::uint32_t& entity) {
         std::shared_ptr<IIr77Return const> result{};
 
-        // the file's components -- Pose owns them
+        // the file's components -- Model owns them
         std::shared_ptr<IIr77Mesh> meshes{};
         std::shared_ptr<IIr77Material> materials{};
         std::shared_ptr<IIr77Texture> textures{};
 
-        pose->GetMeshes(meshes);
-        pose->GetMaterials(materials);
-        pose->GetTextures(textures);
+        model->GetMeshes(meshes);
+        model->GetMaterials(materials);
+        model->GetTextures(textures);
 
-        Ir77AnimateEntity placed{};
-        placed.pose = pose;
+        Ir77WorldModel placed{};
+        placed.model = model;
         placed.path = path;
 
         bundle = Ir77PVAssetBundle{};
         bundle.name = path.empty() ? std::string{"(empty scene)"} : path;
         bundle.use_mesh = use_mesh;
-        bundle.pipeline = IR77PV_NO_PIPELINE;
+        bundle.pipeline = IR77PV_NO_PIPELINE;  // the manifest's "static" role
 
         // geometry -- each channel stacked, one primitive per range with its glTF material
         auto const primitives = [](std::vector<Ir77MeshRange> const& ranges, std::vector<std::uint32_t> const& range_materials,
@@ -1324,14 +1348,14 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         meshes->GetSkinnedRangeMaterials(range_materials);
         primitives(ranges, range_materials, bundle.primitives_skinned);
 
-        // instances and joint palettes -- the rest pose now, Pose's every frame after
+        // instances and joint palettes -- the rest pose now, Model's every frame after
         meshes->GetInstanceBuffer(placed.transforms);
         meshes->GetBounds(placed.bounds_min, placed.bounds_max);
 
         bundle.instance_count = static_cast<std::uint32_t>(placed.transforms.size());
-        pose->WriteInstanceBoneBases(bundle.bone_bases, placed.transforms.size());
+        model->WriteInstanceBoneBases(bundle.bone_bases, placed.transforms.size());
 
-        pose->WriteBoneMatrices(placed.bones);
+        model->WriteBoneMatrices(placed.bones);
         bundle.bone_count = static_cast<std::uint32_t>(placed.bones.size());
 
         // textures -- decoded; one that won't decode goes up empty and its maps fall back to the placeholder
@@ -1373,8 +1397,33 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
         placed.instance_base = report.instance_base;
 
+        // its counts -- the bundle and the report are gone after this; the device's are the scene's (every load goes to the same GPU)
+        Ir77SceneStats& stats = placed.stats;
+        stats.path = path;
+        model->GetAssetCounts(stats.nodes, stats.meshes, stats.materials, stats.textures, stats.cameras, stats.skins, stats.bones, stats.clips);
+
+        std::shared_ptr<IIr77Animation> animations{};
+        model->GetAnimations(animations);
+        stats.clip_names.assign(stats.clips, std::string{});
+        if (animations)
+            for (std::uint32_t c = 0; c < stats.clips; c++) animations->GetClipName(c, stats.clip_names[c]);
+
+        stats.static_vertices = bundle.vertices.size();
+        stats.static_indices = bundle.indices.size();
+        stats.skinned_vertices = bundle.vertices_skinned.size();
+        stats.skinned_indices = bundle.indices_skinned.size();
+        stats.static_primitives = static_cast<std::uint32_t>(bundle.primitives.size());
+        stats.skinned_primitives = static_cast<std::uint32_t>(bundle.primitives_skinned.size());
+        stats.instances = bundle.instance_count;
+        stats.opaque_runs = report.opaque_runs;
+        stats.skinned_runs = report.skinned_runs;
+        stats.transparent_objects = report.transparent_objects;
+
+        m_gpu = report.device_name;
+        m_render_path = std::string{report.mesh_path ? "mesh shading indirect" : "vertex indirect"} + (report.ray_query ? ", ray queries" : "");
+
         // every clip in the file plays by default, looping -- the app takes over with animation.play / animation.stop
-        pose->PlayAllAnimations(true);
+        model->PlayAllAnimations(true);
 
         entity = m_next_entity++;
         m_entities.emplace(entity, std::move(placed));
@@ -1386,13 +1435,13 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     // direction becomes the rotation that turns -Z onto it.
     void ImportLights(std::uint32_t const entity) {
         std::shared_ptr<IIr77Light> file_lights{};
-        m_entities.at(entity).pose->GetLights(file_lights);
+        m_entities.at(entity).model->GetLights(file_lights);
 
         std::vector<Ir77PVLight> lights{};
         file_lights->GetLightsBuffer(lights);
 
         for (Ir77PVLight const& light : lights) {
-            Ir77AnimateLight placed{};
+            Ir77WorldLight placed{};
             placed.light = light;
             placed.translation = light.position;
             placed.rotation = glm::rotation(glm::vec3(0.0f, 0.0f, -1.0f), glm::normalize(light.direction));
@@ -1445,13 +1494,14 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
         return m_lighting->CreateLights(lights);
     }
 
-    glm::mat4 EntityMatrix(Ir77AnimateEntity const& entity) const {
+    glm::mat4 EntityMatrix(Ir77WorldModel const& entity) const {
         return glm::translate(glm::mat4(1.0f), entity.translation) * glm::mat4_cast(entity.rotation) * glm::scale(glm::mat4(1.0f), entity.scale);
     }
 
     // The scene stats into the return log -- until the app displays them
     void PrintSceneStats() const {
-        Ir77SceneStats const& s = m_stats;
+        Ir77SceneStats s{};
+        GetSceneStats(s);
 
         Ir77RETURN<Ir77OperationSucceeded>(this, "[STATS] " + s.path);
         Ir77RETURN<Ir77OperationSucceeded>(this, "[STATS] gpu " + s.gpu + ", " + s.render_path);
@@ -1482,24 +1532,19 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
    private:
     // the peers -- created here, wired here, never handed past the scene server
     std::shared_ptr<IIr77View> m_view{};
-
     std::shared_ptr<IIr77Lighting> m_lighting{};
-
     std::shared_ptr<IIr77Edit> m_edit{};
-
     std::shared_ptr<IIr77Gizmo> m_gizmo{};  // the transform gizmo -- edit mode's at the selection, object mode's at the active entity
 
-    bool m_object_gizmo_shown{false};  // object mode with something active -- SetObjectGizmo
-
-    glm::mat4 m_object_world{1.0f};  // the active entity's world matrix -- where the object gizmo sits
-
-    std::uint32_t m_edit_entity{EDIT_NO_ENTITY};  // the model in edit mode -- its cage is m_edit's
-
+    // object mode
+    bool m_object_gizmo_shown{false};                // object mode with something active -- SetObjectGizmo
+    glm::mat4 m_object_world{1.0f};                  // the active entity's world matrix -- where the object gizmo sits
     std::uint32_t m_outline_entity{EDIT_NO_ENTITY};  // the model drawn with the selection's outline (the active one, in object mode)
 
-    std::vector<Ir77EditClip> m_edit_clips{};  // what it was playing -- played again when it leaves edit mode
-
-    std::size_t m_grab_view{0};  // the view a grab started in -- its rays until it ends
+    // edit mode
+    std::uint32_t m_edit_entity{EDIT_NO_ENTITY};  // the model in edit mode -- its cage is m_edit's
+    std::vector<Ir77EditClip> m_edit_clips{};     // what it was playing -- played again when it leaves edit mode
+    std::size_t m_grab_view{0};                   // the view a grab started in -- its rays until it ends
 
     // direct link -- Scene -> PeregrineV
     std::shared_ptr<NSIr77PeregrineV::Ir77Server> m_renderer{};  // PeregrineV's server -- the module's one way into the renderer
@@ -1512,13 +1557,10 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
     glm::vec3 m_field_low{0.0f};
     glm::vec3 m_field_high{0.0f};
 
+    // the windows -- SetViewSize
     std::size_t m_view_windows{1};
-
     int m_view_width{1280};
-
     int m_view_height{720};
-
-    Ir77PVPipelineHandle m_pipeline{IR77PV_NO_PIPELINE};  // what the static geometry draws with
 
     glm::vec3 m_background{0.0f};  // sRGB 0..1 -- what every window clears to
 
@@ -1529,26 +1571,19 @@ class Ir77Animate : public Ir77Enlisted, public IIr77Animate, public std::enable
 
     // what CreateScene loaded
     bool m_scene_ready{false};
-
-    std::map<std::uint32_t, Ir77AnimateEntity> m_entities{};  // [id] -- 0 is the scene file
-
-    std::uint32_t m_next_entity{0};  // ids are never reused within a scene; CreateScene starts over at 0
-
-    std::map<std::uint32_t, Ir77AnimateLight> m_lights{};  // [id] -- the world lights
-
-    std::uint32_t m_next_light{0};  // like entity ids -- never reused within a scene
-
-    Ir77SceneStats m_stats{};  // filled by CreateScene
+    std::map<std::uint32_t, Ir77WorldModel> m_entities{};  // [id] -- 0 is the scene file
+    std::uint32_t m_next_entity{0};                        // ids are never reused within a scene; CreateScene starts over at 0
+    std::map<std::uint32_t, Ir77WorldLight> m_lights{};    // [id] -- the world lights
+    std::uint32_t m_next_light{0};                         // like entity ids -- never reused within a scene
+    std::vector<std::string> m_scene_warnings{};           // this scene's -- CreateScene starts them over
+    std::string m_gpu{};                                   // the last load's report -- GetSceneStats
+    std::string m_render_path{};
 
     // per frame -- what CreateFrame hands the renderer
     Ir77PVFrame m_frame{};
-
-    float m_last_seconds{0.0f};  // camera.time.y
-
+    float m_last_seconds{0.0f};       // camera.time.y
     std::uint32_t m_frame_number{0};  // camera.time.z
-
-    std::uint32_t m_opaque_items{0};
-
+    std::uint32_t m_opaque_items{0};  // the renderer's last report -- WriteFrameStats
     std::uint32_t m_transparent_items{0};
 
     static constexpr float EMPTY_SCENE_HALF_SIZE{4.0f};  // the box a scene with no geometry frames

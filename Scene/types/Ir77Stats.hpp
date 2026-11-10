@@ -17,7 +17,7 @@ typedef struct Ir77ClipStat {
     bool loop{true};
 }* pIr77ClipStat;
 
-// Filled once by LoadScene. The app reads it with iridium::GetSceneStats.
+// The scene as it is when asked -- Ir77World::GetSceneStats adds up its entities. The app reads it with iridium::GetSceneStats.
 typedef struct Ir77SceneStats {
     std::string path{};
     std::string gpu{};          // VkPhysicalDeviceProperties::deviceName

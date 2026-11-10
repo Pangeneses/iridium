@@ -40,6 +40,7 @@
 #include "../PeregrineV/server/Ir77Server.hpp"
 #include "../Fields/server/Ir77Server.hpp"
 #include "../Scene/server/Ir77Server.hpp"
+#include "../Compute/server/Ir77Server.hpp"
 
 #include "./types/Ir77Config.hpp"
 
@@ -139,6 +140,21 @@ class iridium {
         Require(m_fields->SetRenderer(m_peregrine), "Fields renderer.");
         Require(m_scene->SetField(m_fields), "Scene fields.");
 
+        // its built-in programs -- <shader_root>/fields/
+        Ir77Json library = Ir77Json::Object();
+        library["path"] = m_config.shader_root;
+        Require(DispatchOperation("fields", "field.library.root", library), "Fields library.");
+
+        // the compute module -- its own pipe; a finished solve is written to <project>/data/<name>.json (Fields reads it from there)
+        m_compute = std::make_shared<NSIr77Compute::Ir77Server>();
+        m_compute->SetPost([this](std::string json) { Post(std::move(json)); });
+        m_sinks["compute"] = [this](std::string json) { m_compute->Sink(std::move(json)); };
+
+        // its library -- <shader_root>/compute/
+        Ir77Json compute_library = Ir77Json::Object();
+        compute_library["path"] = m_config.shader_root;
+        Require(DispatchOperation("compute", "compute.library.root", compute_library), "Compute library.");
+
         // projects -- the folders under "projects"; the landing page lists them and opens one (project.open), which points the scene at it and
         // starts its database
         m_sinks["project"] = [this](std::string json) { ProjectSink(json); };
@@ -229,6 +245,7 @@ class iridium {
         float const dt = m_vstep_seconds > 0.0f ? seconds - m_vstep_seconds : 0.0f;
         m_vstep_seconds = seconds;
 
+        m_compute->Update();                                // a solve finished since -> fields, and its event out
         m_scene->Update(dt);                                // animation, world transforms, bones, the controlled camera
         auto const framed = m_scene->CreateFrame(seconds);  // the frame's results -> Paint, direct
         if (framed->ID() != GUIDIr77OperationSucceeded && !m_upload_error_logged) {
@@ -244,6 +261,10 @@ class iridium {
     }
 
     void Shutdown() {
+        // compute before anything it holds -- a running solve is cancelled and joined here
+        m_sinks.erase("compute");
+        m_compute.reset();
+
         // the scene first -- it holds PeregrineV's server and must not call into it once the renderer is destroyed
         m_sinks.erase("scene");
         m_scene.reset();
@@ -621,6 +642,7 @@ class iridium {
             project["path"] = folder.string();
             Post(Message("scene", "scene.project", project));
             Post(Message("fields", "field.project", project));
+            Post(Message("compute", "compute.project", project));
             Post(Message("scene", "scene.create", EmptySceneArgs()));
 
             data["name"] = m_project;
@@ -637,6 +659,7 @@ class iridium {
             project["path"] = "";
             Post(Message("scene", "scene.create", EmptySceneArgs()));
             Post(Message("scene", "scene.project", project));
+            Post(Message("compute", "compute.project", project));
             Post(Message("fields", "field.project", project));
             return true;
         }
@@ -781,6 +804,8 @@ class iridium {
     std::shared_ptr<NSIr77Scene::Ir77Server> m_scene{};  // the scene module
 
     std::shared_ptr<NSIr77Fields::Ir77Server> m_fields{};  // the fields module -- the scene draws it into the frame
+
+    std::shared_ptr<NSIr77Compute::Ir77Server> m_compute{};  // the compute module -- OpenCL, Hartree-Fock; shows its results through fields
 
     bool m_upload_error_logged{false};
 

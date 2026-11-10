@@ -39,11 +39,11 @@ namespace NSIr77Scene {
 
 // =============================================================================================================================================
 // Ir77View -- the cameras, one per view. Every view is a full camera of its own: the file's cameras, or its own controlled orbit / fly /
-// ortho camera (index == camera count). Owned by Ir77Animate; the UI reaches it through the scene server's camera.* ops.
+// ortho camera (index == camera count). Owned by Ir77World; the UI reaches it through the scene server's camera.* ops.
 //
 //   scene:     SetCameras (the file's) -> SetBounds (frames every view's controlled camera)
 //   UI:        SetViewLayout, FocusView -- then SetCameraMove / Look / Zoom / Speed / Mode / View, SelectCamera / NextCamera / ResetCamera
-//              drive the focused view only -- next frame
+//              drive the focused view only -- next frame. ResetViews puts everything back as it starts (an app switch)
 //   per frame: Update(dt) -> WriteCameras(aspect) per window
 //
 // Layout: the UI says where each view draws -- 1 .. MAX_VIEWS areas, x, y, width, height as fractions of the window, anywhere (the part the
@@ -296,6 +296,20 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
+    // Every view back to how it starts: the layout one view filling the window, view 0 focused, every view's camera reset (view 0 on the
+    // file's first camera when there is one, as SetCameras starts it), nothing held -- what an app switch hands the next app
+    std::shared_ptr<IIr77Return const> ResetViews() {
+        m_areas = {glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)};
+        m_active = 0;
+
+        for (std::uint32_t v = 0; v < MAX_VIEWS; v++) {
+            ResetView(v);
+            m_views[v].index = v == 0 ? 0 : m_camera_count;
+        }
+
+        return Ir77RETURN<Ir77OperationSucceeded>();
+    }
+
    private:
     // The camera a view draws with: the file camera (rebuilt with this aspect) or its controlled camera. Remembers its view and lens, so the
     // next switch to orbit / fly starts from it.
@@ -468,7 +482,7 @@ class Ir77View : public Ir77Enlisted, public IIr77View, public std::enable_share
     }
 
    private:
-    std::shared_ptr<IIr77Camera> m_cameras{};  // the file's -- Ir77Pose's component
+    std::shared_ptr<IIr77Camera> m_cameras{};  // the file's -- Ir77Model's component
 
     glm::vec3 m_bounds_min{-1.0f};
 

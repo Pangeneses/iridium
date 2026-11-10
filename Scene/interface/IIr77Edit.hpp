@@ -38,12 +38,12 @@ typedef struct IIr77Edit : virtual public IIr77Enlisted {
     // PeregrineV's server -- the cage's storage buffers and draws go through it
     virtual std::shared_ptr<IIr77Return const> SetRenderer(std::shared_ptr<NSIr77PeregrineV::Ir77Server> const& renderer) = 0;
 
-    // The transform gizmo -- Animate's, shared with object mode. Edit mode places it at the selection's median, world axes.
+    // The transform gizmo -- World's, shared with object mode. Edit mode places it at the selection's median, world axes.
     virtual std::shared_ptr<IIr77Return const> SetGizmo(std::shared_ptr<IIr77Gizmo> const& gizmo) = 0;
 
     // The model's triangles -> the edit mesh, uploaded as the cage; nothing selected, vertex mode. asset = its renderer asset (what an edit
     // updates); instance_base = the asset's first models[] slot. Skinned geometry is posed by bones (the asset's joint palettes,
-    // Pose::WriteBoneMatrices) from bone_bases (per instance) -- the rest pose, since a model in edit mode plays nothing. Replaces the cage
+    // Model::WriteBoneMatrices) from bone_bases (per instance) -- the rest pose, since a model in edit mode plays nothing. Replaces the cage
     // before.
     // materials = the model's -- its BLEND (alpha) faces don't hide the vertices behind them from a pick
     virtual std::shared_ptr<IIr77Return const> CreateCage(std::shared_ptr<IIr77Mesh> const& meshes, std::shared_ptr<IIr77Material> const& materials,

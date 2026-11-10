@@ -10,7 +10,7 @@
 #include "../../Ir77RT/interface/IIr77Enlisted.hpp"
 #include "../../Ir77RT/interface/IIr77Return.hpp"
 
-#include "IIr77Animate.hpp"
+#include "IIr77World.hpp"
 
 #include "../types/Ir77Types.hpp"
 
@@ -18,16 +18,16 @@ using namespace NSIr77RT;
 
 namespace NSIr77Scene {
 
-// The scene graph's working copy -- every entity by its id (types/Ir77Types.hpp, Ir77GraphEntity). Every change lands on Animate at once, so
+// The scene graph's working copy -- every entity by its id (types/Ir77Types.hpp, Ir77GraphEntity). Every change lands on World at once, so
 // what's drawn is always the graph. A failure fills error with the message the op answers with.
-//   SetAnimate -> Add / Remove / Move / Set -> Get / Ordered / FindModel / World / Shown -> Clear (a new scene)
+//   SetWorld -> Add / Remove / Move / Set -> Get / Ordered / FindModel / World / Shown -> Clear (a new scene)
 typedef struct IIr77Graph : virtual public IIr77Enlisted {
     IIr77Graph() = default;
 
-    // Animate -- what a model / light entity puts its runtime side into
-    virtual std::shared_ptr<IIr77Return const> SetAnimate(std::shared_ptr<IIr77Animate> const& animate) = 0;
+    // World -- what a model / light entity puts its runtime side into
+    virtual std::shared_ptr<IIr77Return const> SetWorld(std::shared_ptr<IIr77World> const& world) = 0;
 
-    // empty -- the scene server calls it with scene.create (Animate's runtime ids start over)
+    // empty -- the scene server calls it with scene.create (World's runtime ids start over)
     virtual std::shared_ptr<IIr77Return const> Clear() = 0;
 
     // A new entity. A model loads path (the scene server resolved it); a light becomes a world light. order 0 = after its siblings. id = its
@@ -50,7 +50,7 @@ typedef struct IIr77Graph : virtual public IIr77Enlisted {
     // Every entity, parents before children, siblings in order -- what a dump writes and a load replays. Valid until the graph changes.
     virtual std::shared_ptr<IIr77Return const> Ordered(std::vector<Ir77GraphEntity const*>& ordered) const = 0;
 
-    // The model entity behind an Animate entity -- id '' when none
+    // The model entity behind a World entity -- id '' when none
     virtual std::shared_ptr<IIr77Return const> FindModel(std::uint32_t const& runtime, std::string& id) const = 0;
 
     // Where it sits in the world -- its parents' transforms, then its own

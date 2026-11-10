@@ -130,16 +130,22 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
         std::uint64_t const count = static_cast<std::uint64_t>(dims.x) * dims.y * dims.z;
 
         if (count > FIELD_MAX_POINTS) return Ir77RETURN<Ir77OutOfRange>(this, "Ir77Field: field has more than 16M elements.");
-        if (settings.topology == 0 && (dims.x < 2 || dims.y < 2)) return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Field: a surface needs at least 2 x 2.");
+        if (settings.topology > FIELD_TOPOLOGY_ISOSURFACE) return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Field: topology must be 0..2.");
+        if (settings.topology == FIELD_TOPOLOGY_SURFACE && (dims.x < 2 || dims.y < 2))
+            return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Field: a surface needs at least 2 x 2.");
+        if (settings.topology == FIELD_TOPOLOGY_ISOSURFACE && (dims.x < 2 || dims.y < 2 || dims.z < 2))
+            return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Field: an isosurface needs at least 2 x 2 x 2.");
         if (settings.pens == 0 || settings.pens > 8) return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Field: pens must be 1..8.");
         if (settings.pen_target == 1 && settings.topology != 0)
-            return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Field: point ink needs a surface -- particles have no grid to ink.");
+            return Ir77RETURN<Ir77InvalidArgument>(this, "Ir77Field: point ink needs a surface -- particles and isosurfaces have no sheet to ink.");
 
         // 1. both stages compile before anything running is touched
         bool const has_paint = std::regex_search(settings.source, std::regex{R"(\bvec4\s+Paint\s*\()"});
         bool const has_pen = std::regex_search(settings.source, std::regex{R"(\bvec2\s+Pen\s*\()"});
+        bool const has_markers = std::regex_search(settings.source, std::regex{R"(\bvec4\s+Marker\s*\()"});
 
-        std::string const defines = std::string{has_paint ? "#define IR77_HAS_PAINT\n" : ""} + (has_pen ? "#define IR77_HAS_PEN\n" : "");
+        std::string const defines = std::string{has_paint ? "#define IR77_HAS_PAINT\n" : ""} + (has_pen ? "#define IR77_HAS_PEN\n" : "") +
+                                    (has_markers ? "#define IR77_HAS_MARKERS\n" : "");
 
         std::vector<std::uint32_t> compute_spirv{};
         std::vector<std::uint32_t> fragment_spirv{};
@@ -205,6 +211,44 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
             m_field_count = count;
         }
 
+        // isosurface -- the vertex buffer (sized from the cell count, made again when that changes) and its counter; other topologies: freed
+        if (settings.topology == FIELD_TOPOLOGY_ISOSURFACE) {
+            std::uint64_t const cells = static_cast<std::uint64_t>(dims.x - 1) * (dims.y - 1) * (dims.z - 1);
+            std::uint64_t const budget = std::clamp<std::uint64_t>(cells * 3u, FIELD_MIN_ISO_VERTICES, FIELD_MAX_ISO_VERTICES) / 3u * 3u;
+
+            if (budget != m_field_iso_budget) ReleaseIso();
+
+            if (!m_field_has_iso) {
+                if (Failed(m_renderer->CreateStorageBuffer(static_cast<VkDeviceSize>(budget * sizeof(Ir77FieldIsoVertexGPU)), nullptr, m_field_iso_buffer,
+                                                           m_field_iso_slot),
+                           result))
+                    return result;
+
+                std::uint32_t const zero[4]{0u, 0u, 0u, 0u};
+                if (Failed(m_renderer->CreateStorageBuffer(sizeof(zero), zero, m_field_iso_counter_buffer, m_field_iso_counter_slot), result)) {
+                    m_renderer->DestroyStorageBuffer(m_field_iso_buffer);
+                    m_field_iso_slot = BINDLESS_NO_SLOT;
+                    return result;
+                }
+
+                m_field_has_iso = true;
+                m_field_iso_budget = budget;
+            }
+        } else {
+            ReleaseIso();
+        }
+
+        // markers -- the buffer once (the first program with a Marker()), kept after
+        if (has_markers && !m_field_has_markers) {
+            std::vector<Ir77FieldMarkerGPU> const blank(FIELD_MAX_MARKERS);
+            if (Failed(m_renderer->CreateStorageBuffer(static_cast<VkDeviceSize>(blank.size() * sizeof(Ir77FieldMarkerGPU)), blank.data(),
+                                                       m_field_markers_buffer, m_field_markers_slot),
+                       result))
+                return result;
+
+            m_field_has_markers = true;
+        }
+
         // ray queries -- a surface joins the rays (once per grid size)
         if (settings.topology == 0 && !m_field_has_ray && !m_field_rays_off) {
             if (Failed(AddRaySurface(dims), result)) return result;
@@ -240,10 +284,17 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
         cfg.ink = glm::uvec4(m_field_has_ink ? m_field_ink_slot : m_field_config_slot, to_points ? 1u : 0u, 0u, 0u);
         cfg.values = DataRow();
 
+        // no isosurface -> the config's own slot stands in, as for the ink
+        cfg.iso = m_field_has_iso ? glm::uvec4(m_field_iso_slot, m_field_iso_counter_slot, static_cast<std::uint32_t>(m_field_iso_budget), 0u)
+                                  : glm::uvec4(m_field_config_slot, m_field_config_slot, 0u, 0u);
+
+        cfg.markers = has_markers ? glm::uvec4(m_field_markers_slot, FIELD_MAX_MARKERS, 0u, 0u) : glm::uvec4(m_field_config_slot, 0u, 0u, 0u);
+
         if (Failed(WriteFieldConfig(), result)) return result;
 
         m_field_settings = settings;
         m_field_has_pen = has_pen;
+        m_field_program_markers = has_markers;
         m_field_ready = true;
         m_field_first = true;
         m_field_clear = true;
@@ -345,15 +396,27 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
         m_field_count = 0;
 
         ReleaseData();
+        ReleaseIso();
+
+        if (m_field_has_markers) m_renderer->DestroyStorageBuffer(m_field_markers_buffer);
+        m_field_has_markers = false;
+        m_field_program_markers = false;
+        m_field_markers_slot = BINDLESS_NO_SLOT;
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The field's box -- grid x / z on the ground plane, the value range up. active = compiled and shown (false: nothing to cover).
+    // The field's box -- grid x / z on the ground plane, the value range up (an isosurface: its x / y / z box). active = compiled and shown (false: nothing to cover).
     std::shared_ptr<IIr77Return const> GetBounds(bool& active, glm::vec3& low, glm::vec3& high) {
         active = m_field_ready && m_field_visible;
         low = glm::vec3(m_field_settings.x.x, m_field_settings.z.x, m_field_settings.y.x);
         high = glm::vec3(m_field_settings.x.y, m_field_settings.z.y, m_field_settings.y.y);
+
+        // an isosurface fills its domain's box as it is (x, y, z)
+        if (m_field_settings.topology == FIELD_TOPOLOGY_ISOSURFACE) {
+            low = glm::vec3(m_field_settings.x.x, m_field_settings.y.x, m_field_settings.z.x);
+            high = glm::vec3(m_field_settings.x.y, m_field_settings.y.y, m_field_settings.z.y);
+        }
 
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
@@ -372,6 +435,32 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
             points.push.user = {m_field_config_slot, m_field_points_slot, FIELD_JOB_POINTS, m_field_first ? 1u : 0u, 0u, 0u, 0u, 0u};
             points.groups = FieldGroups(m_field_count);
             dispatches.push_back(points);
+
+            // markers -- the program's spheres, after the points (Marker() may read nothing of them, but it runs in the same frame's order)
+            if (m_field_program_markers) {
+                Ir77PVDispatch markers{};
+                markers.pipeline = m_field_compute;
+                markers.push.user = {m_field_config_slot, m_field_points_slot, FIELD_JOB_MARKERS, 0u, 0u, 0u, 0u, 0u};
+                markers.groups = FieldGroups(FIELD_MAX_MARKERS);
+                dispatches.push_back(markers);
+            }
+
+            // isosurface -- the counter to 0, then a thread a cell (each dispatch waits for the one before)
+            if (m_field_has_iso) {
+                glm::uvec3 const dims = glm::uvec3(m_field_config.dims);
+
+                Ir77PVDispatch clear{};
+                clear.pipeline = m_field_compute;
+                clear.push.user = {m_field_config_slot, m_field_points_slot, FIELD_JOB_ISO_CLEAR, 0u, 0u, 0u, 0u, 0u};
+                clear.groups = FieldGroups(1);
+                dispatches.push_back(clear);
+
+                Ir77PVDispatch iso{};
+                iso.pipeline = m_field_compute;
+                iso.push.user = {m_field_config_slot, m_field_points_slot, FIELD_JOB_ISO, 0u, 0u, 0u, 0u, 0u};
+                iso.groups = FieldGroups(static_cast<std::uint64_t>(dims.x - 1) * (dims.y - 1) * (dims.z - 1));
+                dispatches.push_back(iso);
+            }
 
             if (m_field_has_pen) {
                 float const t_from = m_field_pen_time;
@@ -412,24 +501,31 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // The field's draws for one pass list: surface -> Opaque + one Shadow draw per casting light (shadows = the frame's shadow tiles);
-    // particles -> Transparent (additive). A pipeline that can't be built yet just leaves the field out of this frame.
+    // The field's draws for one pass list: surface / isosurface -> Opaque + one Shadow draw per casting light (shadows = the frame's shadow
+    // tiles); particles -> Transparent (additive). An isosurface draws its whole vertex budget -- past this frame's count the vertex shader
+    // collapses them. A pipeline that can't be built yet just leaves the field out of this frame.
     std::shared_ptr<IIr77Return const> AppendDraws(std::size_t const& window, Ir77PVPass const& pass, std::uint32_t const& shadows,
                                                    std::vector<Ir77PVDrawItem>& items) {
         if (!m_field_ready || !m_field_visible || !m_renderer) return Ir77RETURN<Ir77OperationSucceeded>();
 
         std::size_t const w = window;
 
-        bool const surface = m_field_settings.topology == 0;
+        std::uint32_t const topology = m_field_settings.topology;
+        bool const iso = topology == FIELD_TOPOLOGY_ISOSURFACE && m_field_has_iso;
+        bool const surface = topology == FIELD_TOPOLOGY_SURFACE || iso;  // lit, opaque, casts shadows
         glm::uvec3 const dims = glm::uvec3(m_field_config.dims);
 
-        std::uint32_t const vertices = surface ? (dims.x - 1) * (dims.y - 1) * 6 : static_cast<std::uint32_t>(m_field_count * 6);
+        if (topology == FIELD_TOPOLOGY_ISOSURFACE && !iso) return Ir77RETURN<Ir77OperationSucceeded>();
+
+        std::uint32_t const vertices = iso       ? static_cast<std::uint32_t>(m_field_iso_budget)
+                                       : surface ? (dims.x - 1) * (dims.y - 1) * 6
+                                                 : static_cast<std::uint32_t>(m_field_count * 6);
 
         auto const make = [&](Ir77PVPipelineHandle const pipeline, std::uint32_t const light) {
             Ir77PVDrawItem item{};
             if (m_renderer->MakeProceduralDrawItem(w, pipeline, vertices, 1, item)->ID() != GUIDIr77OperationSucceeded) return;
 
-            item.mode = surface ? 0u : 1u;
+            item.mode = iso ? 2u : surface ? 0u : 1u;
             item.user[0] = m_field_config_slot;  // -> pc.user[4]
             item.user[1] = m_field_points_slot;  // -> pc.user[5]
             item.light_index = light;
@@ -443,10 +539,43 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
         if (pass == Ir77PVPass::Shadow && surface)
             for (std::uint32_t tile = 0; tile < shadows; tile++) make(m_field_shadow, tile);
 
+        // markers -- opaque, lit, casting shadows, under every topology
+        if (m_field_program_markers && m_field_has_markers) {
+            auto const marker = [&](Ir77PVPipelineHandle const pipeline, std::uint32_t const light) {
+                Ir77PVDrawItem item{};
+                if (m_renderer->MakeProceduralDrawItem(w, pipeline, FIELD_MAX_MARKERS * FIELD_MARKER_VERTICES, 1, item)->ID() != GUIDIr77OperationSucceeded)
+                    return;
+
+                item.mode = 3u;
+                item.user[0] = m_field_config_slot;
+                item.user[1] = m_field_points_slot;
+                item.light_index = light;
+
+                items.push_back(item);
+            };
+
+            if (pass == Ir77PVPass::Opaque) marker(m_field_surface, 0);
+            if (pass == Ir77PVPass::Shadow)
+                for (std::uint32_t tile = 0; tile < shadows; tile++) marker(m_field_shadow, tile);
+        }
+
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
    private:
+    // the isosurface's buffers back
+    void ReleaseIso() {
+        if (m_field_has_iso) {
+            m_renderer->DestroyStorageBuffer(m_field_iso_buffer);
+            m_renderer->DestroyStorageBuffer(m_field_iso_counter_buffer);
+        }
+
+        m_field_has_iso = false;
+        m_field_iso_slot = BINDLESS_NO_SLOT;
+        m_field_iso_counter_slot = BINDLESS_NO_SLOT;
+        m_field_iso_budget = 0;
+    }
+
     // the config's data row -- the data buffer's slot and float count; none: the config's own slot, 0 (the shaders never index an empty slot)
     glm::uvec4 DataRow() const {
         return glm::uvec4(m_field_has_data ? m_field_data_slot : m_field_config_slot, m_field_has_data ? m_field_data_count : 0u, 0u, 0u);
@@ -599,6 +728,26 @@ class Ir77Field : public Ir77Enlisted, public IIr77Field, public std::enable_sha
     std::size_t m_field_data_capacity{0};  // floats the buffer was made for -- a smaller upload reuses it
 
     std::uint32_t m_field_data_count{0};  // floats in it now
+
+    bool m_field_has_iso{false};  // isosurface -- its vertices (field_compute.glsl writes them each frame) and their counter
+
+    std::uint32_t m_field_iso_buffer{0};
+
+    std::uint32_t m_field_iso_slot{BINDLESS_NO_SLOT};
+
+    std::uint32_t m_field_iso_counter_buffer{0};
+
+    std::uint32_t m_field_iso_counter_slot{BINDLESS_NO_SLOT};
+
+    std::uint64_t m_field_iso_budget{0};  // vertices it holds
+
+    bool m_field_has_markers{false};  // the marker buffer -- made for the first program with a Marker(), kept
+
+    bool m_field_program_markers{false};  // the running program has a Marker()
+
+    std::uint32_t m_field_markers_buffer{0};
+
+    std::uint32_t m_field_markers_slot{BINDLESS_NO_SLOT};
 
     bool m_field_has_canvas{false};
 

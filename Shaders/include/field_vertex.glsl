@@ -1,8 +1,10 @@
 // =============================================================================================================================================
 // field_vertex.glsl -- builds one field vertex from the point buffer (no vertex input). Needs bindless.glsl and field.glsl.
-//   pc.user[4] = config slot, pc.user[5] = points slot, pc.mode = 0 surface / 1 particles
-//   surface:   (dims.x - 1) * (dims.y - 1) cells, 6 vertices each -- the z = 0 slice of the grid; normal from the neighbours
-//   particles: one camera-facing quad per element, 6 vertices each, half size = point.size
+//   pc.user[4] = config slot, pc.user[5] = points slot, pc.mode = 0 surface / 1 particles / 2 isosurface / 3 markers
+//   surface:    (dims.x - 1) * (dims.y - 1) cells, 6 vertices each -- the z = 0 slice of the grid; normal from the neighbours
+//   particles:  one camera-facing quad per element, 6 vertices each, half size = point.size
+//   isosurface: the vertex budget's worth of vertices -- the triangles field_compute.glsl wrote this frame; past its count, collapsed
+//   markers:    MARKER_STACKS x MARKER_SLICES x 6 vertices a marker, a latitude / longitude sphere; radius 0 collapses it
 // =============================================================================================================================================
 #ifndef IR77_FIELD_VERTEX_GLSL
 #define IR77_FIELD_VERTEX_GLSL
@@ -25,6 +27,54 @@ Ir77FieldVertex Ir77BuildFieldVertex(uint vertex) {
     Ir77FieldVertex v;
 
     uint corner_index = vertex % 6u;
+
+    if (pc.mode == 3u) {
+        // markers -- which marker, which quad of its sphere, which corner of the quad
+        const uint per = IR77_FIELD_MARKER_STACKS * IR77_FIELD_MARKER_SLICES * 6u;
+        const uvec2 corners[6] = uvec2[6](uvec2(0, 0), uvec2(1, 0), uvec2(1, 1), uvec2(0, 0), uvec2(1, 1), uvec2(0, 1));
+
+        uint index = vertex / per;
+        uint local = vertex % per;
+        uint quad = local / 6u;
+        uvec2 at = uvec2(quad % IR77_FIELD_MARKER_SLICES, quad / IR77_FIELD_MARKER_SLICES) + corners[local % 6u];
+
+        Ir77FieldMarker marker = ir77_field_markers[cfg.markers.x].data[min(index, IR77_FIELD_MAX_MARKERS - 1u)];
+        bool none = index >= cfg.markers.y || marker.sphere.w <= 0.0;
+
+        float longitude = 6.2831853 * float(at.x) / float(IR77_FIELD_MARKER_SLICES);
+        float latitude = 3.14159265 * float(at.y) / float(IR77_FIELD_MARKER_STACKS);
+        vec3 direction = vec3(sin(latitude) * cos(longitude), cos(latitude), sin(latitude) * sin(longitude));
+
+        v.world = none ? vec3(0.0) : marker.sphere.xyz + direction * marker.sphere.w;
+        v.normal = direction;
+        v.color = marker.color;
+        v.value = 0.0;
+        v.coord = vec2(0.0);
+        v.corner = vec2(0.0);
+        v.ink = vec4(0.0);
+        return v;
+    }
+
+    if (pc.mode == 2u) {
+        // isosurface -- a vertex past this frame's count is collapsed onto the origin (its triangle has no area, nothing draws)
+        uint count = min(ir77_field_iso_counters[cfg.iso.y].data[0], cfg.iso.z);
+        if (vertex >= count) {
+            v.world = vec3(0.0);
+            v.normal = vec3(0.0, 1.0, 0.0);
+            v.color = vec4(0.0);
+            v.value = 0.0;
+        } else {
+            Ir77FieldIsoVertex iv = ir77_field_iso_vertices[cfg.iso.x].data[vertex];
+            v.world = iv.position.xyz;
+            v.normal = iv.normal.xyz;
+            v.color = iv.color;
+            v.value = iv.normal.w;
+        }
+        v.coord = vec2(0.0);
+        v.corner = vec2(0.0);
+        v.ink = vec4(0.0);
+        return v;
+    }
 
     if (pc.mode == 1u) {
         // particles
