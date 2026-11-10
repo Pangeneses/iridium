@@ -13,6 +13,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
+#include <filesystem>
 #include <map>
 #include <regex>
 #include <set>
@@ -20,97 +22,91 @@
 #include <string>
 #include <vector>
 
+#include "simdjson.h"
+
 #include "../types/Ir77Types.hpp"
-#include "Ir77Basis.hpp"
-#include "Ir77Integrals.hpp"
 #include "Ir77Linear.hpp"
-#include "Ir77Radial.hpp"
-#include "Ir77Scf.hpp"
 
 namespace NSIr77Compute {
 
 // =============================================================================================================================================
 // Ir77Stages -- a Compute program: one OpenCL source. Its comment directives declare what it works with (constants, buffers, kernels) and the
-// script the host runs between the kernels. The math is the program's (its kernels); the engine supplies only general steps (linear algebra,
-// a molecule's basis, the file writers). A program is a generator: what it makes leaves as data files in <project>/data/ for Fields to draw.
+// script the host runs between the kernels. Compute is a generic executor: the math -- every formula, every format -- is the program's (its
+// kernels, and the libraries it takes in); the engine supplies only buffers, kernels, control and linear algebra. A program is a generator:
+// what it makes leaves as data files in <project>/data/ for Fields to draw, in the format the program names.
 //
 // Directives (comment lines; the compiler skips them):
+//   // @include <name>                    another saved program's text, here -- a library (functions, constants, even directives). Each is
+//                                         taken in once; a library may include others
 //   // @const <type> <name> = <value>     a constant -- the program's settings live here, nowhere else:
 //                                           int, double, bool    a number (an expression of numbers and constants above it); in a kernel
 //                                                                s.<name> as int / double / int (0, 1)
-//                                           string               text a step reads (a basis set's name, an output file's name)
-//                                           double[], int[]      numbers apart by spaces or commas -- a buffer of them, s.<name>, and
-//                                                                <name>_count its length
-//                                           molecule             atoms "El x y z; El x y z ..." in angstrom -- each @const molecule line of
-//                                                                the same name adds its atoms
-//   // @use gaussian                      the Gaussian integral library (Compute's Ir77Integrals.cl) ahead of the program: Ir77EriFunctions,
-//                                         Ir77Hermite, Ir77Coulomb, Ir77Boys, Ir77QuartetFunctions, IR77_FUNCTION ...
+//                                           string               text a step reads (a file's name, a format's, label words)
+//                                           double[], int[]      numbers apart by spaces, commas or ; (a group's end -- an atom's Z x y z,
+//                                                                say) -- a buffer of them, s.<name>, and <name>_count its length
+//   // @symbol <int|long|double> <name> ...
+//                                         symbols a kernel sees with that type (set gives them their values; undeclared ones are doubles)
 //   // @buffer <name> [int] <d0> [d1 [d2]] a buffer of doubles (or ints), d0 fastest -- element (a, b, c) at a + d0 (b + d1 c); each dimension
-//                                         a number, a symbol, or a product (n*n)
+//                                         an expression of numbers and symbols, no spaces (n, n*n, 17+4*atoms)
 //   // @kernel <name> <d0> [d1 [d2]]      void <name>(Ir77Stage s) -- one work item an element, s.i its index (0 .. the product - 1)
-//   // @report <symbol> ...               symbols the run reports
+//   // @report <symbol> ...               symbols the run reports (and every write's summary carries)
 //   the script, in order:
 //   // @do <step> ...                     one step (below)
 //   // @repeat <passes>                   the steps down to @until, again and again -- `iteration` counts (1, 2 ...)
 //   // @until <expression>                ... until it's true (sets `converged`), or the passes run out -- loops nest
 //
 // In a kernel: s.<buffer> is the buffer (__global double* / int*), s.<symbol> a symbol's value, s.i the element. Symbols are the constants,
-// the engine's (below) and what `set` makes (doubles).
+// the engine's (below) and what `set` makes.
 //
-// The engine's symbols: iteration converged (int), error energy (double) -- and with a molecule step n atoms primitives electrons alpha beta
-// multiplicity unrestricted (int), quartets (long), nuclear (double); with an orthogonalize step m (int). A @repeat inside another counts
-// its own iteration; the outer one's comes back after it.
+// The engine's symbols: iteration converged (int), error (double: extrapolate's) -- and with an orthogonalize step m (int). A @repeat inside
+// another counts its own iteration; the outer one's comes back after it.
 //
 // Steps (a <word> that names a string constant means its text; a matrix's sizes come from its @buffer line -- d0 its columns, d1 its rows,
 // d2 its layers):
-//   molecule <molecule> <basis> [charge] [multiplicity] [unrestricted]
-//                                         the molecule's basis -> buffers basis_functions (int, IR77_FUNCTION each), basis_primitives,
-//                                         basis_atoms (Ir77Integrals.cl's layout); symbols n (functions), atoms, electrons, alpha, beta,
-//                                         multiplicity (0 = the lowest the electron count allows), unrestricted (asked, or an open shell),
-//                                         quartets (unique (ij|kl)), nuclear (the nuclei's repulsion). basis_atoms (x y z Z a nucleus, bohr) is
-//                                         the geometry from then on: a kernel that moves the nuclei writes it, and the steps after (guess, the
-//                                         orbitals file) take the atoms from it
 //   run <kernel>                          the kernel over its elements
 //   swap <a> <b>                          two buffers of one size trade contents (a pass's out becomes the next pass's in)
-//   guess <P>                             the superposition of atomic densities -> P, split evenly over its layers (n x n each)
+//   fill <buffer> <expression> ...        its elements from 0, one expression each (the rest stay)
 //   orthogonalize <S> <X> [rank] [drop]   canonical: S's (n x n) eigenvectors over sqrt(their eigenvalues), those under drop (1e-7) dropped
 //                                         -> X (@buffer X <rank> <n>); the rank symbol (m) set first
 //   eigen <F> <X> <C> <E>                 per layer of F: X^T F X diagonalized; C = X C' (m x n a layer), E its eigenvalues ascending (m)
 //   subspace <F> <C> <E> <first> ...      per layer: F diagonalized again in the space of C's columns from first on (they're orthonormal over
 //                                         S) -- those columns and their E replaced, the ones before kept; one first (an expression) a layer
-//   density <C> <P> <count> ...           per layer: P = sum over the first <count> columns of C c c^T (one count a layer)
-//   diis <F> <P> <S> <X> ...              Pulay's extrapolation of every F given (groups of four, one set of coefficients) from its last
-//                                         COMPUTE_DIIS_SIZE, error X^T(FPS - SPF)X; symbol error (its largest element)
-//   diis reset                            every diis history forgotten (a new geometry: the old Focks no longer apply)
+//   extrapolate <F> <R> ...               Pulay's: every F given (each with R, its residual -- the program's measure of how far F is from
+//                                         done, any shape) replaced by the mix of its last COMPUTE_EXTRAPOLATE_SIZE values whose residuals
+//                                         cancel best, one set of coefficients for all the pairs; symbol error (R's largest |element|)
+//   extrapolate reset                     every history forgotten (a new start: the old values no longer apply)
 //   set <symbol> = <expression>           + - * / ( ) < > <= >= == != && || !, abs sqrt min max exp log; sum(b) sumsq(b) maxabs(b) of a
 //                                         buffer, at(b,i) one element (no spaces inside a step's words)
 //   require <expression> "<message>"      the run stops with the message unless the expression holds
-//   output orbitals <C> <E> <name>        <project>/data/<name>.json, format "orbitals" (Shaders/fields/orbitals.glsl, levels.glsl) -- layers:
-//                                         1 restricted, 2 alpha / beta; with energy, iteration, converged, error
-//   output atom <name> <Z> <charge> <q> <keep> <zeta0> <C0> <E0> ... <zeta3> <C3> <E3>
-//                                         one atom over radial (Slater) functions, format "orbitals" function kind 1 (Ir77Radial) -- q the
-//                                         radial orbitals' electrons (R x 4 x 2: r, l, spin), keep those written per l (4), per l its
-//                                         exponents (k), C (m x k x 2), E (m x 2)
-//   output grid <name> <lo> <hi> <b> ...  <project>/data/<name>.json, format "grid" (Shaders/fields/grid.glsl) -- the buffers as channels of
-//                                         one d0 x d1 x d2 grid (x fastest) over the box [lo, hi]^3
+//   write <name> <format> <version> <buffer> ... [-summary <name> ...] [-labels <index> <count> "<first>" "<template>"] ...
+//                                         <project>/data/<name>.json: {format, version, summary, sliders, values} -- values the buffers one
+//                                         after another (floats); summary the @report symbols, then each -summary name (a symbol's value, a
+//                                         buffer's values, a string constant's text); sliders: each -labels names a reader parameter's values
+//                                         -- "<first>" (when not "") then <count> labels from the template: {#} the row (from 1), {#0} (from
+//                                         0), {<buffer>} its element at the row, {<symbol>} its value; after the name %<printf format> (%g
+//                                         unless given), @<string constant> (the value picks one of its words, apart by |), ? (nothing when 0)
+//   read <name> <buffer>                  <project>/data/<name>.json's values into the buffer, from element 0 (the rest stay)
 // =============================================================================================================================================
 class Ir77Stages {
    public:
-    Ir77Stages(cl_context const context, cl_command_queue const queue, cl_device_id const device, std::string const& integrals)
-        : m_context{context}, m_queue{queue}, m_device{device}, m_integrals{integrals} {}
+    Ir77Stages(cl_context const context, cl_command_queue const queue, cl_device_id const device) : m_context{context}, m_queue{queue}, m_device{device} {}
 
     Ir77Stages(Ir77Stages const&) = delete;
     Ir77Stages& operator=(Ir77Stages const&) = delete;
 
     ~Ir77Stages() { Release(); }
 
-    // parsed, built and run -- result: the report, the outputs, every buffer as the run left it (a failed script's too). false: error says why.
-    bool Run(std::string const& source, std::atomic<bool> const& cancel, Ir77ProgramResult& result, std::string& error) {
+    // its includes taken in, parsed, built and run -- result: the report, the outputs, every buffer as the run left it (a failed script's
+    // too). false: error says why.
+    bool Run(Ir77ProgramJob const& job, std::atomic<bool> const& cancel, Ir77ProgramResult& result, std::string& error) {
         auto const started = std::chrono::steady_clock::now();
         m_cancel = &cancel;
         m_result = &result;
+        m_data = job.data;
 
-        if (!Parse(source, error) || !Build(source, error)) return false;
+        std::vector<Ir77SourceLine> lines{};
+        std::set<std::string> taken{};
+        if (!Expand(job.source, "", job.library, 0, taken, lines, error) || !Parse(lines, error) || !Build(lines, error)) return false;
 
         // the constant arrays into their buffers
         Size();
@@ -153,23 +149,62 @@ class Ir77Stages {
     struct Ir77StageLine {
         enum class Kind { Do, Repeat, Until } kind{Kind::Do};
         std::string text{};
-        std::size_t partner{0};       // repeat <-> until
-        std::uint32_t number{0};      // its line in the source
+        std::size_t partner{0};  // repeat <-> until
+        std::string where{};     // its line -- "line 12", "gaussian line 40"
+    };
+
+    // one line of the program as built -- where it came from: the program itself (origin '') or a library it took in
+    struct Ir77SourceLine {
+        std::string text{};
+        std::string origin{};
+        std::uint32_t number{0};
     };
 
     // ---- the program's text -------------------------------------------------------------------------------------------------------------
 
-    bool Parse(std::string const& source, std::string& error) {
-        for (char const* name : {"iteration", "converged"}) Engine(name, "int");
-        for (char const* name : {"error", "energy"}) Engine(name, "double");
+    // "line 12" -- the program's own; "gaussian line 40" -- a library's
+    static std::string Where(Ir77SourceLine const& line) { return (line.origin.empty() ? "" : line.origin + " ") + "line " + std::to_string(line.number); }
 
+    // The source with every // @include line replaced by the program it names -- from the project's saved programs, each taken in once (a
+    // second @include of one is dropped: libraries can include what they need without doubling it). Every line keeps where it came from.
+    bool Expand(std::string const& source, std::string const& origin, std::map<std::string, std::string> const& library, std::uint32_t const depth,
+                std::set<std::string>& taken, std::vector<Ir77SourceLine>& out, std::string& error) {
         std::istringstream lines{source};
         std::string line{};
-        std::vector<std::size_t> open{};
         std::uint32_t number = 0;
-
         while (std::getline(lines, line)) {
             number++;
+            Ir77SourceLine here{line, origin, number};
+            std::size_t const at = line.find("// @include");
+            if (at == std::string::npos) {
+                out.push_back(here);
+                continue;
+            }
+            std::string const name = Trim(line.substr(at + 11));
+            if (taken.count(name)) continue;
+            auto const found = library.find(name);
+            if (found == library.end() || name.empty()) {
+                error = Where(here) + ": @include " + name + " -- no saved program of that name";
+                return false;
+            }
+            if (depth >= COMPUTE_INCLUDE_DEPTH) {
+                error = Where(here) + ": @include " + name + " -- includes nest deeper than " + std::to_string(COMPUTE_INCLUDE_DEPTH);
+                return false;
+            }
+            taken.insert(name);
+            if (!Expand(found->second, name, library, depth + 1, taken, out, error)) return false;
+        }
+        return true;
+    }
+
+    bool Parse(std::vector<Ir77SourceLine> const& source, std::string& error) {
+        for (char const* name : {"iteration", "converged"}) Engine(name, "int");
+        Engine("error", "double");
+
+        std::vector<std::size_t> open{};
+
+        for (Ir77SourceLine const& source_line : source) {
+            std::string const& line = source_line.text;
             std::size_t const at = line.find("// @");
             if (at == std::string::npos) continue;
             std::istringstream words{line.substr(at + 4)};
@@ -178,7 +213,8 @@ class Ir77Stages {
             std::string rest{};
             std::getline(words, rest);
             rest = Trim(rest);
-            std::string const where = "line " + std::to_string(number) + ": ";
+            std::string const here = Where(source_line);
+            std::string const where = here + ": ";
 
             if (what == "const") {
                 std::size_t const equals = rest.find('=');
@@ -191,12 +227,20 @@ class Ir77Stages {
                     error = where + error;
                     return false;
                 }
-            } else if (what == "use") {
-                if (rest != "gaussian") {
-                    error = where + "@use takes gaussian";
+            } else if (what == "symbol") {
+                std::vector<std::string> const w = Words(rest);
+                if (w.size() < 2 || (w[0] != "int" && w[0] != "long" && w[0] != "double")) {
+                    error = where + "@symbol <int | long | double> <name> ...";
                     return false;
                 }
-                m_use_gaussian = true;
+                for (std::size_t k = 1; k < w.size(); k++) {
+                    if (!Identifier(w[k]) || m_constants.count(w[k]) || m_strings.count(w[k]) || m_engine.count(w[k])) {
+                        error = where + "@symbol " + w[k] + " -- a name of its own (not a constant or the engine's)";
+                        return false;
+                    }
+                    m_symbols.emplace(w[k], 0.0);
+                    m_types[w[k]] = w[0];
+                }
             } else if (what == "buffer") {
                 std::vector<std::string> const w = Words(rest);
                 Ir77StageBuffer b{};
@@ -236,40 +280,39 @@ class Ir77Stages {
                     }
                     Declare(w[1]);
                 }
-                m_script.push_back({Ir77StageLine::Kind::Do, rest, 0, number});
+                m_script.push_back({Ir77StageLine::Kind::Do, rest, 0, here});
             } else if (what == "repeat") {
                 open.push_back(m_script.size());
-                m_script.push_back({Ir77StageLine::Kind::Repeat, rest, 0, number});
+                m_script.push_back({Ir77StageLine::Kind::Repeat, rest, 0, here});
             } else if (what == "until") {
                 if (open.empty()) {
                     error = where + "@until without @repeat";
                     return false;
                 }
-                m_script.push_back({Ir77StageLine::Kind::Until, rest, open.back(), number});
+                m_script.push_back({Ir77StageLine::Kind::Until, rest, open.back(), here});
                 m_script[open.back()].partner = m_script.size() - 1;
                 open.pop_back();
             } else {
-                error = where + "no directive @" + what + " -- const use buffer kernel report do repeat until";
+                error = where + "no directive @" + what + " -- include const symbol buffer kernel report do repeat until";
                 return false;
             }
         }
 
         if (!open.empty()) {
-            error = "line " + std::to_string(m_script[open.back()].number) + ": @repeat without @until";
+            error = m_script[open.back()].where + ": @repeat without @until";
             return false;
         }
         if (m_script.empty()) {
-            error = "no script -- a program runs its // @do steps (none found)";
+            error = "no script -- a program runs its // @do steps (none found; a library has none -- a program takes it in with // @include)";
             return false;
         }
 
-        // the molecule and orthogonalize steps' symbols, and the molecule step's buffers -- the engine's when the script has those steps (a
-        // program without them may name its own n, m ...)
-        bool molecule = false, orthogonalize = false;
-        std::vector<std::string> ranks{};  // orthogonalize's own rank symbols
+        // the orthogonalize step's rank symbols -- m unless it names its own (the engine's only when the script has the step: a program
+        // without it may name its own m)
+        bool orthogonalize = false;
+        std::vector<std::string> ranks{};
         for (Ir77StageLine const& l : m_script) {
             std::vector<std::string> const w = l.kind == Ir77StageLine::Kind::Do ? Words(l.text) : std::vector<std::string>{""};
-            molecule = molecule || w[0] == "molecule";
             if (w[0] == "orthogonalize" && w.size() > 3) ranks.push_back(w[3]);
             else orthogonalize = orthogonalize || w[0] == "orthogonalize";
         }
@@ -281,22 +324,12 @@ class Ir77Stages {
             m_symbols[rank] = 0.0;
             m_types[rank] = "int";
         }
-        std::vector<std::pair<char const*, char const*>> steps{};
-        if (molecule)
-            steps = {{"n", "int"},     {"atoms", "int"},        {"primitives", "int"},   {"electrons", "int"}, {"alpha", "int"},
-                     {"beta", "int"},  {"multiplicity", "int"}, {"unrestricted", "int"}, {"quartets", "long"}, {"nuclear", "double"}};
-        if (orthogonalize) steps.emplace_back("m", "int");
-        for (auto const& [name, type] : steps) {
-            if (m_constants.count(name) || m_strings.count(name) || m_molecules.count(name)) {
-                error = std::string{name} + " is the " + (std::string{name} == "m" ? "orthogonalize" : "molecule") + " step's symbol -- pick another name";
+        if (orthogonalize) {
+            if (m_constants.count("m") || m_strings.count("m")) {
+                error = "m is the orthogonalize step's rank -- pick another name, or give the step its own rank symbol";
                 return false;
             }
-            Engine(name, type);
-        }
-        if (molecule) {
-            m_buffers.push_back({"basis_functions", true, {std::to_string(IR77_FUNCTION), "n"}});
-            m_buffers.push_back({"basis_primitives", false, {"2", "primitives"}});
-            m_buffers.push_back({"basis_atoms", false, {"4", "atoms"}});
+            Engine("m", "int");
         }
 
         for (std::size_t a = 0; a < m_buffers.size(); a++)
@@ -317,7 +350,7 @@ class Ir77Stages {
                 return false;
             }
         for (Ir77StageBuffer const& b : m_buffers)
-            if (m_symbols.count(b.name) || m_strings.count(b.name) || m_molecules.count(b.name)) {
+            if (m_symbols.count(b.name) || m_strings.count(b.name)) {
                 error = b.name + " is both a buffer and a constant or symbol";
                 return false;
             }
@@ -337,37 +370,7 @@ class Ir77Stages {
             return false;
         }
         bool const taken = m_constants.count(name) || m_strings.count(name);
-        if (type == "molecule") {
-            if (taken || m_symbols.count(name)) {
-                error = name + " is already declared";
-                return false;
-            }
-            std::istringstream atoms{value};
-            std::string atom{};
-            while (std::getline(atoms, atom, ';')) {
-                std::istringstream words{atom};
-                std::string element{};
-                double x = 0.0, y = 0.0, z = 0.0;
-                if (Trim(atom).empty()) continue;
-                if (!(words >> element >> x >> y >> z)) {
-                    error = "an atom is \"El x y z\" (angstrom), atoms apart by ; -- not \"" + Trim(atom) + "\"";
-                    return false;
-                }
-                std::uint32_t const z_number = Ir77BasisBuilder::Element(element);
-                if (z_number == 0) {
-                    error = "no element \"" + element + "\"";
-                    return false;
-                }
-                m_molecules[name].push_back(Ir77Atom{z_number, x * BOHR_PER_ANGSTROM, y * BOHR_PER_ANGSTROM, z * BOHR_PER_ANGSTROM});
-            }
-            if (m_molecules[name].empty()) {
-                error = "molecule " + name + " has no atoms";
-                return false;
-            }
-            return true;
-        }
-
-        if (taken || m_molecules.count(name)) {
+        if (taken) {
             error = name + " is already declared";
             return false;
         }
@@ -379,7 +382,9 @@ class Ir77Stages {
             // a constant array -- a buffer filled before the script, and <name>_count its length
             std::vector<double> values{};
             std::string word{};
-            std::istringstream words{value};
+            std::string spaced = value;
+            std::replace(spaced.begin(), spaced.end(), ';', ' ');  // ; groups (an atom's Z x y z, say) -- read as a space
+            std::istringstream words{spaced};
             while (std::getline(words, word, ' ')) {
                 std::istringstream parts{word};
                 std::string part{};
@@ -389,7 +394,7 @@ class Ir77Stages {
                     char* end = nullptr;
                     double const v = std::strtod(part.c_str(), &end);
                     if (!end || *end != '\0' || (type == "int[]" && v != std::floor(v))) {
-                        error = type + " " + name + ": \"" + part + "\" -- numbers apart by spaces or commas" + (type == "int[]" ? ", whole" : "");
+                        error = type + " " + name + ": \"" + part + "\" -- numbers apart by spaces, commas or ;" + (type == "int[]" ? ", whole" : "");
                         return false;
                     }
                     values.push_back(v);
@@ -430,7 +435,7 @@ class Ir77Stages {
                 return false;
             }
         } else {
-            error = "@const type " + type + " -- int, double, bool, string, molecule, double[] or int[]";
+            error = "@const type " + type + " -- int, double, bool, string, double[] or int[]";
             return false;
         }
         m_symbols[name] = number;
@@ -455,8 +460,9 @@ class Ir77Stages {
         }
     }
 
-    // the OpenCL program: the prelude (its struct of symbols and buffers), the integral library, the program, a wrapper kernel per @kernel
-    bool Build(std::string const& source, std::string& error) {
+    // the OpenCL program: the prelude (its struct of symbols and buffers), the program with its libraries (each line where it came from --
+    // the compiler's messages name it), a wrapper kernel per @kernel
+    bool Build(std::vector<Ir77SourceLine> const& source, std::string& error) {
         std::ostringstream text{};
         text << "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n";
         text << "typedef struct {\n    uint i;\n";
@@ -464,12 +470,14 @@ class Ir77Stages {
         for (Ir77StageBuffer const& b : m_buffers) text << "    __global " << (b.ints ? "int" : "double") << "* " << b.name << ";\n";
         text << "} Ir77Stage;\n";
 
-        // a unique quartet's index from four functions -- the order Ir77QuartetFunctions undoes
-        text << "ulong Ir77Pair(uint i, uint j) { return i >= j ? (ulong)i * (i + 1) / 2 + j : (ulong)j * (j + 1) / 2 + i; }\n";
-        text << "ulong Ir77Quartet(uint i, uint j, uint k, uint l) { ulong a = Ir77Pair(i, j), b = Ir77Pair(k, l); return a >= b ? a * (a + 1) / 2 + b : b * (b + 1) / 2 + a; }\n";
-
-        if (m_use_gaussian) text << m_integrals << "\n";
-        text << "#line 1\n" << source << "\n";
+        // the program's lines as "<source>", a library's as "library:<name>" -- a #line wherever the run of lines breaks
+        Ir77SourceLine const* last = nullptr;
+        for (Ir77SourceLine const& line : source) {
+            if (!last || last->origin != line.origin || last->number + 1 != line.number)
+                text << "#line " << line.number << " \"" << (line.origin.empty() ? std::string{"<source>"} : "library:" + line.origin) << "\"\n";
+            text << line.text << "\n";
+            last = &line;
+        }
 
         for (Ir77StageKernel const& k : m_kernels) {
             text << "__kernel void Ir77Stage_" << k.name << "(ulong first, ulong count, __global const double* symbols";
@@ -497,7 +505,9 @@ class Ir77Stages {
             clGetProgramBuildInfo(m_program, m_device, CL_PROGRAM_BUILD_LOG, size, error.data(), nullptr);
             while (!error.empty() && error.back() == '\0') error.pop_back();
             if (error.empty()) error = "the program didn't build (no log)";
-            // the driver's name for the source ("/tmp/OCL123.cl:7:43:", "<kernel>:7:43:") -> "line 7:43:" -- the program's own lines
+            // the driver's name for the source ("<source>:7:43:", "/tmp/OCL123.cl:7:43:") -> "line 7:43:" -- the program's own lines; a
+            // library's ("library:gaussian:40:3:") -> "gaussian line 40:3:"
+            error = std::regex_replace(error, std::regex{R"(\S*library:([A-Za-z0-9_.\-]+):(\d+):(\d+):)"}, "$1 line $2:$3:");
             error = std::regex_replace(error, std::regex{R"(\S*(\.cl|<kernel>|<source>):(\d+):(\d+):)"}, "line $2:$3:");
             return false;
         }
@@ -520,7 +530,7 @@ class Ir77Stages {
                 return false;
             }
             Ir77StageLine const& line = m_script[at];
-            std::string const where = "line " + std::to_string(line.number) + ": ";
+            std::string const where = line.where + ": ";
 
             if (line.kind == Ir77StageLine::Kind::Repeat) {
                 double passes = 0.0;
@@ -540,7 +550,7 @@ class Ir77Stages {
                     }
                     double holds = 0.0;
                     if (!Evaluate(m_script[end].text, holds, error)) {
-                        error = "line " + std::to_string(m_script[end].number) + ": @until " + m_script[end].text + " -- " + error;
+                        error = m_script[end].where + ": @until " + m_script[end].text + " -- " + error;
                         m_depth--;
                         return false;
                     }
@@ -572,10 +582,9 @@ class Ir77Stages {
             return false;
         };
 
-        if (what == "molecule") return need(2, "molecule <molecule> <basis> [charge] [multiplicity] [unrestricted]") && Molecule(w, error);
         if (what == "run") return need(1, "run <kernel>") && RunKernel(w[1], error);
         if (what == "swap") return need(2, "swap <a> <b>") && Swap(w[1], w[2], error);
-        if (what == "guess") return need(1, "guess <P>") && GuessStep(w[1], error);
+        if (what == "fill") return need(2, "fill <buffer> <expression> ...") && Fill(w[1], std::vector<std::string>(w.begin() + 2, w.end()), error);
         if (what == "orthogonalize") {
             double threshold = COMPUTE_ORTHOGONAL_DROP;
             if (!need(2, "orthogonalize <S> <X> [rank] [threshold]") || (w.size() > 4 && !Evaluate(w[4], threshold, error))) return false;
@@ -583,13 +592,12 @@ class Ir77Stages {
         }
         if (what == "eigen") return need(4, "eigen <F> <X> <C> <E>") && Eigen(w[1], w[2], w[3], w[4], error);
         if (what == "subspace") return need(4, "subspace <F> <C> <E> <first> ...") && Subspace(w[1], w[2], w[3], std::vector<std::string>(w.begin() + 4, w.end()), error);
-        if (what == "density") return need(3, "density <C> <P> <count> ...") && Density(w[1], w[2], std::vector<std::string>(w.begin() + 3, w.end()), error);
-        if (what == "diis" && w.size() == 2 && w[1] == "reset") {
-            m_focks.clear();
-            m_errors.clear();
+        if (what == "extrapolate" && w.size() == 2 && w[1] == "reset") {
+            m_histories.clear();
+            m_residuals.clear();
             return true;
         }
-        if (what == "diis") return need(4, "diis <F> <P> <S> <X> ...") && Diis(std::vector<std::string>(w.begin() + 1, w.end()), text, error);
+        if (what == "extrapolate") return need(2, "extrapolate <F> <R> ...") && Extrapolate(std::vector<std::string>(w.begin() + 1, w.end()), text, error);
         if (what == "require") {
             std::size_t const quote = text.find('"');
             std::string const condition = text.substr(7, quote == std::string::npos ? std::string::npos : quote - 7);
@@ -612,13 +620,10 @@ class Ir77Stages {
             m_symbols[w[1]] = value;
             return true;
         }
-        if (what == "output" && w.size() >= 2 && w[1] == "orbitals") return need(4, "output orbitals <C> <E> <name>") && OutputOrbitals(w[2], w[3], Text(w[4]), error);
-        if (what == "output" && w.size() >= 2 && w[1] == "atom")
-            return need(18, "output atom <name> <Z> <charge> <q> <keep> <zeta0> <C0> <E0> ... <zeta3> <C3> <E3>") && OutputAtom(w, error);
-        if (what == "output" && w.size() >= 2 && w[1] == "grid")
-            return need(5, "output grid <name> <lo> <hi> <buffer> ...") && OutputGrid(Text(w[2]), w[3], w[4], std::vector<std::string>(w.begin() + 5, w.end()), error);
+        if (what == "write") return need(4, "write <name> <format> <version> <buffer> ... [-summary <name> ...] [-labels <index> <count> \"<first>\" \"<template>\"]") && Write(text, error);
+        if (what == "read") return need(2, "read <name> <buffer>") && Read(Text(w[1]), w[2], error);
 
-        error = "no step '" + what + "' -- molecule run swap guess orthogonalize eigen subspace density diis set require output";
+        error = "no step '" + what + "' -- run swap fill orthogonalize eigen subspace extrapolate set require write read";
         return false;
     }
 
@@ -641,16 +646,12 @@ class Ir77Stages {
         return found == m_symbols.end() ? 0.0 : found->second;
     }
 
-    // a dimension's value -- a number, a symbol, or a product of them
+    // a dimension's value -- an expression of numbers and symbols (n, n*n, 17+4*atoms ...); one that can't be read is 0
     std::size_t Dimension(std::string const& text) const {
-        double product = 1.0;
-        std::string part{};
-        std::istringstream parts{text};
-        while (std::getline(parts, part, '*')) {
-            part = Trim(part);
-            product *= !part.empty() && std::isdigit(static_cast<unsigned char>(part[0])) ? std::atof(part.c_str()) : Symbol(part);
-        }
-        return static_cast<std::size_t>(std::max(product, 0.0));
+        double value = 0.0;
+        std::string ignored{};
+        if (!const_cast<Ir77Stages*>(this)->Evaluate(text, value, ignored)) return 0;
+        return static_cast<std::size_t>(std::max(value, 0.0));
     }
 
     std::size_t Elements(std::vector<std::string> const& dims) const {
@@ -829,95 +830,6 @@ class Ir77Stages {
         return true;
     }
 
-    bool Molecule(std::vector<std::string> const& w, std::string& error) {
-        auto const found = m_molecules.find(w[1]);
-        if (found == m_molecules.end()) {
-            error = "no @const molecule " + w[1];
-            return false;
-        }
-        double charge = 0.0, multiplicity_asked = 0.0, unrestricted = 0.0;
-        if ((w.size() > 3 && !Evaluate(w[3], charge, error)) || (w.size() > 4 && !Evaluate(w[4], multiplicity_asked, error)) ||
-            (w.size() > 5 && !Evaluate(w[5], unrestricted, error)))
-            return false;
-
-        m_molecule = Ir77Molecule{};
-        m_molecule.atoms = found->second;
-        m_molecule.basis = Text(w[2]);
-        std::transform(m_molecule.basis.begin(), m_molecule.basis.end(), m_molecule.basis.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        m_molecule.charge = static_cast<std::int32_t>(std::lround(charge));
-        m_molecule.multiplicity = static_cast<std::uint32_t>(std::max(std::lround(multiplicity_asked), 0L));
-        if (!Ir77BasisBuilder::Build(m_molecule, m_basis, error)) return false;
-
-        std::int64_t electrons = -m_molecule.charge;
-        for (Ir77Atom const& atom : m_molecule.atoms) electrons += atom.number;
-        std::int64_t const multiplicity = m_molecule.multiplicity == 0 ? (electrons % 2 == 0 ? 1 : 2) : m_molecule.multiplicity;
-        std::int64_t const unpaired = multiplicity - 1;
-        if (electrons <= 0 || unpaired > electrons || (electrons + unpaired) % 2 != 0) {
-            error = std::to_string(electrons) + " electrons can't have multiplicity " + std::to_string(multiplicity);
-            return false;
-        }
-        m_molecule.multiplicity = static_cast<std::uint32_t>(multiplicity);
-
-        Ir77Integrals::Ir77Flat const flat = Ir77Integrals::Flatten(m_molecule, m_basis);
-        std::size_t const n = m_basis.functions.size();
-        m_symbols["n"] = static_cast<double>(n);
-        m_symbols["atoms"] = static_cast<double>(m_molecule.atoms.size());
-        m_symbols["primitives"] = static_cast<double>(flat.primitives.size() / 2);
-        m_symbols["electrons"] = static_cast<double>(electrons);
-        m_symbols["alpha"] = static_cast<double>((electrons + unpaired) / 2);
-        m_symbols["beta"] = static_cast<double>((electrons - unpaired) / 2);
-        m_symbols["multiplicity"] = static_cast<double>(multiplicity);
-        m_symbols["unrestricted"] = unrestricted != 0.0 || multiplicity != 1 ? 1.0 : 0.0;
-        m_symbols["quartets"] = static_cast<double>(Ir77Integrals::QuartetCount(n));
-        m_symbols["nuclear"] = Ir77Integrals::NuclearRepulsion(m_molecule);
-        if (m_symbols["alpha"] > static_cast<double>(n)) {
-            error = "more occupied orbitals than basis functions";
-            return false;
-        }
-
-        Size();
-        Find("basis_functions")->integers = flat.functions;
-        Find("basis_primitives")->doubles = flat.primitives;
-        Find("basis_atoms")->doubles = flat.atoms;
-        for (char const* name : {"basis_functions", "basis_primitives", "basis_atoms"}) Wrote(*Find(name));
-        m_have_molecule = true;
-        return true;
-    }
-
-    // the molecule's nuclei where basis_atoms has them now -- a program may have moved them
-    bool Geometry(std::string& error) {
-        Ir77StageBuffer* atoms = Find("basis_atoms");
-        if (!atoms || !Host(*atoms, error)) return false;
-        for (std::size_t a = 0; a < m_molecule.atoms.size() && a * 4 + 2 < atoms->doubles.size(); a++) {
-            m_molecule.atoms[a].x = atoms->doubles[a * 4];
-            m_molecule.atoms[a].y = atoms->doubles[a * 4 + 1];
-            m_molecule.atoms[a].z = atoms->doubles[a * 4 + 2];
-        }
-        return true;
-    }
-
-    bool GuessStep(std::string const& name, std::string& error) {
-        if (!m_have_molecule) {
-            error = "guess needs the molecule step first";
-            return false;
-        }
-        if (!Geometry(error)) return false;
-        std::size_t const n = m_basis.functions.size();
-        std::vector<double>* p = Doubles(name, n * n, error);
-        if (!p) return false;
-
-        std::vector<double> density{};
-        if (!Ir77Scf::Guess(m_molecule, m_basis, *m_cancel, density)) {
-            error = "cancelled";
-            return false;
-        }
-        std::size_t const layers = std::max<std::size_t>(p->size() / (n * n), 1);
-        for (std::size_t l = 0; l < layers; l++)
-            for (std::size_t i = 0; i < n * n; i++) (*p)[l * n * n + i] = density[i] / static_cast<double>(layers);
-        Wrote(*Find(name));
-        return true;
-    }
-
     // a matrix buffer's shape from its @buffer line -- cols (d0), rows (d1), layers (d2, or 1); false: error says why
     bool Shape(std::string const& name, std::size_t& cols, std::size_t& rows, std::size_t& layers, std::string& error) {
         Ir77StageBuffer* b = Find(name);
@@ -1042,96 +954,56 @@ class Ir77Stages {
         return true;
     }
 
-    // per layer: P (n x n) = sum over the first <count> columns of C (m x n) c c^T
-    bool Density(std::string const& c_name, std::string const& p_name, std::vector<std::string> const& counts, std::string& error) {
-        std::size_t m = 0, n = 0, c_layers = 0, pn = 0, p_rows = 0, layers = 0;
-        if (!Shape(c_name, m, n, c_layers, error) || !Shape(p_name, pn, p_rows, layers, error)) return false;
-        std::vector<double>* c = Doubles(c_name, c_layers * n * m, error);
-        std::vector<double>* p = c ? Doubles(p_name, layers * n * n, error) : nullptr;
-        if (!p) return false;
-        if (counts.size() < layers) {
-            error = "density needs a count for each of " + p_name + "'s " + std::to_string(layers) + " layers";
+    // Pulay's extrapolation over pairs of F and R at once (one set of coefficients): each F's whole buffer the value, its R's the residual;
+    // symbol error -- R's largest |element|. A history a step: the step's own words.
+    bool Extrapolate(std::vector<std::string> const& names, std::string const& key, std::string& error) {
+        if (names.size() % 2 != 0) {
+            error = "extrapolate takes pairs: F R ...";
             return false;
         }
-        for (std::size_t l = 0; l < layers; l++) {
-            double count = 0.0;
-            if (!Evaluate(counts[l], count, error)) return false;
-            std::size_t const filled = std::min(static_cast<std::size_t>(std::max(count, 0.0)), m);
-            std::size_t const cl = std::min(l, c_layers - 1) * n * m;
-            for (std::size_t i = 0; i < n; i++)
-                for (std::size_t j = 0; j < n; j++) {
-                    double sum = 0.0;
-                    for (std::size_t k = 0; k < filled; k++) sum += (*c)[cl + i * m + k] * (*c)[cl + j * m + k];
-                    (*p)[l * n * n + i * n + j] = sum;
-                }
-        }
-        Wrote(*Find(p_name));
-        return true;
-    }
-
-    // Pulay's extrapolation over groups of F P S X at once (one set of coefficients): each F layer's error X^T (F P S - S P F) X (P's layer
-    // as F's, S and X one layer); symbol error -- the largest element. A history a step: the step's own words.
-    bool Diis(std::vector<std::string> const& names, std::string const& key, std::string& error) {
-        if (names.size() % 4 != 0) {
-            error = "diis takes groups of four: F P S X ...";
-            return false;
-        }
-        struct Group {
-            std::vector<double>* f;
-            std::size_t n, layers;
-        };
-        std::vector<Group> groups{};
-        std::vector<double> err{}, stacked{};
+        std::vector<std::vector<double>*> values{};
+        std::vector<double> stacked{}, residual{};
         double largest = 0.0;
 
-        for (std::size_t g = 0; g < names.size(); g += 4) {
-            std::size_t n = 0, rows = 0, layers = 0, m = 0, xn = 0, xl = 0, pn = 0, pr = 0, pl = 0;
-            if (!Shape(names[g], n, rows, layers, error) || !Shape(names[g + 3], m, xn, xl, error) || !Shape(names[g + 1], pn, pr, pl, error)) return false;
-            if (xn != n || pn != n) {
-                error = names[g] + ", " + names[g + 1] + " and " + names[g + 3] + " disagree on the function count";
+        for (std::size_t g = 0; g < names.size(); g += 2) {
+            Ir77StageBuffer* f_buffer = Find(names[g]);
+            Ir77StageBuffer* r_buffer = Find(names[g + 1]);
+            if (!f_buffer || !r_buffer || f_buffer->ints || r_buffer->ints || f_buffer == r_buffer) {
+                error = names[g] + " and " + names[g + 1] + " -- two different double buffers (the value and its residual)";
                 return false;
             }
-            std::vector<double>* f = Doubles(names[g], layers * n * n, error);
-            std::vector<double>* p = f ? Doubles(names[g + 1], pl * n * n, error) : nullptr;
-            std::vector<double>* s = p ? Doubles(names[g + 2], n * n, error) : nullptr;
-            std::vector<double>* x = s ? Doubles(names[g + 3], n * m, error) : nullptr;
-            if (!x) return false;
+            std::vector<double>* f = Doubles(names[g], 0, error);
+            std::vector<double>* r = f ? Doubles(names[g + 1], 0, error) : nullptr;
+            if (!r) return false;
 
-            std::vector<double> const sm = Layer(*s, 0, n * n);
-            std::vector<double> const xm = Layer(*x, 0, n * m);
-            std::vector<double> const xt = Ir77Linear::Transpose(xm, n, m);
-            for (std::size_t l = 0; l < layers; l++) {
-                std::vector<double> const fl = Layer(*f, l, n * n);
-                std::vector<double> const fps = Ir77Linear::Multiply(Ir77Linear::Multiply(fl, Layer(*p, std::min(l, pl - 1), n * n), n, n, n), sm, n, n, n);
-                std::vector<double> commutator(n * n);
-                for (std::size_t i = 0; i < n; i++)
-                    for (std::size_t j = 0; j < n; j++) commutator[i * n + j] = fps[i * n + j] - fps[j * n + i];
-                std::vector<double> const e = Ir77Linear::Multiply(Ir77Linear::Multiply(xt, commutator, m, n, n), xm, m, n, m);
-                for (double const v : e) largest = std::max(largest, fabs(v));
-                err.insert(err.end(), e.begin(), e.end());
-                stacked.insert(stacked.end(), fl.begin(), fl.end());
-            }
-            groups.push_back({f, n, layers});
+            for (double const v : *r) largest = std::max(largest, fabs(v));
+            residual.insert(residual.end(), r->begin(), r->end());
+            stacked.insert(stacked.end(), f->begin(), f->end());
+            values.push_back(f);
         }
         m_symbols["error"] = largest;
 
-        std::vector<std::vector<double>>& focks = m_focks[key];
-        std::vector<std::vector<double>>& errors = m_errors[key];
-        focks.push_back(stacked);
-        errors.push_back(err);
-        if (focks.size() > COMPUTE_DIIS_SIZE) {
-            focks.erase(focks.begin());
-            errors.erase(errors.begin());
+        std::vector<std::vector<double>>& history = m_histories[key];
+        std::vector<std::vector<double>>& residuals = m_residuals[key];
+        if (!history.empty() && (history.back().size() != stacked.size() || residuals.back().size() != residual.size())) {
+            history.clear();  // the buffers changed size -- the old values don't apply
+            residuals.clear();
         }
-        if (focks.size() < 2) return true;
+        history.push_back(stacked);
+        residuals.push_back(residual);
+        if (history.size() > COMPUTE_EXTRAPOLATE_SIZE) {
+            history.erase(history.begin());
+            residuals.erase(residuals.begin());
+        }
+        if (history.size() < 2) return true;
 
-        // B c = (0 .. 0, -1), B_ij = e_i . e_j bordered by -1
-        std::size_t const count = focks.size(), size = count + 1;
+        // B c = (0 .. 0, -1), B_ij = r_i . r_j bordered by -1
+        std::size_t const count = history.size(), size = count + 1;
         std::vector<double> b(size * size, 0.0), rhs(size, 0.0), coefficients;
         for (std::size_t i = 0; i < count; i++)
             for (std::size_t j = 0; j < count; j++) {
                 double dot = 0.0;
-                for (std::size_t k = 0; k < errors[i].size(); k++) dot += errors[i][k] * errors[j][k];
+                for (std::size_t k = 0; k < residuals[i].size(); k++) dot += residuals[i][k] * residuals[j][k];
                 b[i * size + j] = dot;
             }
         for (std::size_t i = 0; i < count; i++) b[i * size + count] = b[count * size + i] = -1.0;
@@ -1139,15 +1011,15 @@ class Ir77Stages {
         if (!Ir77Linear::Solve(b, rhs, size, coefficients)) return true;  // singular -- this pass keeps its own F
 
         std::size_t at = 0;
-        for (std::size_t g = 0; g < groups.size(); g++) {
-            std::size_t const length = groups[g].layers * groups[g].n * groups[g].n;
-            for (std::size_t k = 0; k < length; k++) {
+        for (std::size_t g = 0; g < values.size(); g++) {
+            std::vector<double>& f = *values[g];
+            for (std::size_t k = 0; k < f.size(); k++) {
                 double sum = 0.0;
-                for (std::size_t i = 0; i < count; i++) sum += coefficients[i] * focks[i][at + k];
-                (*groups[g].f)[k] = sum;
+                for (std::size_t i = 0; i < count; i++) sum += coefficients[i] * history[i][at + k];
+                f[k] = sum;
             }
-            at += length;
-            Wrote(*Find(names[g * 4]));
+            at += f.size();
+            Wrote(*Find(names[g * 2]));
         }
         return true;
     }
@@ -1157,72 +1029,6 @@ class Ir77Stages {
         for (char const c : name) ok = ok && (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.');
         if (!ok) error = "output name '" + name + "' -- letters, digits, '-', '_' and '.' only";
         return ok;
-    }
-
-    // the orbitals file -- C (n x m a layer), E (m a layer), and the molecule step's basis
-    bool OutputOrbitals(std::string const& c_name, std::string const& e_name, std::string const& name, std::string& error) {
-        if (!m_have_molecule) {
-            error = "output orbitals needs the molecule step";
-            return false;
-        }
-        if (!Geometry(error)) return false;
-        if (!FileName(name, error)) return false;
-        std::size_t const n = static_cast<std::size_t>(Symbol("n")), m = static_cast<std::size_t>(Symbol("m"));
-        std::vector<double>* c = Doubles(c_name, n * m, error);
-        std::vector<double>* e = c ? Doubles(e_name, m, error) : nullptr;
-        if (!e) return false;
-        std::size_t const layers = std::min(c->size() / (n * m), e->size() / m);
-        bool const unrestricted = Symbol("unrestricted") != 0.0 && layers >= 2;
-
-        Ir77ProgramOutput output{};
-        output.name = name;
-        output.format = ORBITALS_FORMAT;
-        output.molecule = m_molecule;
-        output.basis = m_basis;
-
-        Ir77ScfResult& r = output.scf;
-        r.energy = Symbol("energy");
-        r.nuclear_repulsion = Symbol("nuclear");
-        r.iterations = static_cast<std::uint32_t>(Symbol("iteration"));
-        r.converged = Symbol("converged") != 0.0;
-        r.error = Symbol("error");
-        r.electrons = static_cast<std::uint32_t>(Symbol("electrons"));
-        r.alpha = static_cast<std::uint32_t>(Symbol("alpha"));
-        r.beta = static_cast<std::uint32_t>(Symbol("beta"));
-        r.multiplicity = static_cast<std::uint32_t>(Symbol("multiplicity"));
-        r.unrestricted = unrestricted;
-        r.occupied = r.alpha;
-        r.function_kind = ORBITALS_FUNCTION_GAUSSIAN;
-
-        // column-major as Ir77ScfResult keeps them: orbital k's are [k n, k n + n)
-        auto const take = [&](std::size_t const layer, std::vector<double>& energies, std::vector<double>& coefficients) {
-            energies.assign(e->begin() + static_cast<std::ptrdiff_t>(layer * m), e->begin() + static_cast<std::ptrdiff_t>((layer + 1) * m));
-            coefficients.assign(n * m, 0.0);
-            for (std::size_t k = 0; k < m; k++)
-                for (std::size_t i = 0; i < n; i++) coefficients[k * n + i] = (*c)[layer * n * m + i * m + k];
-        };
-        take(0, r.orbital_energies, r.coefficients);
-        double const sz = 0.5 * (static_cast<double>(r.alpha) - static_cast<double>(r.beta));
-        r.s2 = sz * (sz + 1.0);
-        if (unrestricted) {
-            take(1, r.beta_orbital_energies, r.beta_coefficients);
-
-            // <S^2> = Sz (Sz + 1) + N_b - sum_ij |<a_i | b_j>|^2
-            std::vector<double> s{}, t{}, v{};
-            Ir77Integrals::OneElectron(m_molecule, m_basis, s, t, v);
-            double overlap = 0.0;
-            for (std::size_t i = 0; i < r.alpha; i++)
-                for (std::size_t j = 0; j < r.beta; j++) {
-                    double dot = 0.0;
-                    for (std::size_t p = 0; p < n; p++)
-                        for (std::size_t q = 0; q < n; q++) dot += r.coefficients[i * n + p] * s[p * n + q] * r.beta_coefficients[j * n + q];
-                    overlap += dot * dot;
-                }
-            r.s2 += static_cast<double>(r.beta) - overlap;
-        }
-
-        m_result->outputs.push_back(std::move(output));
-        return true;
     }
 
     // a buffer's values as doubles (ints converted) -- false: error says why
@@ -1238,145 +1044,209 @@ class Ir77Stages {
         return true;
     }
 
-    // One atom over radial (Slater) functions -- the orbitals file, function kind 1 (Ir77Radial lays it out). q: each radial orbital's
-    // electrons, R x 4 x 2 (radial index fastest, then l, then spin); keep: the radial orbitals written per l (4); per l: its exponents
-    // (k), C (m x k x 2 -- alpha, beta), E (m x 2). Restricted when every q's alpha and beta agree; else alpha rows, then beta.
-    bool OutputAtom(std::vector<std::string> const& w, std::string& error) {
-        std::string const name = Text(w[2]);
-        if (!FileName(name, error)) return false;
-        double z = 0.0, charge = 0.0;
-        if (!Evaluate(w[3], z, error) || !Evaluate(w[4], charge, error)) return false;
-
-        std::size_t radial = 0, ls = 0, spins = 0;
-        std::vector<double> q{}, keep{};
-        if (!Shape(w[5], radial, ls, spins, error) || !Values(w[5], q, error) || !Values(w[6], keep, error)) return false;
-        if (ls < Ir77Radial::MAX_L + 1 || spins < 2 || keep.size() < Ir77Radial::MAX_L + 1) {
-            error = w[5] + " must be <radial> 4 2 and " + w[6] + " hold 4";
+    // fill <buffer> <expression> ... -- its elements from 0, one expression each
+    bool Fill(std::string const& name, std::vector<std::string> const& expressions, std::string& error) {
+        Ir77StageBuffer* b = Find(name);
+        if (!b) {
+            error = "no buffer " + name;
             return false;
         }
-        auto const occupation = [&](std::size_t const r, std::size_t const l, std::size_t const spin) { return r < radial ? q[r + radial * (l + 4 * spin)] : 0.0; };
+        if (!Host(*b, error)) return false;
+        if (expressions.size() > b->size) {
+            error = std::to_string(expressions.size()) + " values -- " + name + " holds " + std::to_string(b->size);
+            return false;
+        }
+        for (std::size_t k = 0; k < expressions.size(); k++) {
+            double value = 0.0;
+            if (!Evaluate(expressions[k], value, error)) return false;
+            if (b->ints) b->integers[k] = static_cast<std::int32_t>(std::lround(value));
+            else b->doubles[k] = value;
+        }
+        Wrote(*b);
+        return true;
+    }
 
-        bool restricted = true;
-        double alpha_electrons = 0.0, beta_electrons = 0.0, unpaired = 0.0;
-        for (std::size_t l = 0; l <= Ir77Radial::MAX_L; l++)
-            for (std::size_t r = 0; r < radial; r++) {
-                double const a = occupation(r, l, 0), b = occupation(r, l, 1);
-                restricted = restricted && fabs(a - b) < 1e-12;
-                alpha_electrons += a;
-                beta_electrons += b;
-                double const room = 2.0 * (2 * l + 1);
-                unpaired += std::round(std::min(a + b, room - a - b));
-            }
+    // write <name> <format> <version> <buffer> ... [-summary <name> ...] [-labels <index> <count> "<first>" "<template>"] ...
+    bool Write(std::string const& text, std::string& error) {
+        std::vector<std::string> const w = Tokens(text);
+        Ir77ProgramOutput output{};
+        output.name = Text(w[1]);
+        output.format = Text(w[2]);
+        if (!FileName(output.name, error)) return false;
+        double version = 0.0;
+        if (!Evaluate(w[3], version, error)) return false;
+        output.version = static_cast<std::uint32_t>(std::max(version, 0.0));
 
-        std::array<std::array<Ir77Radial::Ir77RadialBlock, Ir77Radial::MAX_L + 1>, 2> blocks{};
-        for (std::size_t l = 0; l <= Ir77Radial::MAX_L; l++) {
-            std::string const& zeta_name = w[7 + 3 * l];
-            std::string const& c_name = w[8 + 3 * l];
-            std::string const& e_name = w[9 + 3 * l];
-            std::size_t m = 0, k = 0, layers = 0;
-            std::vector<double> zeta{}, c{}, e{};
-            if (!Values(zeta_name, zeta, error) || !Shape(c_name, m, k, layers, error) || !Values(c_name, c, error) || !Values(e_name, e, error)) return false;
-            if (zeta.size() != k || layers < 2 || c.size() < 2 * m * k || e.size() < 2 * m) {
-                error = c_name + " must be <rank> " + std::to_string(zeta.size()) + " 2 (" + zeta_name + "'s functions, two spins) and " + e_name + " <rank> 2";
+        for (std::string const& symbol : m_reports) output.summary.push_back({symbol, Ir77ProgramSummary::Kind::Number, {Symbol(symbol)}, {}});
+
+        std::size_t at = 4;
+        for (; at < w.size() && w[at].front() != '-'; at++) {
+            std::vector<double> values{};
+            if (!Values(w[at], values, error)) return false;
+            if (output.values.size() + values.size() > COMPUTE_WRITE_LIMIT) {
+                error = "more than " + std::to_string(COMPUTE_WRITE_LIMIT) + " values";
                 return false;
             }
-            for (std::size_t spin = 0; spin < 2; spin++) {
-                Ir77Radial::Ir77RadialBlock& b = blocks[spin][l];
-                b.l = static_cast<std::uint32_t>(l);
-                b.zeta = zeta;
-                b.m = m;
-                b.coefficients.assign(c.begin() + static_cast<std::ptrdiff_t>(spin * m * k), c.begin() + static_cast<std::ptrdiff_t>((spin + 1) * m * k));
-                b.energies.assign(e.begin() + static_cast<std::ptrdiff_t>(spin * m), e.begin() + static_cast<std::ptrdiff_t>((spin + 1) * m));
-                b.keep = static_cast<std::size_t>(std::max(keep[l], 0.0));
-                for (std::size_t r = 0; r < radial; r++) b.occupations.push_back(restricted ? occupation(r, l, 0) + occupation(r, l, 1) : occupation(r, l, spin));
+            for (double const v : values) output.values.push_back(static_cast<float>(v));
+        }
+
+        while (at < w.size()) {
+            std::string const& option = w[at++];
+            if (option == "-summary") {
+                for (; at < w.size() && w[at].front() != '-'; at++) {
+                    std::string const& name = w[at];
+                    if (m_strings.count(name)) {
+                        output.summary.push_back({name, Ir77ProgramSummary::Kind::Text, {}, m_strings[name]});
+                    } else if (Find(name)) {
+                        Ir77ProgramSummary entry{name, Ir77ProgramSummary::Kind::List, {}, {}};
+                        if (!Values(name, entry.values, error)) return false;
+                        output.summary.push_back(entry);
+                    } else if (m_symbols.count(name)) {
+                        output.summary.push_back({name, Ir77ProgramSummary::Kind::Number, {Symbol(name)}, {}});
+                    } else {
+                        error = "-summary " + name + " -- no symbol, buffer or string constant of that name";
+                        return false;
+                    }
+                }
+            } else if (option == "-labels") {
+                if (at + 4 > w.size()) {
+                    error = "-labels <index> <count> \"<first>\" \"<template>\"";
+                    return false;
+                }
+                double index = 0.0, count = 0.0;
+                if (!Evaluate(w[at], index, error) || !Evaluate(w[at + 1], count, error)) return false;
+                Ir77ProgramSlider slider{};
+                slider.index = static_cast<std::uint32_t>(std::max(index, 0.0));
+                if (!w[at + 2].empty()) slider.labels.push_back(w[at + 2]);
+                for (std::size_t row = 0; row < static_cast<std::size_t>(std::max(count, 0.0)); row++) {
+                    std::string label{};
+                    if (!Label(w[at + 3], row, label, error)) return false;
+                    slider.labels.push_back(label);
+                }
+                output.sliders.push_back(slider);
+                at += 4;
+            } else {
+                error = "write's option " + option + " -- -summary or -labels";
+                return false;
             }
         }
-
-        Ir77ProgramOutput output{};
-        output.name = name;
-        output.format = ORBITALS_FORMAT;
-        output.molecule.atoms = {Ir77Atom{static_cast<std::uint32_t>(std::lround(z)), 0.0, 0.0, 0.0}};
-        output.molecule.charge = static_cast<std::int32_t>(std::lround(charge));
-        output.molecule.multiplicity = static_cast<std::uint32_t>(unpaired) + 1;
-        output.molecule.basis = "slater";
-
-        Ir77ScfResult& r = output.scf;
-        Ir77Radial::Build(blocks[0], output.basis, r.orbital_energies, r.occupations, r.coefficients, r.orbital_names);
-        if (!restricted) {
-            Ir77Basis again{};
-            Ir77Radial::Build(blocks[1], again, r.beta_orbital_energies, r.beta_occupations, r.beta_coefficients, r.beta_orbital_names);
-        }
-        r.unrestricted = !restricted;
-        r.function_kind = ORBITALS_FUNCTION_SLATER;
-        r.energy = Symbol("energy");
-        r.nuclear_repulsion = 0.0;
-        r.iterations = static_cast<std::uint32_t>(Symbol("iteration"));
-        r.converged = Symbol("converged") != 0.0;
-        r.error = Symbol("error");
-        r.electrons = static_cast<std::uint32_t>(std::lround(alpha_electrons + beta_electrons));
-        r.multiplicity = output.molecule.multiplicity;
-        r.alpha = static_cast<std::uint32_t>((r.electrons + static_cast<std::uint32_t>(unpaired)) / 2);
-        r.beta = r.electrons - r.alpha;
-        r.s2 = 0.25 * unpaired * (unpaired + 2.0);
-        r.occupied = 0;
-        for (std::size_t k = 0; k < r.occupations.size(); k++)
-            if (r.occupations[k] > 0.0) r.occupied = static_cast<std::uint32_t>(k + 1);
 
         m_result->outputs.push_back(std::move(output));
         return true;
     }
 
-    // the grid file -- the buffers as channels of one grid, d0 x d1 x d2 (the first buffer's), over [lo, hi]^3
-    bool OutputGrid(std::string const& name, std::string const& lo_text, std::string const& hi_text, std::vector<std::string> const& names, std::string& error) {
+    // One label from a template at a row -- {#} the row from 1, {#0} from 0, {<buffer>} its element at the row, {<symbol>} its value; then
+    // %<printf format> (%g unless given), @<string constant> (the value picks a word of it, words apart by |), ? (nothing when the value is 0)
+    bool Label(std::string const& pattern, std::size_t const row, std::string& out, std::string& error) {
+        for (std::size_t at = 0; at < pattern.size(); at++) {
+            if (pattern[at] != '{') {
+                out += pattern[at];
+                continue;
+            }
+            std::size_t const close = pattern.find('}', at);
+            if (close == std::string::npos) {
+                error = "label \"" + pattern + "\" -- a { without its }";
+                return false;
+            }
+            std::string field = pattern.substr(at + 1, close - at - 1);
+            at = close;
+
+            bool const omit_zero = !field.empty() && field.back() == '?';
+            if (omit_zero) field.pop_back();
+            std::string words{};
+            std::size_t const word_at = field.find('@');
+            if (word_at != std::string::npos) {
+                words = field.substr(word_at + 1);
+                field = field.substr(0, word_at);
+            }
+            std::string format{"%g"};
+            std::size_t const format_at = field.find('%');
+            if (format_at != std::string::npos) {
+                format = field.substr(format_at);
+                field = field.substr(0, format_at);
+            }
+
+            double value = 0.0;
+            if (field == "#") {
+                value = static_cast<double>(row + 1);
+            } else if (field == "#0") {
+                value = static_cast<double>(row);
+            } else if (Ir77StageBuffer* b = Find(field)) {
+                if (!Host(*b, error)) return false;
+                if (row >= b->size) {
+                    error = "label {" + field + "} -- row " + std::to_string(row) + ", the buffer holds " + std::to_string(b->size);
+                    return false;
+                }
+                value = b->ints ? static_cast<double>(b->integers[row]) : b->doubles[row];
+            } else if (m_symbols.count(field)) {
+                value = Symbol(field);
+            } else {
+                error = "label {" + field + "} -- no buffer or symbol of that name";
+                return false;
+            }
+            if (omit_zero && value == 0.0) continue;
+
+            if (!words.empty()) {
+                auto const found = m_strings.find(words);
+                if (found == m_strings.end()) {
+                    error = "label @" + words + " -- no string constant of that name";
+                    return false;
+                }
+                std::vector<std::string> list{};
+                std::string word{};
+                std::istringstream parts{found->second};
+                while (std::getline(parts, word, '|')) list.push_back(word);
+                long const pick = std::lround(value);
+                if (pick >= 0 && static_cast<std::size_t>(pick) < list.size()) out += list[static_cast<std::size_t>(pick)];
+                continue;
+            }
+            if (std::count(format.begin(), format.end(), '%') != 1 || format.find_first_of("eEfgG", 1) == std::string::npos ||
+                format.find_first_of("sdinpcuxX") != std::string::npos) {
+                error = "label format " + format + " -- a printf number format (%g, %.4f, %.2e ...)";
+                return false;
+            }
+            char number[64];
+            std::snprintf(number, sizeof(number), format.c_str(), value);
+            out += number;
+        }
+        return true;
+    }
+
+    // read <name> <buffer> -- <project>/data/<name>.json's "values" into the buffer from element 0
+    bool Read(std::string const& name, std::string const& buffer, std::string& error) {
         if (!FileName(name, error)) return false;
-        double lo = 0.0, hi = 0.0;
-        if (!Evaluate(lo_text, lo, error) || !Evaluate(hi_text, hi, error)) return false;
-        if (names.size() > COMPUTE_MAX_CHANNELS) {
-            error = "at most " + std::to_string(COMPUTE_MAX_CHANNELS) + " channels";
+        Ir77StageBuffer* b = Find(buffer);
+        if (!b) {
+            error = "no buffer " + buffer;
             return false;
         }
-
-        Ir77ProgramOutput output{};
-        output.name = name;
-        output.format = GRID_FORMAT;
-        output.domain = {static_cast<float>(lo), static_cast<float>(hi), static_cast<float>(lo), static_cast<float>(hi), static_cast<float>(lo), static_cast<float>(hi)};
-
-        std::vector<std::vector<double>*> channels{};
-        for (std::string const& b : names) {
-            Ir77StageBuffer* buffer = Find(b);
-            if (!buffer || buffer->ints) {
-                error = "no double buffer " + b;
-                return false;
-            }
-            if (channels.empty()) {
-                for (std::size_t d = 0; d < 3; d++) output.size[d] = d < buffer->dims.size() ? static_cast<std::uint32_t>(Dimension(buffer->dims[d])) : 1u;
-            }
-            std::size_t const points = static_cast<std::size_t>(output.size[0]) * output.size[1] * output.size[2];
-            std::vector<double>* values = Doubles(b, points, error);
-            if (!values) return false;
-            if (points > COMPUTE_MAX_POINTS) {
-                error = std::to_string(points) + " grid points -- at most " + std::to_string(COMPUTE_MAX_POINTS);
-                return false;
-            }
-            channels.push_back(values);
-            output.channels.push_back(b);
+        if (m_data.empty()) {
+            error = "no project -- nothing to read";
+            return false;
         }
-
-        std::size_t const points = static_cast<std::size_t>(output.size[0]) * output.size[1] * output.size[2];
-        std::size_t const stride = channels.size();
-        output.values.resize(points * stride);
-        output.largest.assign(stride, 0.0);
-        for (std::size_t p = 0; p < points; p++)
-            for (std::size_t c = 0; c < stride; c++) {
-                double const v = (*channels[c])[p];
-                output.values[p * stride + c] = static_cast<float>(v);
-                output.largest[c] = std::max(output.largest[c], fabs(v));
+        std::string const path = (std::filesystem::path{m_data} / (name + ".json")).string();
+        simdjson::dom::parser parser{};
+        simdjson::dom::element root{};
+        simdjson::dom::array values{};
+        if (parser.load(path).get(root) != simdjson::SUCCESS || root["values"].get(values) != simdjson::SUCCESS) {
+            error = "can't read " + path + " (a data file with \"values\")";
+            return false;
+        }
+        if (!Host(*b, error)) return false;
+        std::size_t k = 0;
+        for (simdjson::dom::element const v : values) {
+            if (k >= b->size) break;
+            double number = 0.0;
+            if (v.get(number) != simdjson::SUCCESS) {
+                std::int64_t whole = 0;
+                if (v.get(whole) != simdjson::SUCCESS) continue;
+                number = static_cast<double>(whole);
             }
-        output.passes = static_cast<std::uint32_t>(Symbol("iteration"));
-        output.residual = Symbol("error");
-        output.converged = Symbol("converged") != 0.0;
-
-        m_result->outputs.push_back(std::move(output));
+            if (b->ints) b->integers[k] = static_cast<std::int32_t>(std::lround(number));
+            else b->doubles[k] = number;
+            k++;
+        }
+        Wrote(*b);
         return true;
     }
 
@@ -1613,6 +1483,26 @@ class Ir77Stages {
         return out;
     }
 
+    // a step's words, a "quoted text" one word (its quotes gone)
+    static std::vector<std::string> Tokens(std::string const& text) {
+        std::vector<std::string> out{};
+        std::size_t at = 0;
+        while (at < text.size()) {
+            while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at]))) at++;
+            if (at >= text.size()) break;
+            std::string word{};
+            if (text[at] == '"') {
+                std::size_t const close = text.find('"', at + 1);
+                word = text.substr(at + 1, close == std::string::npos ? std::string::npos : close - at - 1);
+                at = close == std::string::npos ? text.size() : close + 1;
+            } else {
+                while (at < text.size() && !std::isspace(static_cast<unsigned char>(text[at]))) word += text[at++];
+            }
+            out.push_back(word);
+        }
+        return out;
+    }
+
     static bool Identifier(std::string const& text) {
         if (text.empty() || std::isdigit(static_cast<unsigned char>(text[0]))) return false;
         for (char const c : text)
@@ -1632,12 +1522,11 @@ class Ir77Stages {
     cl_context m_context{nullptr};
     cl_command_queue m_queue{nullptr};
     cl_device_id m_device{nullptr};
-    std::string m_integrals{};
+    std::string m_data{};  // <project>/data -- read's folder
 
     std::atomic<bool> const* m_cancel{nullptr};
     Ir77ProgramResult* m_result{nullptr};
 
-    bool m_use_gaussian{false};
     std::vector<Ir77StageBuffer> m_buffers{};
     std::vector<Ir77StageKernel> m_kernels{};
     std::vector<Ir77StageLine> m_script{};
@@ -1649,17 +1538,12 @@ class Ir77Stages {
     std::set<std::string> m_engine{};                // the engine's symbols
     std::map<std::string, std::string> m_strings{};  // @const string
     std::map<std::string, std::vector<double>> m_arrays{};  // @const double[] / int[] -- their buffers' values
-    std::map<std::string, std::vector<Ir77Atom>> m_molecules{};  // @const molecule (bohr)
     bool m_constant_only{false};                     // evaluating a @const -- constants only
     std::uint32_t m_depth{0};                        // @repeat loops open
 
     cl_program m_program{nullptr};
 
-    bool m_have_molecule{false};
-    Ir77Molecule m_molecule{};
-    Ir77Basis m_basis{};
-
-    std::map<std::string, std::vector<std::vector<double>>> m_focks{}, m_errors{};  // diis -- a history a diis step
+    std::map<std::string, std::vector<std::vector<double>>> m_histories{}, m_residuals{};  // extrapolate -- a history a step
 };
 
 }  // namespace NSIr77Compute

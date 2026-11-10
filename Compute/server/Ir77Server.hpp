@@ -35,9 +35,6 @@
 #include "../runtime/Ir77Device.hpp"
 #include "../runtime/Ir77Program.hpp"
 
-#include "../services/Ir77Basis.hpp"
-#include "../services/Ir77Scf.hpp"
-
 #include "../types/Ir77Types.hpp"
 
 using namespace NSIr77RT;
@@ -49,10 +46,11 @@ namespace NSIr77Compute {
 //
 //   pipe:        Sink(json) in, the post function out (SetPost) -- address "compute". A run answers at once ({started}) and finishes later:
 //                Update (the frame loop, main thread) sees it done, writes its outputs to <project>/data/ and posts the event "compute.run".
-//   programs:    one OpenCL source each -- its constants, buffers, kernels and script are declared in it (services/Ir77Stages.hpp). Compute is
-//                a generator: what a program makes leaves as data files, {"format", "version", "summary" {...}, "sliders" [...], "values"
-//                [floats]} (formats in Ir77Types.hpp). Fields reads them when its panel asks; Compute never talks to Fields. An output under
-//                the same name overwrites the file (temp file, then rename).
+//   programs:    one OpenCL source each -- its constants, buffers, kernels and script are declared in it (services/Ir77Stages.hpp); its
+//                // @include lines take in the project's other saved programs (libraries). Compute is a generic executor and a generator:
+//                what a program makes leaves as data files, {"format", "version", "summary" {...}, "sliders" [...], "values" [floats]}, in
+//                the format the program names -- Compute never knows what one means. Fields reads them when its panel asks; Compute never
+//                talks to Fields. An output under the same name overwrites the file (temp file, then rename).
 //
 // ops:
 //   compute.devices                              -- data { devices: ["platform: device (doubles)" ...], active, error } -- opens the device
@@ -61,7 +59,8 @@ namespace NSIr77Compute {
 //   compute.project path                         -- the project folder -- outputs go to its data/ ('' = none: a run is refused); the
 //                                                   built-in programs it lacks go into its compute.json
 //   compute.run     source, program ('' -- its name, reported back)
-//                                                -- built and run on the worker; data { started } -- the end comes as the event below
+//                                                -- built and run on the worker (its @include lines from the project's compute.json);
+//                                                   data { started } -- the end comes as the event below
 //   compute.cancel                               -- the running program stops at its next step
 //   compute.status                               -- data { state "idle" | "running" | "done" | "failed" | "cancelled", program, last (the
 //                                                   last run's event data, null before the first) }
@@ -74,9 +73,9 @@ namespace NSIr77Compute {
 //   compute.list / compute.load name / compute.save name, program {source} / compute.delete name
 //                                                -- the project's saved programs, <project>/compute.json
 //
-// event "compute.run" (to "ui"): { ok, state, error, program, seconds, device, report {symbol: value}, outputs [{name, format, path,
-//   written, error, summary}], buffers [{name, dims, ints, size, minimum, maximum, kept}] } -- summary: an orbitals file's (energy, homo,
-//   lumo, functions, orbital_energies ...) or a grid's (size, domain, channels, largest)
+// event "compute.run" (to "ui"): { ok, state, error, program, seconds, device, report {symbol: value}, outputs [{name, format, version,
+//   count, path, written, error, summary}], buffers [{name, dims, ints, size, minimum, maximum, kept}] } -- summary: the data file's (the
+//   program's @report symbols and what its write step added)
 // =============================================================================================================================================
 class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77Server> {
    public:
@@ -222,25 +221,17 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
 
         // the outputs -- written only when the whole script ran
         Ir77Json& outputs = data["outputs"] = Ir77Json::Array();
-        for (Ir77ProgramOutput& output : result.outputs) {
+        for (Ir77ProgramOutput const& output : result.outputs) {
             Ir77Json row = Ir77Json::Object();
             row["name"] = output.name;
             row["format"] = output.format;
+            row["version"] = static_cast<std::uint64_t>(output.version);
+            row["count"] = static_cast<std::uint64_t>(output.values.size());
             std::string path{}, write_error{};
             bool written = false;
-            if (output.format == ORBITALS_FORMAT) {
-                output.scf.seconds = result.seconds;
-                output.scf.device = result.device;
-                Ir77Json const summary = SolveData(output.molecule, output.basis, output.scf);
-                row["summary"] = summary;
-                if (state == Ir77JobState::Done)
-                    written = WriteFile(output.name, ORBITALS_FORMAT, ORBITALS_LAYOUT_VERSION, summary, Sliders(output.scf), {},
-                                        Ir77Scf::Layout(output.molecule, output.basis, output.scf), path, write_error);
-            } else {
-                Ir77Json const summary = GridData(output);
-                row["summary"] = summary;
-                if (state == Ir77JobState::Done) written = WriteGrid(output, summary, path, write_error);
-            }
+            Ir77Json const summary = Summary(output, result);
+            row["summary"] = summary;
+            if (state == Ir77JobState::Done) written = WriteFile(output, summary, Sliders(output), path, write_error);
             if (state != Ir77JobState::Done) write_error = "not written -- the run didn't finish";
             row["written"] = written;
             row["path"] = path;
@@ -309,6 +300,8 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
             Ir77ProgramJob job{};
             job.source = std::string{Text(a, "source")};
             job.program = std::string{Text(a, "program")};
+            job.data = (std::filesystem::path{m_project} / COMPUTE_DATA_FOLDER).string();
+            if (!Library(job.library)) return Ir77RETURN<Ir77InvalidArgument>(this, m_error);
             if (job.source.find_first_not_of(" \t\r\n") == std::string::npos) {
                 m_error = "no program -- pick one from the list or write one";
                 return Ir77RETURN<Ir77InvalidArgument>(this, m_error);
@@ -417,61 +410,44 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-    // a grid output's summary
-    static Ir77Json GridData(Ir77ProgramOutput const& output) {
+    // a data file's summary -- the program's (its @report symbols, what its write step added), then the run's seconds and device
+    static Ir77Json Summary(Ir77ProgramOutput const& output, Ir77ProgramResult const& result) {
         Ir77Json data = Ir77Json::Object();
-        data["size"] = Ir77Json::Numbers(output.size.data(), output.size.size());
-        data["domain"] = Ir77Json::Numbers(output.domain.data(), output.domain.size());
-        Ir77Json& channels = data["channels"] = Ir77Json::Array();
-        for (std::string const& c : output.channels) channels.Push(Ir77Json(c));
-        data["largest"] = Ir77Json::Numbers(output.largest.data(), output.largest.size());
-        data["passes"] = static_cast<std::uint64_t>(output.passes);
-        data["residual"] = output.residual;
-        data["converged"] = output.converged;
+        for (Ir77ProgramSummary const& entry : output.summary) {
+            if (entry.kind == Ir77ProgramSummary::Kind::Text) data[entry.name] = entry.text;
+            else if (entry.kind == Ir77ProgramSummary::Kind::List) data[entry.name] = Ir77Json::Numbers(entry.values.data(), entry.values.size());
+            else data[entry.name] = entry.values.empty() ? 0.0 : entry.values[0];
+        }
+        data["seconds"] = result.seconds;
+        data["device"] = result.device;
         return data;
     }
 
-    // A grid to <project>/data/<name>.json -- format "grid": header (GRID_HEADER) version, header length, nx, ny, nz, stride, x0, x1, y0, y1,
-    // z0, z1, passes, residual, 0, converged; then each channel's largest |value|; then the points (x fastest), stride floats each.
-    bool WriteGrid(Ir77ProgramOutput const& output, Ir77Json const& summary, std::string& path, std::string& error) {
-        std::uint32_t const stride = static_cast<std::uint32_t>(output.channels.size());
-        std::vector<float> header{static_cast<float>(GRID_VERSION),
-                                  static_cast<float>(GRID_HEADER + stride),
-                                  static_cast<float>(output.size[0]),
-                                  static_cast<float>(output.size[1]),
-                                  static_cast<float>(output.size[2]),
-                                  static_cast<float>(stride),
-                                  output.domain[0], output.domain[1], output.domain[2], output.domain[3], output.domain[4], output.domain[5],
-                                  static_cast<float>(output.passes),
-                                  static_cast<float>(output.residual),
-                                  0.0f,
-                                  output.converged ? 1.0f : 0.0f};
-        for (double const largest : output.largest) header.push_back(static_cast<float>(largest));
-
-        // Fields' grid program has a channel slider -- named after the program's buffers
+    // a data file's sliders -- each a reader parameter's values named (Fields passes them through to its panel)
+    static Ir77Json Sliders(Ir77ProgramOutput const& output) {
         Ir77Json sliders = Ir77Json::Array();
-        Ir77Json channel = Ir77Json::Object();
-        channel["index"] = 0;
-        channel["min"] = 0;
-        channel["max"] = static_cast<std::uint64_t>(stride > 0 ? stride - 1 : 0);
-        channel["step"] = 1;
-        Ir77Json& names = channel["labels"] = Ir77Json::Array();
-        for (std::uint32_t c = 0; c < stride; c++) names.Push(Ir77Json(std::to_string(c) + "  " + output.channels[c]));
-        sliders.Push(channel);
-
-        return WriteFile(output.name, GRID_FORMAT, GRID_VERSION, summary, sliders, header, output.values, path, error);
+        for (Ir77ProgramSlider const& slider : output.sliders) {
+            Ir77Json row = Ir77Json::Object();
+            row["index"] = static_cast<std::uint64_t>(slider.index);
+            row["min"] = 0;
+            row["max"] = static_cast<std::uint64_t>(slider.labels.empty() ? 0 : slider.labels.size() - 1);
+            row["step"] = 1;
+            Ir77Json& labels = row["labels"] = Ir77Json::Array();
+            for (std::string const& label : slider.labels) labels.Push(Ir77Json(label));
+            sliders.Push(row);
+        }
+        return sliders;
     }
 
-    // <project>/data/<name>.json -- {format, version, summary, sliders, values: head then body}, via .tmp and a rename
-    bool WriteFile(std::string const& name, char const* format, std::uint32_t const version, Ir77Json const& summary, Ir77Json const& sliders,
-                   std::vector<float> const& head, std::vector<float> const& body, std::string& path, std::string& error) {
+    // <project>/data/<name>.json -- {format, version, summary, sliders, values}, via .tmp and a rename
+    bool WriteFile(Ir77ProgramOutput const& output, Ir77Json const& summary, Ir77Json const& sliders, std::string& path, std::string& error) {
         if (m_project.empty()) {
             error = "the project closed before the run finished -- nothing written";
             return false;
         }
 
         std::filesystem::path const folder = std::filesystem::path{m_project} / COMPUTE_DATA_FOLDER;
-        std::filesystem::path const file = folder / (name + ".json");
+        std::filesystem::path const file = folder / (output.name + ".json");
         std::filesystem::path temp = file;
         temp += ".tmp";
         path = file.string();
@@ -490,19 +466,18 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
                 return false;
             }
 
-            out << "{\"format\": " << Ir77Json::Quote(format) << ", \"version\": " << version << ",\n";
+            out << "{\"format\": " << Ir77Json::Quote(output.format) << ", \"version\": " << output.version << ",\n";
             out << "\"summary\": " << summary.Write() << ",\n";
             out << "\"sliders\": " << sliders.Write() << ",\n";
             out << "\"values\": [";
 
             char number[32];
             std::size_t written = 0;
-            for (std::vector<float> const* part : {&head, &body})
-                for (float const v : *part) {
-                    std::snprintf(number, sizeof(number), "%.9g", static_cast<double>(v));
-                    out << (written == 0 ? "" : written % 16 == 0 ? ",\n" : ", ") << number;
-                    written++;
-                }
+            for (float const v : output.values) {
+                std::snprintf(number, sizeof(number), "%.9g", static_cast<double>(v));
+                out << (written == 0 ? "" : written % 16 == 0 ? ",\n" : ", ") << number;
+                written++;
+            }
             out << "]}\n";
             out.flush();
             if (!out) {
@@ -635,6 +610,19 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         return true;
     }
 
+    // the project's saved programs as sources -- what a run's @include lines take from
+    bool Library(std::map<std::string, std::string>& library) {
+        std::map<std::string, std::string> entries{};
+        if (!ReadStore(entries)) return false;
+        library.clear();
+        for (auto const& [name, entry] : entries) {
+            simdjson::dom::element root{};
+            std::string_view source{};
+            if (m_file_parser.parse(entry).get(root) == simdjson::SUCCESS && root["source"].get(source) == simdjson::SUCCESS) library[name] = std::string{source};
+        }
+        return true;
+    }
+
     std::shared_ptr<IIr77Return const> WriteStore(std::map<std::string, std::string> const& entries) {
         std::filesystem::path const file = std::filesystem::path{m_project} / "compute.json";
         std::filesystem::path temp = file;
@@ -688,146 +676,6 @@ class Ir77Server : public Ir77Enlisted, public std::enable_shared_from_this<Ir77
         return Ir77RETURN<Ir77OperationSucceeded>();
     }
 
-
-    // ---- an orbitals output ---------------------------------------------------------------------------------------------------------------
-
-    // an orbitals output's summary -- what the panel shows of it, and the data file's "summary"
-    static Ir77Json SolveData(Ir77Molecule const& molecule, Ir77Basis const& basis, Ir77ScfResult const& result) {
-        Ir77Json data = Ir77Json::Object();
-        data["converged"] = result.converged;
-        data["energy"] = result.energy;
-        data["nuclear_repulsion"] = result.nuclear_repulsion;
-        data["iterations"] = result.iterations;
-        data["electrons"] = result.electrons;
-        data["occupied"] = result.occupied;
-        data["functions"] = static_cast<std::uint64_t>(basis.functions.size());
-        data["orbital_energies"] = Ir77Json::Numbers(result.orbital_energies.data(), result.orbital_energies.size());
-        // occupations -- the solver's own when it has them (a Slater atom's spread open shell), else 2 / 0 (restricted) or 1 / 0 a spin
-        std::vector<double> occupations(result.orbital_energies.size(), 0.0);
-        std::vector<double> beta_occupations(result.beta_orbital_energies.size(), 0.0);
-        if (result.occupations.size() == occupations.size()) {
-            occupations = result.occupations;
-        } else {
-            for (std::size_t k = 0; k < occupations.size() && k < (result.unrestricted ? result.alpha : result.occupied); k++)
-                occupations[k] = result.unrestricted ? 1.0 : 2.0;
-        }
-        if (result.beta_occupations.size() == beta_occupations.size()) {
-            beta_occupations = result.beta_occupations;
-        } else {
-            for (std::size_t k = 0; k < beta_occupations.size() && k < result.beta; k++) beta_occupations[k] = 1.0;
-        }
-
-        // HOMO / LUMO -- across both spins when unrestricted: the highest with electrons, the lowest without
-        double homo = -1e300;
-        double lumo = 1e300;
-        auto const frontier = [&](std::vector<double> const& energies, std::vector<double> const& filled) {
-            for (std::size_t k = 0; k < energies.size(); k++) {
-                if (filled[k] > 0.0) homo = std::max(homo, energies[k]);
-                else lumo = std::min(lumo, energies[k]);
-            }
-        };
-        frontier(result.orbital_energies, occupations);
-        if (result.unrestricted) frontier(result.beta_orbital_energies, beta_occupations);
-        data["homo"] = homo > -1e300 ? homo : 0.0;
-        data["lumo"] = lumo < 1e300 ? lumo : 0.0;
-        data["device"] = result.device;
-        data["seconds"] = result.seconds;
-        data["basis"] = molecule.basis;
-        data["charge"] = static_cast<std::int64_t>(molecule.charge);
-
-        data["functions_kind"] = result.function_kind == ORBITALS_FUNCTION_SLATER ? "slater" : "gaussian";
-        data["occupations"] = Ir77Json::Numbers(occupations.data(), occupations.size());
-
-        // the orbitals' names -- the solver's ("2p x", a Slater atom) or MO k
-        Ir77Json& names = data["orbital_names"] = Ir77Json::Array();
-        for (std::size_t k = 0; k < result.orbital_energies.size(); k++)
-            names.Push(Ir77Json(k < result.orbital_names.size() ? result.orbital_names[k] : "MO " + std::to_string(k + 1)));
-
-        data["unrestricted"] = result.unrestricted;
-        data["multiplicity"] = static_cast<std::uint64_t>(result.multiplicity);
-        data["alpha"] = static_cast<std::uint64_t>(result.alpha);
-        data["beta"] = static_cast<std::uint64_t>(result.beta);
-        data["s2"] = result.s2;
-        data["beta_energies"] = Ir77Json::Numbers(result.beta_orbital_energies.data(), result.beta_orbital_energies.size());
-        data["beta_occupations"] = Ir77Json::Numbers(beta_occupations.data(), beta_occupations.size());
-
-        Ir77Json& atoms = data["atoms"] = Ir77Json::Array();
-        for (Ir77Atom const& atom : molecule.atoms) {
-            Ir77Json row = Ir77Json::Object();
-            row["element"] = atom.number < std::size(Ir77BasisBuilder::ELEMENTS) ? Ir77BasisBuilder::ELEMENTS[atom.number] : "";
-            row["number"] = static_cast<std::uint64_t>(atom.number);
-            row["x"] = atom.x;
-            row["y"] = atom.y;
-            row["z"] = atom.z;
-            atoms.Push(row);
-        }
-
-        return data;
-    }
-
-
-    // What the data file tells the panel about its sliders -- Shaders/fields/orbitals.glsl's: p[0] orbital runs 0 .. M, each value named
-    // ("density", "16  4p x  up-down  -0.4775"), p[2] spin named. Fields passes this through untouched (field.data.load / field.compile).
-    static Ir77Json Sliders(Ir77ScfResult const& result) {
-        std::size_t const m = result.orbital_energies.size();
-
-        auto const occupancy = [](double const alpha, double const beta) {
-            // arrows -- a fraction (a spread open subshell) as its number
-            auto const one = [](double const q, char const* arrow) -> std::string {
-                if (q <= 0.0) return "";
-                if (fabs(q - 1.0) < 1e-9) return arrow;
-                char text[32];
-                std::snprintf(text, sizeof(text), "%s%.2g", arrow, q);
-                return text;
-            };
-            return one(alpha, "\u2191") + one(beta, "\u2193");
-        };
-
-        Ir77Json labels = Ir77Json::Array();
-        labels.Push(Ir77Json(std::string{"density"}));
-        for (std::size_t k = 0; k < m; k++) {
-            std::string const name = k < result.orbital_names.size() ? result.orbital_names[k] : "MO " + std::to_string(k + 1);
-
-            double alpha = 0.0, beta = 0.0;
-            if (result.unrestricted) {
-                alpha = k < result.occupations.size() ? result.occupations[k] : (k < result.alpha ? 1.0 : 0.0);
-                beta = k < result.beta_occupations.size() ? result.beta_occupations[k] : (k < result.beta ? 1.0 : 0.0);
-            } else {
-                double const q = k < result.occupations.size() ? result.occupations[k] : (k < result.occupied ? 2.0 : 0.0);
-                alpha = beta = 0.5 * q;
-            }
-
-            char energy[32];
-            std::snprintf(energy, sizeof(energy), "%.4f", result.orbital_energies[k]);
-            std::string label = std::to_string(k + 1) + "  " + name + "  " + occupancy(alpha, beta) + "  " + energy;
-            if (result.unrestricted && k < result.beta_orbital_names.size() && result.beta_orbital_names[k] != name)
-                label += "  (\u03b2 " + result.beta_orbital_names[k] + ")";
-            labels.Push(Ir77Json(label));
-        }
-
-        Ir77Json orbital = Ir77Json::Object();
-        orbital["index"] = 0;
-        orbital["min"] = 0;
-        orbital["max"] = static_cast<std::uint64_t>(m);
-        orbital["step"] = 1;
-        orbital["labels"] = labels;
-
-        Ir77Json spin = Ir77Json::Object();
-        spin["index"] = 2;
-        spin["min"] = 0;
-        spin["max"] = 2;
-        spin["step"] = 1;
-        Ir77Json spins = Ir77Json::Array();
-        spins.Push(Ir77Json(std::string{result.unrestricted ? "\u03b1" : "both"}));
-        spins.Push(Ir77Json(std::string{result.unrestricted ? "\u03b2" : "both"}));
-        spins.Push(Ir77Json(std::string{result.unrestricted ? "\u03b1 - \u03b2" : "none (closed shell)"}));
-        spin["labels"] = spins;
-
-        Ir77Json sliders = Ir77Json::Array();
-        sliders.Push(orbital);
-        sliders.Push(spin);
-        return sliders;
-    }
 
     // a file name with no folder in it -- letters, digits, '-', '_', '.' (not leading)
     static bool PlainName(std::string const& name) {

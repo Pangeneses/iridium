@@ -18,8 +18,7 @@ namespace NSIr77Compute {
 // =============================================================================================================================================
 // Ir77OpenCL -- one OpenCL device and the programs run on it. OpenCL 1.2 calls only, so any driver will do (AMD, NVIDIA, Intel, POCL). The
 // device: the first GPU with doubles (cl_khr_fp64), else any device with doubles.
-//   Open(integrals) -> [Run ...] -> Close (the destructor too)
-// integrals: Compute's Gaussian integral library (kernels/Ir77Integrals.cl) -- a program's "@use gaussian".
+//   Open -> [Run ...] -> Close (the destructor too)
 // =============================================================================================================================================
 class Ir77OpenCL {
    public:
@@ -31,7 +30,7 @@ class Ir77OpenCL {
     ~Ir77OpenCL() { Close(); }
 
     // a device found, its context and queue made -- false: error says why (no platform, no doubles)
-    bool Open(std::string const& source, std::string& error) {
+    bool Open(std::string& error) {
         Close();
 
         cl_uint platforms_count = 0;
@@ -78,7 +77,6 @@ class Ir77OpenCL {
         m_queue = clCreateCommandQueue(m_context, m_device, 0, &status);
         if (status != CL_SUCCESS) return Fail("clCreateCommandQueue", status, error);
 
-        m_integrals = source;
         return true;
     }
 
@@ -140,8 +138,8 @@ class Ir77OpenCL {
             error = "no OpenCL device";
             return false;
         }
-        Ir77Stages stages{m_context, m_queue, m_device, m_integrals};
-        return stages.Run(job.source, cancel, result, error);
+        Ir77Stages stages{m_context, m_queue, m_device};
+        return stages.Run(job, cancel, result, error);
     }
 
    private:
@@ -164,8 +162,6 @@ class Ir77OpenCL {
     cl_context m_context{nullptr};
     cl_command_queue m_queue{nullptr};
     std::string m_name{};
-
-    std::string m_integrals{};  // Ir77Integrals.cl's text -- "@use gaussian"
 };
 
 }  // namespace NSIr77Compute
